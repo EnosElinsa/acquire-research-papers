@@ -1,0 +1,21 @@
+{
+  "status": "ok",
+  "message": {
+    "next-cursor": "next-cursor-token",
+    "items": [
+      {
+        "DOI": "10.1234/crossref.1",
+        "title": ["Crossref Candidate"],
+        "author": [{"given": "Ada", "family": "Lovelace"}],
+        "published": {"date-parts": [[2026, 3, 2]]},
+        "container-title": ["Test Journal"],
+        "publisher": "Test Publisher",
+        "type": "journal-article",
+        "URL": "https://doi.org/10.1234/crossref.1",
+        "resource": {"primary": {"URL": "https://publisher.example/article/1"}},
+        "abstract": "<jats:p>A relevant abstract.</jats:p>",
+        "score": 87.0
+      }
+    ]
+  }
+}

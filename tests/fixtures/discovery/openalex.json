@@ -1,0 +1,26 @@
+{
+  "meta": {"count": 1, "next_cursor": "next-openalex"},
+  "results": [
+    {
+      "id": "https://openalex.org/W1",
+      "doi": "https://doi.org/10.1234/openalex.1",
+      "title": "OpenAlex Candidate",
+      "publication_year": 2025,
+      "publication_date": "2025-06-01",
+      "type": "article",
+      "cited_by_count": 12,
+      "authorships": [
+        {"author": {"display_name": "Alan Turing"}}
+      ],
+      "primary_location": {
+        "landing_page_url": "https://publisher.example/article/2",
+        "source": {"display_name": "Test Journal"}
+      },
+      "abstract_inverted_index": {
+        "OpenAlex": [0],
+        "abstract": [1]
+      },
+      "related_works": ["https://openalex.org/W2", "https://openalex.org/W3"]
+    }
+  ]
+}

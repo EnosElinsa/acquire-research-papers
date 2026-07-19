@@ -16,11 +16,14 @@ from acquire_research_papers.acquisition.router import AdapterRouter
 from acquire_research_papers.artifacts import InvalidPdfError
 from acquire_research_papers.bibliography import BibMissing, MetadataMismatch
 from acquire_research_papers.delivery import DeliveryResult, GenericDelivery
+from acquire_research_papers.discovery.corpus import CorpusDiscoverer, CorpusWorkflow
+from acquire_research_papers.discovery.crossref import CrossrefClient
 from acquire_research_papers.http import RateLimited, SafeHttpClient
 from acquire_research_papers.models import PaperStatus
 from acquire_research_papers.paths import AppPaths, ensure_outside_repository
 from acquire_research_papers.registry import Registry
 from acquire_research_papers.resolver import AmbiguousInput, Resolver
+from acquire_research_papers.specs import SpecValidationError, load_corpus_spec
 
 
 @dataclass
@@ -29,6 +32,7 @@ class Application:
     repository_root: Path
     registry: Registry
     resolver: Resolver
+    corpus_workflow: CorpusWorkflow | None = None
 
     @classmethod
     def for_test(
@@ -37,6 +41,7 @@ class Application:
         app_root: Path,
         repository_root: Path,
         adapter: SourceAdapter | None = None,
+        corpus_workflow: CorpusWorkflow | None = None,
     ) -> Application:
         paths = AppPaths.for_root(app_root)
         paths.create_directories()
@@ -50,6 +55,7 @@ class Application:
             repository_root=repository_root.resolve(),
             registry=Registry(paths.registry),
             resolver=Resolver(router),
+            corpus_workflow=corpus_workflow,
         )
 
     @classmethod
@@ -68,11 +74,17 @@ class Application:
                 secret_path=paths.secrets / "secrets.clixml",
             )
         )
+        crossref = CrossrefClient(
+            client=SafeHttpClient(allowed_hosts={"api.crossref.org"}),
+        )
         return cls(
             paths=paths,
             repository_root=repository_root,
             registry=Registry(paths.registry),
             resolver=Resolver(AdapterRouter.with_defaults([acl, ijcai, ieee])),
+            corpus_workflow=CorpusWorkflow(
+                discoverer=CorpusDiscoverer([crossref.corpus_searcher])
+            ),
         )
 
     def fetch(self, value: str, output: Path) -> DeliveryResult:
@@ -124,6 +136,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     review = subparsers.add_parser("review", help="import or inspect review decisions")
     review.add_argument("--input", type=Path, required=True)
+
+    discover = subparsers.add_parser("discover", help="discover a corpus or research evidence")
+    discover_modes = discover.add_subparsers(dest="discover_mode", required=True)
+    corpus = discover_modes.add_parser("corpus", help="plan a quota-driven paper corpus")
+    corpus.add_argument("--spec", type=Path, required=True)
+    corpus.add_argument("--output", type=Path, required=True)
     return parser
 
 
@@ -157,11 +175,29 @@ def run_cli(
         if args.command == "status":
             _emit({"paper_id": args.paper_id, "status": app.registry.status(args.paper_id).value})
             return 0
+        if args.command == "discover" and args.discover_mode == "corpus":
+            if app.corpus_workflow is None:
+                raise AmbiguousInput("corpus discovery is not configured")
+            destination = ensure_outside_repository(args.output, app.repository_root)
+            result = app.corpus_workflow.run(load_corpus_spec(args.spec), destination)
+            _emit(
+                {
+                    "status": result.status,
+                    "candidates": str(result.candidates_path),
+                    "pending_review": str(result.pending_review_path),
+                    "manifest": str(result.manifest_path),
+                    "accepted": result.accepted,
+                    "pending": result.pending,
+                    "rejected": result.rejected,
+                    "shortfall": result.shortfall,
+                }
+            )
+            return 0
         if args.command in {"resume", "review"}:
             raise AmbiguousInput(f"{args.command} requires a task produced by discover")
         parser.print_help()
         return 0
-    except AmbiguousInput as exc:
+    except (AmbiguousInput, SpecValidationError) as exc:
         _emit({"status": "error", "error_code": "invalid_input", "message": str(exc)})
         return 64
     except AccessRequired as exc:

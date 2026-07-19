@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Mapping
+from typing import Any
 from urllib.parse import urljoin, urlsplit
 
 import httpx
@@ -70,23 +71,26 @@ class SafeHttpClient:
 
     def _request_with_retries(
         self,
+        method: str,
         url: str,
         headers: Mapping[str, str] | None,
+        json_data: Any = None,
     ) -> httpx.Response:
         last_error: Exception | None = None
-        for attempt in range(self.retries + 1):
+        retries = self.retries if method == "GET" else 0
+        for attempt in range(retries + 1):
             try:
-                response = self._client.get(url, headers=headers)
+                response = self._client.request(method, url, headers=headers, json=json_data)
             except (httpx.ConnectError, httpx.TimeoutException) as exc:
                 last_error = exc
-                if attempt == self.retries:
+                if attempt == retries:
                     raise NetworkTransient(f"network retries exhausted for {url}") from exc
                 self._sleeper(0.25 * (2**attempt))
                 continue
             if response.status_code == 429:
                 raise RateLimited(429, url)
             if 500 <= response.status_code <= 599:
-                if attempt == self.retries:
+                if attempt == retries:
                     raise HttpStatusError(response.status_code, url)
                 self._sleeper(0.25 * (2**attempt))
                 continue
@@ -95,19 +99,31 @@ class SafeHttpClient:
             return response
         raise NetworkTransient(f"network retries exhausted for {url}") from last_error
 
-    def get(
+    def request(
         self,
+        method: str,
         url: str,
         *,
         headers: Mapping[str, str] | None = None,
+        json_data: Any = None,
     ) -> httpx.Response:
+        normalized_method = method.upper()
+        if normalized_method not in {"GET", "POST"}:
+            raise ValueError(f"unsupported HTTP method: {method}")
         current_url = url
         current_host = self._hostname(current_url)
         current_headers = dict(headers or {})
         for redirect_count in range(self.max_redirects + 1):
-            response = self._request_with_retries(current_url, current_headers)
+            response = self._request_with_retries(
+                normalized_method,
+                current_url,
+                current_headers,
+                json_data,
+            )
             if response.status_code not in {301, 302, 303, 307, 308}:
                 return response
+            if normalized_method != "GET":
+                raise HttpStatusError(response.status_code, current_url)
             if redirect_count == self.max_redirects:
                 raise HttpStatusError(response.status_code, current_url)
             location = response.headers.get("Location")
@@ -124,3 +140,20 @@ class SafeHttpClient:
             current_url = target_url
             current_host = target_host
         raise AssertionError("redirect loop escaped its bound")
+
+    def get(
+        self,
+        url: str,
+        *,
+        headers: Mapping[str, str] | None = None,
+    ) -> httpx.Response:
+        return self.request("GET", url, headers=headers)
+
+    def post_json(
+        self,
+        url: str,
+        payload: Any,
+        *,
+        headers: Mapping[str, str] | None = None,
+    ) -> httpx.Response:
+        return self.request("POST", url, headers=headers, json_data=payload)
