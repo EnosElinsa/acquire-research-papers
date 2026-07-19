@@ -5,7 +5,7 @@
 状态：已由用户确认，等待设计文档复核
 
 目标仓库：`EnosElinsa/acquire-research-papers`（公开）
-本地安装与仓库路径：`C:\Users\labs2\.codex\skills\acquire-research-papers`
+本地安装与仓库路径：`%USERPROFILE%\.codex\skills\acquire-research-papers`
 
 ## 1. 概述
 
@@ -548,7 +548,7 @@ Schema 支持刊会文件夹、日期、前缀和连续数字编号。例如：
 
 ## 14. 安全与公开仓库
 
-- Git 仓库位于 `C:\Users\labs2\.codex\skills\acquire-research-papers`。
+- Git 仓库位于 `%USERPROFILE%\.codex\skills\acquire-research-papers`。
 - 远端完成实现和实测后创建为 `EnosElinsa/acquire-research-papers` public repository。
 - `.gitignore` 覆盖 `.env`、secret 文件、DPAPI payload、浏览器 profile、缓存、注册表、runs、下载和测试实链路输出。
 - CI 只使用合成 fixture 和本地测试服务器，不使用真实凭据或机构访问。
@@ -670,7 +670,7 @@ Schema 支持刊会文件夹、日期、前缀和连续数字编号。例如：
 ## 18. 已锁定决策
 
 - 使用一个全局 skill，内部模块化，不拆成多个需要手动编排的 skill。
-- 全局安装目录与 Git 仓库是 `C:\Users\labs2\.codex\skills\acquire-research-papers`。
+- 全局安装目录与 Git 仓库是 `%USERPROFILE%\.codex\skills\acquire-research-papers`。
 - 公开 GitHub 仓库名为 `acquire-research-papers`，所有者使用当前已认证账户。
 - 支持完整发现，也支持指定目标直接下载。
 - `discover corpus` 使用通用 `CorpusSpec`；任务 DOCX 和角色选择仅为可选适配器。

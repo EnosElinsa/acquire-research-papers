@@ -63,7 +63,7 @@ Run:
 
 ```powershell
 $scratch = Join-Path $env:TEMP "arp-skill-init"
-python C:\Users\labs2\.codex\skills\.system\skill-creator\scripts\init_skill.py `
+python %USERPROFILE%\.codex\skills\.system\skill-creator\scripts\init_skill.py `
   acquire-research-papers --path $scratch --resources scripts,references `
   --interface 'display_name=Research Paper Acquisition' `
   --interface 'short_description=Discover and acquire verified research papers' `
@@ -189,7 +189,7 @@ Run:
 uv lock
 uv run pytest tests/unit/test_skill_layout.py -q
 uv run ruff check src tests
-python C:\Users\labs2\.codex\skills\.system\skill-creator\scripts\quick_validate.py .
+python %USERPROFILE%\.codex\skills\.system\skill-creator\scripts\quick_validate.py .
 ```
 
 Expected: layout tests PASS, Ruff PASS, and skill validator prints `Skill is valid!`.
@@ -936,7 +936,7 @@ def test_ieee_adapter_requires_official_bibtex(ieee_bridge_stub) -> None:
 Copy the behavioral tests from:
 
 ```text
-C:\Users\labs2\Desktop\Projects\mec-research-wiki\.agents\skills\retrieve-ieee-papers\scripts\tests\test-ieee-playwright.mjs
+<project>\.agents\skills\retrieve-ieee-papers\scripts\tests\test-ieee-playwright.mjs
 ```
 
 Change repository-specific duplicate/output assertions to the normalized bridge contract. Add a citation export fixture asserting the bridge returns `pdfPath`, raw official `bibtex`, `title`, `authors`, `year`, `venue`, `doi`, and `landingUrl`.
@@ -955,7 +955,7 @@ Expected: FAIL because the generalized bridge does not exist.
 Use the existing audited implementation as source:
 
 ```text
-C:\Users\labs2\Desktop\Projects\mec-research-wiki\.agents\skills\retrieve-ieee-papers\scripts\ieee-playwright.mjs
+<project>\.agents\skills\retrieve-ieee-papers\scripts\ieee-playwright.mjs
 ```
 
 Preserve exact-host credential release, separate persistent Chrome profile, `BrowserContext.request`, `maxRedirects: 0`, PDF header validation, one metadata restart, and one authentication attempt. Remove all `raw/tmp`, `raw/sources`, and repository naming assumptions. Add official citation export inside the same browser context and return only sanitized JSON.
@@ -1319,7 +1319,7 @@ Keep `SKILL.md` under 500 lines. Put mode details and source contracts in one-le
 Regenerate metadata:
 
 ```powershell
-python C:\Users\labs2\.codex\skills\.system\skill-creator\scripts\generate_openai_yaml.py . `
+python %USERPROFILE%\.codex\skills\.system\skill-creator\scripts\generate_openai_yaml.py . `
   --interface 'display_name=Research Paper Acquisition' `
   --interface 'short_description=Discover and acquire verified research papers' `
   --interface 'default_prompt=Use $acquire-research-papers to discover or fetch official papers and BibTeX.'
@@ -1339,7 +1339,7 @@ uv run ruff check src tests
 uv run pytest -q
 node --test tests/node/test-ieee-playwright.mjs
 powershell -NoProfile -ExecutionPolicy Bypass -File tests/powershell/test-secret-store.ps1
-python C:\Users\labs2\.codex\skills\.system\skill-creator\scripts\quick_validate.py .
+python %USERPROFILE%\.codex\skills\.system\skill-creator\scripts\quick_validate.py .
 git diff --check
 ```
 
@@ -1390,7 +1390,7 @@ Find 5 official 2024-2026 IJCAI main-track papers about LLM-assisted evolutionar
 Given one seed paper and a claim about LLM-guided evolutionary search, find the closest work and build an evidence package without drafting manuscript prose.
 ```
 
-Also parse `C:\Users\labs2\Downloads\paper-download-assignment-2026-07-18.docx` with optional scope selector `学生2`, generate a small `CorpusSpec`, and acquire a bounded sample before any 200-300 paper run.
+Also parse a representative assignment document with an optional scope selector, generate a small `CorpusSpec`, and acquire a bounded sample before any large corpus run.
 
 - [ ] **Step 7: Apply live fixes with TDD and rerun all gates**
 
