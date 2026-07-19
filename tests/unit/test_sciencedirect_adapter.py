@@ -142,6 +142,31 @@ def test_sciencedirect_open_access_does_not_read_institutional_credentials(
     assert bridge.calls == []
 
 
+def test_sciencedirect_falls_back_when_direct_pdf_request_is_denied(fixture_server) -> None:
+    path = "/science/article/pii/S2210650225000884"
+    pdf_path = f"{path}/pdfft"
+    fixture_server.serve_text(
+        path,
+        (FIXTURES / "sciencedirect" / "open.html").read_text(encoding="utf-8"),
+    )
+    fixture_server.server.expect_request(pdf_path).respond_with_data(
+        "institutional access required",
+        status=403,
+        content_type="text/plain",
+    )
+    landing_url = fixture_server.url(path)
+    bridge = StubScienceDirectBridge(bridge_result(landing_url))
+    adapter = ScienceDirectAdapter(
+        client=fixture_server.client,
+        bridge=bridge,
+        production_hosts={fixture_server.host},
+    )
+    document = adapter.resolve(landing_url)
+    pair = adapter.acquire(document)
+    assert bridge.calls == [landing_url]
+    assert pair.pdf_bytes.startswith(b"%PDF-")
+
+
 def test_sciencedirect_institutional_pair_requires_raw_official_bibtex(fixture_server) -> None:
     path = "/science/article/pii/S1049007824000411"
     fixture_server.serve_text(
@@ -179,4 +204,29 @@ def test_sciencedirect_rejects_institutional_proxy_lookalike(fixture_server) -> 
         production_hosts={fixture_server.host},
     )
     with pytest.raises(NotOfficial):
+        adapter.resolve(landing_url)
+
+
+def test_sciencedirect_rejects_institutional_artifact_with_another_pii(
+    fixture_server,
+) -> None:
+    path = "/science/article/pii/S1049007824000411"
+    fixture_server.serve_text(
+        path,
+        (FIXTURES / "sciencedirect" / "denied.html").read_text(encoding="utf-8"),
+    )
+    landing_url = fixture_server.url(path)
+    result = replace(
+        bridge_result(landing_url),
+        access_pdf_url=(
+            "https://www-sciencedirect-com-s.vpn.scau.edu.cn/"
+            "science/article/pii/S0000000000000000/pdfft?download=true"
+        ),
+    )
+    adapter = ScienceDirectAdapter(
+        client=fixture_server.client,
+        bridge=StubScienceDirectBridge(result),
+        production_hosts={fixture_server.host},
+    )
+    with pytest.raises(NotOfficial, match="PII"):
         adapter.resolve(landing_url)

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from urllib.parse import urlencode, urljoin, urlsplit
+from urllib.parse import parse_qs, urlencode, urljoin, urlsplit
 
 from bs4 import BeautifulSoup
 
@@ -165,6 +165,19 @@ class ScienceDirectAdapter:
         landing_match = _PII_PATH.fullmatch(urlsplit(result.landing_url).path)
         if not landing_match or landing_match.group(1).casefold() != result.pii.casefold():
             raise NotOfficial("ScienceDirect institutional result does not match the article PII")
+        expected_pdf_path = f"/science/article/pii/{result.pii}/pdfft".casefold()
+        for value in (result.pdf_url, result.access_pdf_url):
+            if urlsplit(value).path.casefold() != expected_pdf_path:
+                raise NotOfficial("ScienceDirect institutional PDF does not match the article PII")
+        for value in (result.bibtex_url, result.access_bibtex_url):
+            parsed_bibtex = urlsplit(value)
+            pii_values = parse_qs(parsed_bibtex.query).get("pii", [])
+            if (
+                parsed_bibtex.path != "/sdfe/arp/cite"
+                or len(pii_values) != 1
+                or pii_values[0].casefold() != result.pii.casefold()
+            ):
+                raise NotOfficial("ScienceDirect institutional BibTeX does not match the article PII")
         metadata = PaperMetadata(
             title=result.title,
             authors=result.authors,
@@ -223,6 +236,9 @@ class ScienceDirectAdapter:
             bibtex = self.client.get(document.bibtex_url).text
         except HttpStatusError as exc:
             if exc.status_code in {401, 403}:
+                if self.bridge is not None:
+                    institutional = self._resolve_institutional(document.metadata.landing_url)
+                    return self._pairs[institutional.metadata.landing_url]
                 raise AccessRequired(
                     "ScienceDirect artifact is unavailable in the current campus/IP context"
                 ) from exc

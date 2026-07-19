@@ -44,13 +44,21 @@ class FakeLocator {
 
 
 class FakePage {
-  constructor({ url = AUTH_URL, bodyText = "用户登录", afterSubmitUrl = PROXY_URL } = {}) {
+  constructor({
+    url = AUTH_URL,
+    bodyText = "用户登录",
+    afterSubmitUrl = PROXY_URL,
+    selectorSubmitCount = 1,
+    roleSubmitCount = 1,
+  } = {}) {
     this.currentUrl = url;
     this.bodyText = bodyText;
     this.afterSubmitUrl = afterSubmitUrl;
     this.username = "";
     this.password = "";
     this.submissions = 0;
+    this.selectorSubmitCount = selectorSubmitCount;
+    this.roleSubmitCount = roleSubmitCount;
   }
 
   url() {
@@ -67,6 +75,7 @@ class FakePage {
     }
     if (selector === SELECTORS.submit) {
       return new FakeLocator({
+        count: this.selectorSubmitCount,
         click: () => {
           this.submissions += 1;
           this.currentUrl = this.afterSubmitUrl;
@@ -74,6 +83,18 @@ class FakePage {
       });
     }
     return new FakeLocator({ count: 0 });
+  }
+
+  getByRole(role, options) {
+    assert.equal(role, "button");
+    assert.equal(options.name, "登录");
+    return new FakeLocator({
+      count: this.roleSubmitCount,
+      click: () => {
+        this.submissions += 1;
+        this.currentUrl = this.afterSubmitUrl;
+      },
+    });
   }
 
   async waitForURL(predicate) {
@@ -141,6 +162,20 @@ test("releases SCAU credentials once on the exact auth host and completes login"
   assert.equal(page.username, "synthetic-scau");
   assert.equal(page.password, "synthetic-password");
   assert.equal(page.url(), PROXY_URL);
+});
+
+
+test("uses the unique semantic login button when no stable submit selector exists", async () => {
+  const page = new FakePage({ selectorSubmitCount: 0 });
+  const result = await authenticateThroughScau({
+    page,
+    credentialReader: async () => ({
+      username: "synthetic-scau",
+      password: "synthetic-password",
+    }),
+  });
+  assert.deepEqual(result, { submitted: true });
+  assert.equal(page.submissions, 1);
 });
 
 

@@ -158,6 +158,21 @@ async function uniqueLocator(locator, phase, description) {
   return locator;
 }
 
+async function resolveLoginAction(page) {
+  const stable = page.locator(SELECTORS.submit);
+  const stableCount = await stable.count();
+  if (stableCount === 1) return stable;
+  if (stableCount > 1) {
+    throw new ScienceDirectFlowError(
+      "authentication-form",
+      `SCAU login action must resolve to exactly one element; found ${stableCount}.`,
+      { count: stableCount },
+    );
+  }
+  const semantic = page.getByRole("button", { name: "登录", exact: true });
+  return uniqueLocator(semantic, "authentication-form", "SCAU semantic login action");
+}
+
 export async function readCredentialForHost(hostname, { secretPath = "" } = {}) {
   if (!isApprovedCredentialHost(hostname)) {
     throw new ScienceDirectFlowError(
@@ -233,11 +248,7 @@ export async function authenticateThroughScau({
     "authentication-form",
     "SCAU password field",
   );
-  const submit = await uniqueLocator(
-    page.locator(SELECTORS.submit),
-    "authentication-form",
-    "SCAU login action",
-  );
+  const submit = await resolveLoginAction(page);
 
   const credential = await credentialReader(initialHost, { secretPath });
   if (!String(credential?.username ?? "") || !String(credential?.password ?? "")) {
