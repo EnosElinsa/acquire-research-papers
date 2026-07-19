@@ -9,6 +9,7 @@ from typing import Any
 
 from acquire_research_papers import __version__
 from acquire_research_papers.acquisition.adapters.acl import AclAnthologyAdapter
+from acquire_research_papers.acquisition.adapters.ieee import IeeeBridge, IeeeXploreAdapter
 from acquire_research_papers.acquisition.adapters.ijcai import IjcaiProceedingsAdapter
 from acquire_research_papers.acquisition.base import AccessRequired, PageContractChanged, SourceAdapter
 from acquire_research_papers.acquisition.router import AdapterRouter
@@ -55,14 +56,23 @@ class Application:
     def default(cls) -> Application:
         paths = AppPaths.default()
         paths.create_directories()
+        repository_root = Path(__file__).resolve().parents[2]
         acl = AclAnthologyAdapter(SafeHttpClient(allowed_hosts={"aclanthology.org"}))
         ijcai = IjcaiProceedingsAdapter(SafeHttpClient(allowed_hosts={"www.ijcai.org"}))
-        repository_root = Path(__file__).resolve().parents[2]
+        ieee = IeeeXploreAdapter(
+            IeeeBridge(
+                script=repository_root / "scripts" / "ieee-playwright.mjs",
+                profile_root=paths.profiles / "ieee",
+                dependency_root=paths.dependencies,
+                work_root=paths.runs,
+                secret_path=paths.secrets / "secrets.clixml",
+            )
+        )
         return cls(
             paths=paths,
             repository_root=repository_root,
             registry=Registry(paths.registry),
-            resolver=Resolver(AdapterRouter.with_defaults([acl, ijcai])),
+            resolver=Resolver(AdapterRouter.with_defaults([acl, ijcai, ieee])),
         )
 
     def fetch(self, value: str, output: Path) -> DeliveryResult:
