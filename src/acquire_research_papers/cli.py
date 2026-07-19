@@ -19,11 +19,22 @@ from acquire_research_papers.delivery import DeliveryResult, GenericDelivery
 from acquire_research_papers.discovery.corpus import CorpusDiscoverer, CorpusWorkflow
 from acquire_research_papers.discovery.crossref import CrossrefClient
 from acquire_research_papers.http import RateLimited, SafeHttpClient
+from acquire_research_papers.mineru import (
+    DpapiMineruTokenProvider,
+    MineruCache,
+    MineruCliRunner,
+    MineruRateLimited,
+)
 from acquire_research_papers.models import PaperStatus
 from acquire_research_papers.paths import AppPaths, ensure_outside_repository
 from acquire_research_papers.registry import Registry
+from acquire_research_papers.research.workflow import ResearchWorkflow
 from acquire_research_papers.resolver import AmbiguousInput, Resolver
-from acquire_research_papers.specs import SpecValidationError, load_corpus_spec
+from acquire_research_papers.specs import (
+    SpecValidationError,
+    load_corpus_spec,
+    load_research_brief,
+)
 
 
 @dataclass
@@ -33,6 +44,7 @@ class Application:
     registry: Registry
     resolver: Resolver
     corpus_workflow: CorpusWorkflow | None = None
+    research_workflow: ResearchWorkflow | None = None
 
     @classmethod
     def for_test(
@@ -42,6 +54,7 @@ class Application:
         repository_root: Path,
         adapter: SourceAdapter | None = None,
         corpus_workflow: CorpusWorkflow | None = None,
+        research_workflow: ResearchWorkflow | None = None,
     ) -> Application:
         paths = AppPaths.for_root(app_root)
         paths.create_directories()
@@ -56,6 +69,7 @@ class Application:
             registry=Registry(paths.registry),
             resolver=Resolver(router),
             corpus_workflow=corpus_workflow,
+            research_workflow=research_workflow,
         )
 
     @classmethod
@@ -77,6 +91,12 @@ class Application:
         crossref = CrossrefClient(
             client=SafeHttpClient(allowed_hosts={"api.crossref.org"}),
         )
+        mineru_runner = MineruCliRunner(
+            token_provider=DpapiMineruTokenProvider(
+                script=repository_root / "scripts" / "read-mineru-token.ps1",
+                secret_path=paths.secrets / "secrets.clixml",
+            )
+        )
         return cls(
             paths=paths,
             repository_root=repository_root,
@@ -84,6 +104,10 @@ class Application:
             resolver=Resolver(AdapterRouter.with_defaults([acl, ijcai, ieee])),
             corpus_workflow=CorpusWorkflow(
                 discoverer=CorpusDiscoverer([crossref.corpus_searcher])
+            ),
+            research_workflow=ResearchWorkflow(
+                discoverer=lambda _plan: (),
+                mineru_cache=MineruCache(paths.cache, runner=mineru_runner),
             ),
         )
 
@@ -142,6 +166,9 @@ def build_parser() -> argparse.ArgumentParser:
     corpus = discover_modes.add_parser("corpus", help="plan a quota-driven paper corpus")
     corpus.add_argument("--spec", type=Path, required=True)
     corpus.add_argument("--output", type=Path, required=True)
+    research = discover_modes.add_parser("research", help="plan evidence-driven literature research")
+    research.add_argument("--brief", type=Path, required=True)
+    research.add_argument("--output", type=Path, required=True)
     return parser
 
 
@@ -193,6 +220,24 @@ def run_cli(
                 }
             )
             return 0
+        if args.command == "discover" and args.discover_mode == "research":
+            if app.research_workflow is None:
+                raise AmbiguousInput("research discovery is not configured")
+            destination = ensure_outside_repository(args.output, app.repository_root)
+            result = app.research_workflow.run(load_research_brief(args.brief), destination)
+            _emit(
+                {
+                    "status": result.status,
+                    "query_passes": result.query_passes,
+                    "manifest": str(result.delivery.manifest),
+                    "pending_review": str(result.delivery.pending_review),
+                    "evidence_map": str(result.delivery.evidence_map),
+                    "nearest_work_matrix": str(result.delivery.nearest_work_matrix),
+                    "gap_analysis": str(result.delivery.gap_analysis),
+                    "research_plan": str(result.delivery.research_plan),
+                }
+            )
+            return 0
         if args.command in {"resume", "review"}:
             raise AmbiguousInput(f"{args.command} requires a task produced by discover")
         parser.print_help()
@@ -203,7 +248,7 @@ def run_cli(
     except AccessRequired as exc:
         _emit({"status": "error", "error_code": "access_required", "message": str(exc)})
         return 69
-    except RateLimited as exc:
+    except (RateLimited, MineruRateLimited) as exc:
         _emit({"status": "error", "error_code": "rate_limited", "message": str(exc)})
         return 75
     except (PageContractChanged, MetadataMismatch, BibMissing, InvalidPdfError) as exc:

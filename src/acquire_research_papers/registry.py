@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 import threading
@@ -308,3 +309,33 @@ class Registry:
             except Exception:
                 self._connection.execute("ROLLBACK")
                 raise
+
+    def add_evidence(self, task_id: str, payload: dict[str, Any]) -> int:
+        paper_id = str(payload.get("paper_id") or "")
+        claim_id = str(payload.get("claim_id") or "")
+        relation = str(payload.get("relation") or "")
+        if not task_id or not paper_id or not claim_id or not relation:
+            raise ValueError("task_id, paper_id, claim_id, and relation are required")
+        cursor = self._connection.execute(
+            """
+            INSERT INTO evidence (
+                task_id, paper_id, claim_id, relation, payload_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                task_id,
+                paper_id,
+                claim_id,
+                relation,
+                json.dumps(payload, ensure_ascii=False, sort_keys=True),
+                _now(),
+            ),
+        )
+        return int(cursor.lastrowid)
+
+    def evidence_for_task(self, task_id: str) -> list[dict[str, Any]]:
+        rows = self._connection.execute(
+            "SELECT payload_json FROM evidence WHERE task_id = ? ORDER BY evidence_id",
+            (task_id,),
+        ).fetchall()
+        return [json.loads(row["payload_json"]) for row in rows]
