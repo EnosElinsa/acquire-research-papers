@@ -22,11 +22,13 @@ The `ieee_gxu` scope contains the Guangxi University credential. The browser bri
 
 The `mineru` scope contains the MinerU API token. It is read through a child-process bridge and injected only into the precision CLI child's `MINERU_TOKEN` environment. Do not export it in the parent shell.
 
-Optional discovery or publisher API keys belong in named encrypted scopes. A missing optional key disables that enhancement without weakening selection rules. ScienceDirect v1 uses campus/IP entitlement and stores no South China Agricultural University account.
+The optional `sciencedirect_scau` scope contains the South China Agricultural University unified-authentication credential. Add or replace only this scope with `scripts/setup-sciencedirect-secret.ps1`; the update preserves `ieee_gxu` and `mineru`. The browser bridge rejects every host except exact `vpn.scau.edu.cn`, clears decrypted strings after one submission, and stores the authenticated session only in the dedicated `sciencedirect-scau` browser profile. The exact artifact proxy is `www-sciencedirect-com-s.vpn.scau.edu.cn`; it can receive cookies but never the plaintext credential.
+
+Optional discovery or publisher API keys belong in named encrypted scopes. A missing optional key disables that enhancement without weakening selection rules. ScienceDirect direct/open and campus-IP access remain credential-free and run before the optional SCAU scope is read.
 
 ## Browser isolation
 
-Use only the skill's dedicated persistent profile. Never locate, attach to, enumerate, or copy the user's normal Chrome profile. Cookies remain inside the browser context. PDF and citation requests disable automatic redirects so headers cannot be forwarded off the approved host.
+Use only the skill's dedicated persistent profiles. Never locate, attach to, enumerate, or copy the user's normal Chrome profile. Cookies remain inside the browser context. PDF and citation requests disable automatic redirects so headers cannot be forwarded off the approved host. IEEE and ScienceDirect use separate `ieee` and `sciencedirect-scau` profile directories.
 
 Playwright Core is fixed at version `1.61.1`, its npm tarball and integrity hash are pinned, lifecycle scripts are disabled, and installation occurs only under the global dependency root.
 

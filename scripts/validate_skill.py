@@ -20,6 +20,9 @@ REQUIRED_FILES = {
     "references/research-mode.md",
     "references/source-policies.md",
     "references/credentials-and-cache.md",
+    "scripts/setup-sciencedirect-secret.ps1",
+    "scripts/read-sciencedirect-credential.ps1",
+    "scripts/sciencedirect-playwright.mjs",
 }
 PLACEHOLDERS = ("TODO", "TBD", "FIXME", "XXX", "[TODO")
 

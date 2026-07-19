@@ -20,7 +20,7 @@
 Skill 对开放论文使用受控的官方页面下载，对需要订阅权限的平台使用来源专用的机构访问适配器。首批机构访问包括：
 
 - IEEE Xplore：广西大学 CARSI。
-- Elsevier ScienceDirect：华南农业大学校园网/IP 权限。
+- Elsevier ScienceDirect：先使用华南农业大学校园网/IP 权限，必要时使用独立 DPAPI scope 与学校 WebVPN；WebVPN 不支持 Elsevier 全文时显式要求 aTrust。
 
 所有凭据、Cookie、浏览器 profile、缓存、注册表和下载结果均位于 Git 仓库之外。
 
@@ -416,9 +416,9 @@ discovered
 
 ### 9.4 Elsevier/华南农业大学
 
-- 第一版使用 ScienceDirect 官方网页和当前校园网/IP entitlement。
-- 不保存华南农业大学账号。
-- 当前网络无权限时返回 `access_required`，不尝试绕过。
+- `v0.1.0` 使用 ScienceDirect 官方网页和当前校园网/IP entitlement。
+- `v0.2.0` 可选保存华南农业大学统一身份认证凭据到仓库外的 DPAPI scope `sciencedirect_scau`，只在精确主机 `vpn.scau.edu.cn` 释放一次。
+- WebVPN 产物只允许精确代理主机 `www-sciencedirect-com-s.vpn.scau.edu.cn`；当前网络和 WebVPN 均无权限时返回 `access_required` 或 `atrust_required`，不尝试绕过。
 - Elsevier API 需要独立 API key；将来可配置，但不作为校园网网页下载的前提。
 
 ## 10. BibTeX 与配对核验

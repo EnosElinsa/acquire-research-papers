@@ -34,7 +34,11 @@ Require exact `dl.acm.org` landing/PDF hosts and a page-exposed `/action/exportC
 
 ### ScienceDirect
 
-Use exact `www.sciencedirect.com` article, `pdfft`, and `/sdfe/arp/cite` endpoints for the same PII. Try open access or the current South China Agricultural University campus/IP entitlement. If no authorized PDF link is exposed, return `access_required`. Do not store a campus account.
+Use exact `www.sciencedirect.com` article, `pdfft`, and `/sdfe/arp/cite` endpoints for the same PII. Try open access or the current South China Agricultural University campus/IP entitlement before reading an institutional credential.
+
+When direct access returns `access_required`, the dedicated off-screen browser may try the university's official WebVPN once. Release the `sciencedirect_scau` credential only while the current hostname exactly equals `vpn.scau.edu.cn`, submit it once, and require the browser to return to `www-sciencedirect-com-s.vpn.scau.edu.cn`. Retrieve the PDF and raw `/sdfe/arp/cite` BibTeX through that exact proxy host while recording canonical `www.sciencedirect.com` publisher URLs. Stop on CAPTCHA, OTP, an unknown host, an incomplete login, metadata/PII mismatch, or a redirect away from the exact proxy.
+
+The [university remote-access instructions](https://lib.scau.edu.cn/2021/0415/c14674a298762/page.htm) state that Elsevier full text may require the aTrust client when WebVPN is insufficient. In that case return `atrust_required`; do not install, launch, or automate aTrust without separate user authorization, and never report the WebVPN login alone as successful paper access.
 
 ### Direct official sources
 

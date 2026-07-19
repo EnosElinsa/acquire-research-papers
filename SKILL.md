@@ -1,6 +1,6 @@
 ---
 name: acquire-research-papers
-description: Discover, verify, and acquire research papers with their official publisher BibTeX. Use when a user asks to fetch specified papers, assemble a venue/topic/year corpus, investigate literature gaps or related work, find claim-supporting citations, use IEEE institutional access, or optionally convert selected PDFs to Markdown with MinerU.
+description: Use when a user asks to fetch specified papers, assemble a venue/topic/year corpus, investigate literature gaps or related work, find claim-supporting citations, use IEEE or ScienceDirect institutional access, or optionally convert selected PDFs to Markdown with MinerU.
 ---
 
 # Acquire Research Papers
@@ -35,6 +35,12 @@ uv run --project $skill arp fetch --input <DOI-or-official-URL> --output <direct
 Use the emitted JSON only after `status` is `delivered`. A title that is not uniquely resolved must go through discovery first.
 
 Read [references/source-policies.md](references/source-policies.md) before using a new publisher or repairing a page contract. Read [references/credentials-and-cache.md](references/credentials-and-cache.md) before institutional access or MinerU.
+
+For unattended South China Agricultural University ScienceDirect access, configure the optional encrypted scope once from an interactive terminal:
+
+```powershell
+& "$skill\scripts\setup-sciencedirect-secret.ps1"
+```
 
 ### Discover a corpus
 
@@ -77,6 +83,7 @@ uv run --project $skill arp export-md --pdf <paper.pdf> --output <directory>
 
 - Never print, log, summarize, or commit credentials, tokens, cookies, browser storage, or decrypted values.
 - Release the Guangxi University credential only to exact host `idp.gxu.edu.cn`; stop on any other host, CAPTCHA, OTP, or incomplete login.
+- Release the South China Agricultural University credential only to exact host `vpn.scau.edu.cn`. The only approved ScienceDirect WebVPN artifact host is `www-sciencedirect-com-s.vpn.scau.edu.cn`; stop on any lookalike host, CAPTCHA, OTP, incomplete login, or `atrust_required` boundary.
 - Never attach automation to the user's normal Chrome profile or export cookies.
 - Never bypass a publisher or institution access control.
 - Never treat Crossref, OpenAlex, Semantic Scholar, a mirror, or a parsed PDF as the official BibTeX source.
