@@ -1,0 +1,4 @@
+interface:
+  display_name: "Research Paper Acquisition"
+  short_description: "Discover and acquire verified research papers"
+  default_prompt: "Use $acquire-research-papers to discover or fetch official papers and BibTeX."

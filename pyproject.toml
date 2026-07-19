@@ -1,0 +1,39 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "acquire-research-papers"
+version = "0.1.0"
+description = "Codex skill and CLI for verified academic paper acquisition"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+  "beautifulsoup4>=4.13,<5",
+  "httpx>=0.28,<1",
+  "jsonschema>=4.23,<5",
+  "platformdirs>=4.3,<5",
+  "pybtex>=0.25,<1",
+  "PyYAML>=6.0,<7",
+]
+
+[project.scripts]
+arp = "acquire_research_papers.cli:main"
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3,<9",
+  "pytest-httpserver>=1.1,<2",
+  "ruff>=0.11,<1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/acquire_research_papers"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
