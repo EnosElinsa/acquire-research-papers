@@ -19,8 +19,9 @@ function Assert-Throws([scriptblock]$Action, [string]$Message) {
 $root = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..\..")).Path
 $storePath = Join-Path $root "scripts\secret-store.ps1"
 $bridgePath = Join-Path $root "scripts\read-browser-credential.ps1"
+$mineruPath = Join-Path $root "scripts\read-mineru-token.ps1"
 $migrationPath = Join-Path $root "scripts\migrate-legacy-secrets.ps1"
-foreach ($required in @($storePath, $bridgePath, $migrationPath)) {
+foreach ($required in @($storePath, $bridgePath, $mineruPath, $migrationPath)) {
   if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
     throw "Expected implementation file is missing: $required"
   }
@@ -55,6 +56,8 @@ try {
   $credentialJson = & $bridgePath -ExpectedHost "idp.gxu.edu.cn" -SecretPath $secretPath | ConvertFrom-Json
   Assert-Equal $credentialJson.username "synthetic-user" "bridge username"
   Assert-Equal $credentialJson.password "synthetic-password" "bridge password"
+  $mineruToken = & $mineruPath -SecretPath $secretPath
+  Assert-Equal $mineruToken "synthetic-token" "MinerU token bridge"
 
   $legacyPath = Join-Path $tempRoot "legacy.clixml"
   [pscustomobject]@{
