@@ -19,9 +19,10 @@ function Assert-Throws([scriptblock]$Action, [string]$Message) {
 $root = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..\..")).Path
 $storePath = Join-Path $root "scripts\secret-store.ps1"
 $bridgePath = Join-Path $root "scripts\read-browser-credential.ps1"
+$scienceDirectBridgePath = Join-Path $root "scripts\read-sciencedirect-credential.ps1"
 $mineruPath = Join-Path $root "scripts\read-mineru-token.ps1"
 $migrationPath = Join-Path $root "scripts\migrate-legacy-secrets.ps1"
-foreach ($required in @($storePath, $bridgePath, $mineruPath, $migrationPath)) {
+foreach ($required in @($storePath, $bridgePath, $scienceDirectBridgePath, $mineruPath, $migrationPath)) {
   if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
     throw "Expected implementation file is missing: $required"
   }
@@ -37,6 +38,8 @@ try {
   $password = ConvertTo-SecureString "synthetic-password" -AsPlainText -Force
   $token = ConvertTo-SecureString "synthetic-token" -AsPlainText -Force
   $credential = [Management.Automation.PSCredential]::new("synthetic-user", $password)
+  $scauPassword = ConvertTo-SecureString "synthetic-scau-password" -AsPlainText -Force
+  $scauCredential = [Management.Automation.PSCredential]::new("synthetic-scau", $scauPassword)
 
   Assert-Equal (Get-AcquisitionSecretPath $localAppData) $secretPath "default path"
   Export-AcquisitionSecrets -IeeeCredential $credential -MinerUToken $token -Path $secretPath
@@ -50,12 +53,33 @@ try {
   Assert-Equal $payload.Scopes.ieee_gxu.Credential.UserName "synthetic-user" "username"
   Assert-Equal (ConvertFrom-AcquisitionSecureString $payload.Scopes.mineru.Token) "synthetic-token" "token"
 
+  Set-ScienceDirectCredential -Credential $scauCredential -Path $secretPath
+  $updated = Import-AcquisitionSecrets -Path $secretPath
+  $serialized = Get-Content -Raw -LiteralPath $secretPath
+  Assert-True (-not $serialized.Contains("synthetic-scau-password")) "SCAU password must stay encrypted"
+  Assert-Equal $updated.Scopes.ieee_gxu.Credential.UserName "synthetic-user" "IEEE scope preserved"
+  Assert-Equal (ConvertFrom-AcquisitionSecureString $updated.Scopes.mineru.Token) "synthetic-token" "MinerU scope preserved"
+  Assert-Equal $updated.Scopes.sciencedirect_scau.Organization "South China Agricultural University" "SCAU organization"
+  Assert-Equal $updated.Scopes.sciencedirect_scau.Credential.UserName "synthetic-scau" "SCAU username"
+
   Assert-Throws {
     & $bridgePath -ExpectedHost "idp.gxu.edu.cn.evil.example" -SecretPath $secretPath | Out-Null
   } "lookalike host must be rejected"
   $credentialJson = & $bridgePath -ExpectedHost "idp.gxu.edu.cn" -SecretPath $secretPath | ConvertFrom-Json
   Assert-Equal $credentialJson.username "synthetic-user" "bridge username"
   Assert-Equal $credentialJson.password "synthetic-password" "bridge password"
+  foreach ($rejectedHost in @(
+    "vpn.scau.edu.cn.evil.example",
+    "www-sciencedirect-com-s.vpn.scau.edu.cn",
+    "VPN.SCAU.EDU.CN."
+  )) {
+    Assert-Throws {
+      & $scienceDirectBridgePath -ExpectedHost $rejectedHost -SecretPath $secretPath | Out-Null
+    } "SCAU lookalike or proxy host must be rejected: $rejectedHost"
+  }
+  $scauJson = & $scienceDirectBridgePath -ExpectedHost "vpn.scau.edu.cn" -SecretPath $secretPath | ConvertFrom-Json
+  Assert-Equal $scauJson.username "synthetic-scau" "SCAU bridge username"
+  Assert-Equal $scauJson.password "synthetic-scau-password" "SCAU bridge password"
   $mineruToken = & $mineruPath -SecretPath $secretPath
   Assert-Equal $mineruToken "synthetic-token" "MinerU token bridge"
 
@@ -73,6 +97,7 @@ try {
 
   Write-Output "PASS scoped DPAPI secret storage"
   Write-Output "PASS exact-host credential gate"
+  Write-Output "PASS independent SCAU credential scope"
   Write-Output "PASS legacy ciphertext migration"
 }
 finally {

@@ -31,6 +31,30 @@ function Set-AcquisitionSecretAcl([string]$Path) {
   if ($LASTEXITCODE -ne 0) { throw "Failed to restrict the secret file ACL." }
 }
 
+function Save-AcquisitionSecretPayload(
+  [psobject]$Payload,
+  [string]$Path = (Get-AcquisitionSecretPath)
+) {
+  if ($null -eq $Payload) { throw "Secret payload is missing." }
+  if ([string]::IsNullOrWhiteSpace($Path)) { throw "Secret path is missing." }
+
+  $parent = Split-Path -Parent $Path
+  if ([string]::IsNullOrWhiteSpace($parent)) { throw "Secret path must include a parent directory." }
+  New-Item -ItemType Directory -Path $parent -Force | Out-Null
+  $temporaryPath = "$Path.$([guid]::NewGuid().ToString('N')).tmp"
+  try {
+    $Payload | Export-Clixml -LiteralPath $temporaryPath
+    Set-AcquisitionSecretAcl -Path $temporaryPath
+    Move-Item -LiteralPath $temporaryPath -Destination $Path -Force
+    Set-AcquisitionSecretAcl -Path $Path
+  }
+  finally {
+    if (Test-Path -LiteralPath $temporaryPath) {
+      Remove-Item -LiteralPath $temporaryPath -Force
+    }
+  }
+}
+
 function Export-AcquisitionSecrets(
   [Management.Automation.PSCredential]$IeeeCredential,
   [Security.SecureString]$MinerUToken,
@@ -42,11 +66,6 @@ function Export-AcquisitionSecrets(
   if ($null -eq $MinerUToken -or $MinerUToken.Length -eq 0) {
     throw "MinerU token is missing."
   }
-  if ([string]::IsNullOrWhiteSpace($Path)) { throw "Secret path is missing." }
-
-  $parent = Split-Path -Parent $Path
-  if ([string]::IsNullOrWhiteSpace($parent)) { throw "Secret path must include a parent directory." }
-  New-Item -ItemType Directory -Path $parent -Force | Out-Null
   $payload = [pscustomobject]@{
     SchemaVersion = 1
     Scopes = [pscustomobject]@{
@@ -60,18 +79,28 @@ function Export-AcquisitionSecrets(
       api_keys = [pscustomobject]@{}
     }
   }
-  $temporaryPath = "$Path.$([guid]::NewGuid().ToString('N')).tmp"
-  try {
-    $payload | Export-Clixml -LiteralPath $temporaryPath
-    Set-AcquisitionSecretAcl -Path $temporaryPath
-    Move-Item -LiteralPath $temporaryPath -Destination $Path -Force
-    Set-AcquisitionSecretAcl -Path $Path
+  Save-AcquisitionSecretPayload -Payload $payload -Path $Path
+}
+
+function Set-ScienceDirectCredential(
+  [Management.Automation.PSCredential]$Credential,
+  [string]$Path = (Get-AcquisitionSecretPath)
+) {
+  if ($null -eq $Credential -or [string]::IsNullOrWhiteSpace($Credential.UserName)) {
+    throw "ScienceDirect SCAU credential is missing."
   }
-  finally {
-    if (Test-Path -LiteralPath $temporaryPath) {
-      Remove-Item -LiteralPath $temporaryPath -Force
-    }
+  $payload = Import-AcquisitionSecrets -Path $Path
+  $scope = [pscustomobject]@{
+    Organization = "South China Agricultural University"
+    Credential = $Credential
   }
+  if ($payload.Scopes.PSObject.Properties.Name -contains "sciencedirect_scau") {
+    $payload.Scopes.sciencedirect_scau = $scope
+  }
+  else {
+    $payload.Scopes | Add-Member -NotePropertyName sciencedirect_scau -NotePropertyValue $scope
+  }
+  Save-AcquisitionSecretPayload -Payload $payload -Path $Path
 }
 
 function Import-AcquisitionSecrets([string]$Path = (Get-AcquisitionSecretPath)) {
@@ -89,6 +118,13 @@ function Import-AcquisitionSecrets([string]$Path = (Get-AcquisitionSecretPath)) 
   if ($payload.Scopes.mineru.Token -isnot [Security.SecureString] -or
       $payload.Scopes.mineru.Token.Length -eq 0) {
     throw "MinerU token scope is missing or invalid."
+  }
+  if ($payload.Scopes.PSObject.Properties.Name -contains "sciencedirect_scau") {
+    if ($payload.Scopes.sciencedirect_scau.Organization -ne "South China Agricultural University" -or
+        $payload.Scopes.sciencedirect_scau.Credential -isnot [Management.Automation.PSCredential] -or
+        [string]::IsNullOrWhiteSpace($payload.Scopes.sciencedirect_scau.Credential.UserName)) {
+      throw "ScienceDirect SCAU credential scope is invalid."
+    }
   }
   return $payload
 }
