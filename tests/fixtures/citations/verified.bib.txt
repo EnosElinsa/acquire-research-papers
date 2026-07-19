@@ -1,0 +1,7 @@
+@article{verified2026,
+  author = {Lovelace, Ada and Turing, Alan},
+  title = {Verified Paper: A Test},
+  journal = {IEEE Test},
+  year = {2026},
+  doi = {10.1109/TEST.1}
+}
