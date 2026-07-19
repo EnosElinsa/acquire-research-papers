@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/EnosElinsa/acquire-research-papers/schemas/corpus-spec.schema.json",
+  "title": "CorpusSpec",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["mode", "name", "target"],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1, "default": 1},
+    "mode": {"const": "corpus"},
+    "name": {"type": "string", "minLength": 1},
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["minimum", "maximum"],
+      "properties": {
+        "minimum": {"type": "integer", "minimum": 0},
+        "preferred": {"type": "integer", "minimum": 0},
+        "maximum": {"type": "integer", "minimum": 1}
+      }
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "venues": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name"],
+            "properties": {
+              "name": {"type": "string", "minLength": 1},
+              "aliases": {"type": "array", "items": {"type": "string"}},
+              "kind": {"type": "string"},
+              "issn": {"type": "array", "items": {"type": "string"}},
+              "isbn": {"type": "array", "items": {"type": "string"}}
+            }
+          }
+        },
+        "years": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "include": {"type": "array", "items": {"type": "integer"}},
+            "priority": {"type": "array", "items": {"type": "integer"}}
+          }
+        },
+        "publication_types": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "include": {"type": "array", "items": {"type": "string"}},
+            "exclude": {"type": "array", "items": {"type": "string"}}
+          }
+        },
+        "topics": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "include": {"type": "array", "items": {"type": "string"}},
+            "synonyms": {"type": "array", "items": {"type": "string"}},
+            "exclude": {"type": "array", "items": {"type": "string"}}
+          }
+        }
+      }
+    },
+    "quotas": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "recent_window": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["from", "minimum_ratio"],
+          "properties": {
+            "from": {"type": "string", "format": "date"},
+            "minimum_ratio": {"type": "number", "minimum": 0, "maximum": 1}
+          }
+        },
+        "groups": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "minimum"],
+            "properties": {
+              "name": {"type": "string"},
+              "minimum": {"type": "integer", "minimum": 0},
+              "maximum": {"type": "integer", "minimum": 0},
+              "venues": {"type": "array", "items": {"type": "string"}},
+              "years": {"type": "array", "items": {"type": "integer"}}
+            }
+          }
+        }
+      }
+    },
+    "delivery": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "require_pdf": {"type": "boolean", "default": true},
+        "require_official_bibtex": {"type": "boolean", "default": true},
+        "export_markdown": {"type": "boolean", "default": false},
+        "profile": {"type": "string", "enum": ["generic", "numbered"]},
+        "naming_template": {"type": "string"}
+      }
+    },
+    "scope_selector": {"type": "string"},
+    "seeds": {"type": "array", "items": {"type": "string"}}
+  }
+}

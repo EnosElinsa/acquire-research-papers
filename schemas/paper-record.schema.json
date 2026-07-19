@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/EnosElinsa/acquire-research-papers/schemas/paper-record.schema.json",
+  "title": "PaperRecord",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["paper_id", "canonical_title", "status"],
+  "properties": {
+    "paper_id": {"type": "string", "minLength": 1},
+    "doi": {"type": ["string", "null"]},
+    "canonical_title": {"type": "string", "minLength": 1},
+    "authors": {"type": "array", "items": {"type": "string"}},
+    "year": {"type": ["integer", "null"]},
+    "venue": {"type": ["string", "null"]},
+    "publisher": {"type": ["string", "null"]},
+    "landing_url": {"type": ["string", "null"], "format": "uri"},
+    "pdf_url": {"type": ["string", "null"], "format": "uri"},
+    "bibtex_url": {"type": ["string", "null"], "format": "uri"},
+    "status": {"type": "string"},
+    "error_code": {"type": ["string", "null"]},
+    "next_action": {"type": ["string", "null"]},
+    "paths": {"type": "object", "additionalProperties": {"type": "string"}},
+    "hashes": {"type": "object", "additionalProperties": {"type": "string"}},
+    "provenance": {"type": "array", "items": {"type": "object"}},
+    "timestamps": {"type": "object", "additionalProperties": {"type": "string"}}
+  }
+}

@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/EnosElinsa/acquire-research-papers/schemas/research-brief.schema.json",
+  "title": "ResearchBrief",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "mode", "question_type", "research_question"],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "mode": {"const": "research"},
+    "question_type": {
+      "type": "string",
+      "enum": ["gap-analysis", "similar-work", "claim-citation", "related-work"]
+    },
+    "research_question": {"type": "string", "minLength": 1},
+    "work_under_review": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "scenario": {"type": "string"},
+        "mechanism": {"type": "string"},
+        "decisions": {"type": "array", "items": {"type": "string"}},
+        "objectives": {"type": "array", "items": {"type": "string"}},
+        "constraints": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "claims": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {"type": "string"},
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "text"],
+            "properties": {
+              "id": {"type": "string"},
+              "text": {"type": "string"},
+              "required_relation": {"type": "string"}
+            }
+          }
+        ]
+      }
+    },
+    "seed_papers": {"type": "array", "items": {"type": "string"}},
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "years": {
+          "oneOf": [
+            {"type": "null"},
+            {"type": "array", "items": {"type": "integer"}}
+          ]
+        },
+        "venues": {"type": "array", "items": {"type": "string"}},
+        "include_terms": {"type": "array", "items": {"type": "string"}},
+        "exclude_terms": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "delivery": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "write_narrative": {"type": "boolean", "default": false},
+        "export_markdown": {"type": "boolean", "default": false}
+      }
+    }
+  }
+}
