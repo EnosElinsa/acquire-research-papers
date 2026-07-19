@@ -17,6 +17,7 @@ from acquire_research_papers.acquisition.adapters.ieee import (
 )
 from acquire_research_papers.acquisition.adapters.ijcai import IjcaiProceedingsAdapter
 from acquire_research_papers.acquisition.adapters.sciencedirect import ScienceDirectAdapter
+from acquire_research_papers.acquisition.adapters.sciencedirect_bridge import ScienceDirectBridge
 from acquire_research_papers.acquisition.base import AccessRequired, PageContractChanged, SourceAdapter
 from acquire_research_papers.acquisition.router import AdapterRouter
 from acquire_research_papers.artifacts import InvalidPdfError, sha256_file
@@ -96,7 +97,14 @@ class Application:
         acl = AclAnthologyAdapter(SafeHttpClient(allowed_hosts={"aclanthology.org"}))
         ijcai = IjcaiProceedingsAdapter(SafeHttpClient(allowed_hosts={"www.ijcai.org"}))
         acm = AcmDigitalLibraryAdapter.for_production()
-        sciencedirect = ScienceDirectAdapter.for_production()
+        sciencedirect_bridge = ScienceDirectBridge(
+            script=repository_root / "scripts" / "sciencedirect-playwright.mjs",
+            profile_root=paths.profiles / "sciencedirect-scau",
+            dependency_root=paths.dependencies,
+            work_root=paths.runs,
+            secret_path=paths.secrets / "secrets.clixml",
+        )
+        sciencedirect = ScienceDirectAdapter.for_production(bridge=sciencedirect_bridge)
         ieee = IeeeXploreAdapter(
             IeeeBridge(
                 script=repository_root / "scripts" / "ieee-playwright.mjs",
