@@ -132,7 +132,7 @@ Expected: FAIL because the module is missing.
 
 - [ ] **Step 3: Implement minimal browser bridge**
 
-Implement exact canonical/proxy URL validation, dedicated path validation, strict unique login fields, CAPTCHA/OTP detection, one credential read/submission, current-page metadata parsing, and same-PII PDF/BibTeX requests. Emit exactly one success JSON object and structured non-sensitive stderr on failure.
+Implement exact canonical/proxy URL validation, dedicated path validation, strict unique login fields, CAPTCHA/OTP detection, one credential read/submission, current-page metadata parsing, and same-PII PDF/BibTeX requests. Emit exactly one success JSON object and structured non-sensitive stderr on failure. If WebVPN authentication succeeds but Elsevier entitlement remains unavailable, emit phase `atrust-required`; never install or control aTrust from this bridge.
 
 - [ ] **Step 4: Run GREEN and commit**
 
@@ -229,7 +229,7 @@ git commit -m "feat: add ScienceDirect institutional fallback"
 
 - [ ] **Step 1: Write failing documentation/layout tests**
 
-Require the new setup/read/browser scripts and require the policy text to name `sciencedirect_scau`, `vpn.scau.edu.cn`, the exact proxy host, one credential submission, and structured stops for CAPTCHA/OTP.
+Require the new setup/read/browser scripts and require the policy text to name `sciencedirect_scau`, `vpn.scau.edu.cn`, the exact proxy host, one credential submission, and structured stops for CAPTCHA/OTP/aTrust-required boundaries.
 
 - [ ] **Step 2: Run RED**
 
@@ -264,7 +264,7 @@ git diff --check
 
 - [ ] **Step 6: Run a bounded live subscribed-paper test**
 
-Fetch `https://www.sciencedirect.com/science/article/pii/S1049007824000411` into a new directory under the user's Downloads folder. Verify `%PDF-`, raw BibTeX DOI match, canonical provenance, no Markdown, one login at most, and a duplicate registry fetch that does not reopen authentication. If CAPTCHA, OTP, or entitlement exclusion occurs, report that exact structured boundary and do not bypass it.
+Fetch `https://www.sciencedirect.com/science/article/pii/S1049007824000411` into a new directory under the user's Downloads folder. Verify `%PDF-`, raw BibTeX DOI match, canonical provenance, no Markdown, one login at most, and a duplicate registry fetch that does not reopen authentication. If CAPTCHA, OTP, entitlement exclusion, or the official `atrust_required` boundary occurs, report that exact structured boundary and do not bypass it or install aTrust without separate authorization.
 
 - [ ] **Step 7: Commit and finish the branch**
 
