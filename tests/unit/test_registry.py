@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from acquire_research_papers.artifacts import sha256_file
 from acquire_research_papers.models import ErrorCode, PaperStatus
 from acquire_research_papers.registry import Registry, StateTransitionError
 
@@ -65,3 +66,37 @@ def test_registry_state_survives_reopen(tmp_path: Path) -> None:
     reopened = Registry(path)
     assert reopened.status(paper_id) is PaperStatus.AUTO_ACCEPTED
     assert reopened.journal_mode() == "wal"
+
+
+def test_verified_delivery_reuse_rejects_tampered_artifacts(tmp_path: Path) -> None:
+    registry = Registry(tmp_path / "registry.sqlite")
+    paper_id = registry.create_verified_paper("Cached", "10.1000/cached")
+    registry.transition(paper_id, PaperStatus.DELIVERED)
+    output = tmp_path / "out"
+    output.mkdir()
+    paths = {
+        "pdf": output / "paper.pdf",
+        "bibtex": output / "citation.bib",
+        "provenance": output / "provenance.json",
+    }
+    paths["pdf"].write_bytes(b"%PDF-1.7\n%%EOF\n")
+    paths["bibtex"].write_text("@article{k}\n", encoding="utf-8")
+    paths["provenance"].write_text("{}\n", encoding="utf-8")
+    for kind, path in paths.items():
+        registry.record_artifact(
+            paper_id,
+            kind=kind,
+            path=path,
+            sha256=sha256_file(path),
+            source_url=f"https://publisher.example/{kind}",
+        )
+    registry.record_provenance(
+        paper_id,
+        source="publisher",
+        source_url="https://publisher.example/paper",
+        payload={},
+    )
+    assert registry.verified_delivery("10.1000/cached", output) == paths
+
+    paths["pdf"].write_bytes(b"tampered")
+    assert registry.verified_delivery("10.1000/cached", output) is None

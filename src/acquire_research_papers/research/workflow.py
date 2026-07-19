@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from acquire_research_papers.discovery.corpus import CandidateMetadata
@@ -16,6 +16,56 @@ class ResearchWorkflowResult:
     status: str
     query_passes: int
     delivery: ResearchDeliveryResult
+
+
+class ResearchDiscoverer:
+    def __init__(
+        self,
+        searchers: Iterable[Callable[[str, int], Iterable[CandidateMetadata]]],
+        *,
+        rows_per_query: int = 25,
+        maximum: int = 100,
+    ) -> None:
+        self.searchers = tuple(searchers)
+        self.rows_per_query = rows_per_query
+        self.maximum = maximum
+
+    def __call__(self, plan: ResearchPlan) -> tuple[CandidateMetadata, ...]:
+        discovered: dict[str, CandidateMetadata] = {}
+        query_passes: dict[str, list[str]] = {}
+        for query in plan.queries:
+            for searcher in self.searchers:
+                for candidate in searcher(query.query, self.rows_per_query):
+                    key = candidate.doi or candidate.key or (
+                        f"{candidate.title.casefold()}|{candidate.year}"
+                    )
+                    if not key:
+                        continue
+                    previous = discovered.get(key)
+                    if previous is None or candidate.relevance_score > previous.relevance_score:
+                        discovered[key] = candidate
+                    passes = query_passes.setdefault(key, [])
+                    if query.kind not in passes:
+                        passes.append(query.kind)
+        ranked = sorted(
+            discovered.items(),
+            key=lambda item: (
+                -item[1].relevance_score,
+                -item[1].citation_count,
+                -item[1].year,
+                item[0],
+            ),
+        )[: self.maximum]
+        return tuple(
+            replace(
+                candidate,
+                provenance={
+                    **candidate.provenance,
+                    "query_passes": query_passes[key],
+                },
+            )
+            for key, candidate in ranked
+        )
 
 
 class ResearchWorkflow:

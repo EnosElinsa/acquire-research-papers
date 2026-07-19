@@ -53,7 +53,7 @@ def test_public_skill_has_no_placeholders_or_readme() -> None:
 
 def test_tracked_text_contains_no_jwt_or_private_key() -> None:
     jwt = re.compile(r"eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}")
-    private_key = "-----BEGIN PRIVATE KEY-----"
+    private_key = "-----BEGIN " + "PRIVATE KEY-----"
     offenders = []
     for relative in tracked_files():
         path = ROOT / relative

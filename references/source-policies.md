@@ -24,7 +24,9 @@ Require one visible PDF link, one visible BibTeX link, matching DOI, and a parse
 
 ### IEEE Xplore
 
-Use the dedicated Playwright profile. Request the PDF iframe URL and `/xpl/downloadCitations` through the same browser-context request client with `maxRedirects: 0`. Try one authorized Guangxi University CARSI authentication only after the unauthenticated PDF attempt fails.
+Use the dedicated persistent Playwright profile in headful/off-screen Chrome because IEEE rejects the headless browser fingerprint. Read current metadata from `window.xplGlobal.document.metadata`, with legacy citation meta tags only as a fallback. Request the PDF iframe URL and `/rest/search/citation/format` through the same browser-context request client with `maxRedirects: 0`; the citation request must use `download-bibtex` and preserve the returned `data` string exactly.
+
+Try one authorized Guangxi University CARSI credential submission only after the unauthenticated PDF attempt fails. A pre-credential Chrome navigation error may retry once. On the exact `idp.gxu.edu.cn` attribute-release page titled `信息发布`, accept the unique `接受` action without changing the long-term consent preference. Never release credentials to another host. A free/open PDF transient and an already-authenticated PDF transient may each retry once without repeating authentication.
 
 ### ACM Digital Library
 

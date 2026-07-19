@@ -41,6 +41,8 @@ For every auto-accepted or user-approved candidate, route the canonical DOI or o
 
 Use stable, gap-free numbering only after pair verification. Reuse the global registry for DOI/title deduplication and interrupted-run recovery. A corpus run without an explicit Markdown request delivers PDF, BibTeX, manifests, and review files only.
 
+The default CLI automatically acquires selected high-confidence candidates and writes `acquisition-manifest.jsonl`. A known access, network, or page-contract failure defers that paper and records a concrete reason instead of terminating unrelated acquisitions. The delivered count, not the discovered count, determines whether the minimum target was met.
+
 ## Review output
 
 `candidates.jsonl` is an auditable candidate ledger, not a citation library. `pending-review.csv` contains only decisions requiring human or agent semantic judgment. After review, acquire accepted items through the same verified fetch path; do not add a source-specific shortcut.

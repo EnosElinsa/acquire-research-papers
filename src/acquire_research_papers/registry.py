@@ -9,7 +9,9 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
+from acquire_research_papers.artifacts import sha256_file
 from acquire_research_papers.models import ErrorCode, PaperStatus, normalize_doi
 
 
@@ -54,6 +56,16 @@ def _identity_key(
     return "|".join(
         (_identity_part(title), str(year or ""), _identity_part(first_author), _identity_part(venue))
     )
+
+
+def _doi_reference(value: str) -> str | None:
+    candidate = value.strip()
+    parsed = urlsplit(candidate)
+    if parsed.hostname and parsed.hostname.casefold() in {"doi.org", "dx.doi.org"}:
+        return normalize_doi(parsed.path.lstrip("/"))
+    if re.fullmatch(r"10\.\d{4,9}/\S+", candidate, flags=re.IGNORECASE):
+        return normalize_doi(candidate)
+    return None
 
 
 class Registry:
@@ -252,6 +264,99 @@ class Registry:
             """,
             (paper_id, current.value, current.value, code.value, message, _now()),
         )
+
+    def record_artifact(
+        self,
+        paper_id: str,
+        *,
+        kind: str,
+        path: Path,
+        sha256: str,
+        source_url: str,
+    ) -> None:
+        self._connection.execute(
+            """
+            INSERT INTO artifacts (paper_id, kind, path, sha256, source_url, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(paper_id, kind, sha256) DO UPDATE SET
+                path = excluded.path,
+                source_url = excluded.source_url
+            """,
+            (paper_id, kind, str(path.resolve()), sha256, source_url, _now()),
+        )
+
+    def record_provenance(
+        self,
+        paper_id: str,
+        *,
+        source: str,
+        source_url: str,
+        payload: dict[str, Any],
+    ) -> None:
+        self._connection.execute(
+            """
+            INSERT INTO provenance (paper_id, source, source_url, payload_json, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                paper_id,
+                source,
+                source_url.rstrip("/"),
+                json.dumps(payload, ensure_ascii=False, sort_keys=True),
+                _now(),
+            ),
+        )
+
+    def verified_delivery(self, reference: str, output_root: Path) -> dict[str, Path] | None:
+        doi = _doi_reference(reference)
+        if doi:
+            row = self._connection.execute(
+                "SELECT paper_id, status FROM papers WHERE doi = ?",
+                (doi,),
+            ).fetchone()
+        else:
+            source_url = reference.strip().rstrip("/")
+            row = self._connection.execute(
+                """
+                SELECT p.paper_id, p.status
+                FROM papers AS p
+                JOIN provenance AS v ON v.paper_id = p.paper_id
+                WHERE RTRIM(v.source_url, '/') = ?
+                ORDER BY v.provenance_id DESC
+                LIMIT 1
+                """,
+                (source_url,),
+            ).fetchone()
+        if row is None or row["status"] != PaperStatus.DELIVERED.value:
+            return None
+
+        artifact_rows = self._connection.execute(
+            """
+            SELECT kind, path, sha256
+            FROM artifacts
+            WHERE paper_id = ? AND kind IN ('pdf', 'bibtex', 'provenance')
+            ORDER BY artifact_id DESC
+            """,
+            (row["paper_id"],),
+        ).fetchall()
+        artifacts: dict[str, Path] = {}
+        destination = output_root.resolve()
+        for artifact in artifact_rows:
+            kind = str(artifact["kind"])
+            if kind in artifacts:
+                continue
+            path = Path(str(artifact["path"])).resolve()
+            if destination != path and destination not in path.parents:
+                continue
+            try:
+                valid = path.is_file() and sha256_file(path) == str(artifact["sha256"])
+            except OSError:
+                valid = False
+            if valid:
+                artifacts[kind] = path
+        if set(artifacts) != {"pdf", "bibtex", "provenance"}:
+            return None
+        return artifacts
 
     def events(self, paper_id: str) -> list[dict[str, Any]]:
         rows = self._connection.execute(

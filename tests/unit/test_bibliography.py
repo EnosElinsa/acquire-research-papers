@@ -78,3 +78,24 @@ def test_metadata_mismatch_is_blocking(field: str, replacement: str, message: st
     )
     with pytest.raises(MetadataMismatch, match=message):
         verify_bibliography(verified_metadata(), parse_bibtex(raw))
+
+
+def test_proceedings_prefix_and_official_venue_suffix_are_equivalent() -> None:
+    metadata = PaperMetadata(
+        title="LLM-enhanced Score Function Evolution for Causal Structure Learning",
+        authors=("Zidong Wang", "Fei Liu"),
+        year=2025,
+        venue="Thirty-Fourth International Joint Conference on Artificial Intelligence",
+        doi="10.24963/ijcai.2025/1010",
+        publisher="IJCAI",
+        landing_url="https://www.ijcai.org/proceedings/2025/1010",
+    )
+    raw = (
+        "@inproceedings{k,"
+        "title={LLM-enhanced Score Function Evolution for Causal Structure Learning},"
+        "author={Wang, Zidong and Liu, Fei},year={2025},"
+        "booktitle={Proceedings of the Thirty-Fourth International Joint Conference "
+        "on Artificial Intelligence, {IJCAI-25}},"
+        "doi={10.24963/ijcai.2025/1010}}"
+    )
+    verify_bibliography(metadata, parse_bibtex(raw))

@@ -44,4 +44,4 @@ The default package contains:
 - `nearest-work-matrix.csv`;
 - `gap-analysis.md` when applicable.
 
-A gap conclusion must name the searched scope, list the closest counterexamples, disclose incomplete full-text checks, and use bounded wording such as “within the searched scope.” The evidence report is not manuscript prose.
+A gap conclusion must name the searched scope, list the closest counterexamples, disclose incomplete full-text checks, and use bounded wording such as "within the searched scope." The evidence report is not manuscript prose.

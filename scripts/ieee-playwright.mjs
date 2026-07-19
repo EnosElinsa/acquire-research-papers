@@ -10,7 +10,7 @@ const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const CARSI_DISCOVERY_URL = "https://ds.carsi.edu.cn/ds/index.html";
 const IEEE_HOST = "ieeexplore.ieee.org";
 const GXU_IDP_HOST = "idp.gxu.edu.cn";
-const CITATION_URL = `https://${IEEE_HOST}/xpl/downloadCitations`;
+const CITATION_URL = `https://${IEEE_HOST}/rest/search/citation/format`;
 
 export const SELECTORS = Object.freeze({
   carsiSchoolPlaceholder: "请输入高校/机构名称",
@@ -19,6 +19,9 @@ export const SELECTORS = Object.freeze({
   carsiLogin: "登录",
   gxuUsername: "用户名",
   gxuPassword: "密码",
+  gxuConsentTitle: "信息发布",
+  gxuConsentAccept: "接受",
+  documentTitle: "h1.document-title",
   pdfHref: 'a[href*="/stamp/stamp.jsp"]',
   pdfPrimaryHref: 'a.xpl-btn-pdf[href*="/stamp/stamp.jsp"]',
   pdfFrame: 'iframe[src*="/stampPDF/getPDF.jsp"]',
@@ -128,53 +131,123 @@ async function waitForDocument(page, timeoutMs) {
   }
 }
 
+function firstText(...values) {
+  return values.map((value) => String(value ?? "").trim()).find(Boolean) ?? "";
+}
+
+export function normalizePageMetadata(payload = {}) {
+  const citation = payload.citation ?? {};
+  const xpl = payload.xpl ?? {};
+  const xplAuthors = Array.isArray(xpl.authors)
+    ? xpl.authors
+      .map((author) => firstText(typeof author === "string" ? author : author?.name))
+      .filter(Boolean)
+    : [];
+  const namedAuthors = String(xpl.authorNames ?? "")
+    .split(";")
+    .map((author) => author.trim())
+    .filter(Boolean);
+  const citationAuthors = Array.isArray(citation.authors)
+    ? citation.authors.map((author) => String(author).trim()).filter(Boolean)
+    : [];
+  const date = firstText(citation.date, xpl.publicationDate, xpl.publicationYear);
+  const yearMatch = date.match(/(?:19|20)\d{2}/);
+  const doiLink = firstText(xpl.doiLink).replace(/^https:\/\/doi\.org\//i, "");
+  return {
+    title: firstText(citation.title, xpl.title, xpl.displayDocTitle, payload.h1Title),
+    authors: citationAuthors.length ? citationAuthors : (xplAuthors.length ? xplAuthors : namedAuthors),
+    year: yearMatch ? Number(yearMatch[0]) : 0,
+    venue: firstText(
+      citation.venue,
+      xpl.publicationTitle,
+      xpl.displayPublicationTitle,
+    ),
+    doi: firstText(citation.doi, xpl.doi, doiLink),
+    canonicalUrl: firstText(payload.canonicalUrl, xpl.persistentLink, payload.locationUrl),
+    articleNumber: firstText(citation.articleNumber, xpl.articleNumber),
+    userAgent: firstText(payload.userAgent),
+    pdfStampUrl: firstText(xpl.pdfUrl),
+    pdfDirectUrl: firstText(xpl.pdfPath),
+    isFreeDocument: xpl.isFreeDocument === true || String(xpl.isFreeDocument) === "true",
+    isOpenAccess: xpl.isOpenAccess === true || String(xpl.isOpenAccess) === "true",
+  };
+}
+
 async function readPaperMetadata(page, timeoutMs) {
   const extract = () => {
     const values = (name) => Array.from(document.querySelectorAll(`meta[name="${name}"]`))
       .map((element) => element.getAttribute("content")?.trim() || "")
       .filter(Boolean);
     const content = (name) => values(name)[0] || "";
-    const title = content("citation_title") || document.querySelector("h1")?.textContent?.trim() || "";
-    const authors = values("citation_author");
-    const date = content("citation_publication_date") || content("citation_date");
-    const yearMatch = date.match(/(?:19|20)\d{2}/);
-    const venue = content("citation_journal_title")
-      || content("citation_conference_title")
-      || content("citation_publication_title");
+    const xpl = globalThis.xplGlobal?.document?.metadata ?? {};
     const doiLabel = Array.from(document.querySelectorAll("main strong"))
       .slice(0, 64)
       .find((element) => element.textContent?.trim() === "DOI:");
     const doiHref = doiLabel?.nextElementSibling?.getAttribute?.("href") || "";
-    const doi = content("citation_doi")
-      || content("DC.Identifier")
-      || doiHref.replace(/^https:\/\/doi\.org\//i, "");
     const canonicalUrl = document.querySelector('link[rel="canonical"]')?.getAttribute("href")
       || location.href;
-    const articleNumber = content("citation_arnumber")
-      || canonicalUrl.match(/\/document\/(\d+)/)?.[1]
-      || location.pathname.match(/\/document\/(\d+)/)?.[1]
-      || "";
     return {
-      title,
-      authors,
-      year: yearMatch ? Number(yearMatch[0]) : 0,
-      venue,
-      doi,
+      citation: {
+        title: content("citation_title"),
+        authors: values("citation_author"),
+        date: content("citation_publication_date") || content("citation_date"),
+        venue: content("citation_journal_title")
+          || content("citation_conference_title")
+          || content("citation_publication_title"),
+        doi: content("citation_doi")
+          || content("DC.Identifier")
+          || doiHref.replace(/^https:\/\/doi\.org\//i, ""),
+        articleNumber: content("citation_arnumber")
+          || canonicalUrl.match(/\/document\/(\d+)/)?.[1]
+          || location.pathname.match(/\/document\/(\d+)/)?.[1]
+          || "",
+      },
+      xpl: {
+        title: xpl.title,
+        displayDocTitle: xpl.displayDocTitle,
+        authors: Array.isArray(xpl.authors)
+          ? xpl.authors.map((author) => ({ name: author?.name }))
+          : [],
+        authorNames: xpl.authorNames,
+        publicationDate: xpl.publicationDate,
+        publicationYear: xpl.publicationYear,
+        publicationTitle: xpl.publicationTitle,
+        displayPublicationTitle: xpl.displayPublicationTitle,
+        doi: xpl.doi,
+        doiLink: xpl.doiLink,
+        articleNumber: xpl.articleNumber,
+        pdfUrl: xpl.pdfUrl,
+        pdfPath: xpl.pdfPath,
+        isFreeDocument: xpl.isFreeDocument,
+        isOpenAccess: xpl.isOpenAccess,
+        persistentLink: xpl.persistentLink,
+      },
+      h1Title: document.querySelector("h1.document-title")?.textContent?.trim()
+        || document.querySelector("h1")?.textContent?.trim()
+        || "",
       canonicalUrl,
-      articleNumber,
+      locationUrl: location.href,
       userAgent: navigator.userAgent,
     };
   };
 
+  try {
+    await page.locator(SELECTORS.documentTitle).waitFor({
+      state: "visible",
+      timeout: Math.min(timeoutMs, 20_000),
+    });
+  } catch {
+    // The bounded metadata checks below distinguish a persistent WAF page from normal loading.
+  }
   let metadata = null;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      metadata = await page.evaluate(extract);
+      metadata = normalizePageMetadata(await page.evaluate(extract));
       if (String(metadata?.title ?? "").trim()) break;
     } catch {
       metadata = null;
     }
-    if (attempt === 1) break;
+    if (attempt === 2) break;
     if (hostnameOf(page.url(), "paper-metadata") !== IEEE_HOST) {
       throw new IeeeFlowError("paper-metadata", "IEEE metadata navigation left the expected host.");
     }
@@ -209,6 +282,10 @@ async function readPaperMetadata(page, timeoutMs) {
     url: canonicalUrl,
     articleNumber: String(metadata.articleNumber),
     userAgent: String(metadata.userAgent ?? "").trim(),
+    pdfStampUrl: String(metadata.pdfStampUrl ?? "").trim(),
+    pdfDirectUrl: String(metadata.pdfDirectUrl ?? "").trim(),
+    isFreeDocument: metadata.isFreeDocument === true,
+    isOpenAccess: metadata.isOpenAccess === true,
   };
 }
 
@@ -244,11 +321,14 @@ async function resolvePaper(page, reference, timeoutMs) {
   return readPaperMetadata(page, timeoutMs);
 }
 
-async function resolvePdfUrls(page, paperUrl, timeoutMs) {
+async function resolvePdfUrls(page, paperUrl, timeoutMs, fallbackStampUrl = "") {
   let pdfLink = page.locator(SELECTORS.pdfHref);
   const count = await pdfLink.count();
-  if (count === 0) return null;
-  if (count > 1) {
+  let href = "";
+  if (count === 0) {
+    href = fallbackStampUrl;
+    if (!href) return null;
+  } else if (count > 1) {
     const primary = page.locator(SELECTORS.pdfPrimaryHref);
     const primaryCount = await primary.count();
     if (primaryCount !== 1) {
@@ -256,7 +336,7 @@ async function resolvePdfUrls(page, paperUrl, timeoutMs) {
     }
     pdfLink = primary;
   }
-  const href = await pdfLink.getAttribute("href");
+  if (!href) href = await pdfLink.getAttribute("href");
   if (!href) throw new IeeeFlowError("pdf-link", "The IEEE PDF action has no target URL.");
   const stampUrl = new URL(href, paperUrl);
   if (stampUrl.hostname.toLowerCase() !== IEEE_HOST) {
@@ -303,7 +383,7 @@ async function assertPdfFile(pdfPath) {
 async function tryFetchPdf({ page, browserContext, paper, workDir, timeoutMs }) {
   await page.goto(paper.url, { waitUntil: "domcontentloaded", timeout: timeoutMs });
   await waitForDocument(page, timeoutMs);
-  const urls = await resolvePdfUrls(page, paper.url, timeoutMs);
+  const urls = await resolvePdfUrls(page, paper.url, timeoutMs, paper.pdfStampUrl);
   if (!urls) return null;
   const response = await browserContext.request.get(urls.pdfUrl, {
     failOnStatusCode: false,
@@ -343,17 +423,23 @@ async function exportOfficialBibtex({ browserContext, paper, timeoutMs }) {
       referer: paper.url,
       ...(paper.userAgent ? { "user-agent": paper.userAgent } : {}),
     },
-    form: {
-      recordIds: paper.articleNumber,
-      "citations-format": "citation-only",
+    data: {
+      recordIds: [paper.articleNumber],
       "download-format": "download-bibtex",
+      lite: true,
     },
   });
   const raw = await response.text();
-  if (!response.ok() || !/^\s*@\w+\s*\{/i.test(raw)) {
+  let bibtex = "";
+  try {
+    bibtex = String(JSON.parse(raw)?.data ?? "");
+  } catch {
+    bibtex = "";
+  }
+  if (!response.ok() || !/^\s*@\w+\s*\{/i.test(bibtex)) {
     throw new IeeeFlowError("citation-export", "IEEE did not return an official BibTeX entry.");
   }
-  return raw;
+  return bibtex;
 }
 
 export async function readCredentialForHost(hostname, { secretPath = "" } = {}) {
@@ -396,7 +482,7 @@ export async function readCredentialForHost(hostname, { secretPath = "" } = {}) 
   }
 }
 
-async function authenticateThroughCarsi({ page, credentialReader, secretPath, timeoutMs }) {
+async function openCarsiInstitutionLogin(page, timeoutMs) {
   await page.goto(CARSI_DISCOVERY_URL, { waitUntil: "domcontentloaded", timeout: timeoutMs });
   const school = await uniqueLocator(
     page.getByPlaceholder(SELECTORS.carsiSchoolPlaceholder, { exact: true }),
@@ -430,7 +516,15 @@ async function authenticateThroughCarsi({ page, credentialReader, secretPath, ti
     }
   }
   await waitForDocument(page, timeoutMs);
-  const authHost = hostnameOf(page.url(), "unexpected-auth-host");
+  return hostnameOf(page.url(), "unexpected-auth-host");
+}
+
+async function authenticateThroughCarsi({ page, credentialReader, secretPath, timeoutMs }) {
+  let authHost = "";
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    authHost = await openCarsiInstitutionLogin(page, timeoutMs);
+    if (authHost !== "chromewebdata") break;
+  }
   if (authHost === "ds.carsi.edu.cn") return;
   if (!isApprovedCredentialHost(authHost)) {
     throw new IeeeFlowError(
@@ -463,7 +557,7 @@ async function authenticateThroughCarsi({ page, credentialReader, secretPath, ti
     if (typeof page.waitForURL === "function") {
       try {
         await page.waitForURL((url) => url.hostname.toLowerCase() !== GXU_IDP_HOST, {
-          timeout: timeoutMs,
+          timeout: Math.min(timeoutMs, 15_000),
         });
       } catch {
         // The bounded hostname check below reports an incomplete login.
@@ -473,6 +567,27 @@ async function authenticateThroughCarsi({ page, credentialReader, secretPath, ti
   } finally {
     credential.username = null;
     credential.password = null;
+  }
+  if (isApprovedCredentialHost(hostnameOf(page.url(), "authentication-result"))) {
+    const title = await page.title();
+    const consent = page.getByRole("button", {
+      name: SELECTORS.gxuConsentAccept,
+      exact: true,
+    });
+    const consentCount = await consent.count();
+    if (title === SELECTORS.gxuConsentTitle && consentCount === 1) {
+      await consent.click();
+      if (typeof page.waitForURL === "function") {
+        try {
+          await page.waitForURL((url) => url.hostname.toLowerCase() !== GXU_IDP_HOST, {
+            timeout: Math.min(timeoutMs, 30_000),
+          });
+        } catch {
+          // The bounded hostname check below reports a rejected attribute release.
+        }
+      }
+      await waitForDocument(page, timeoutMs);
+    }
   }
   if (isApprovedCredentialHost(hostnameOf(page.url(), "authentication-result"))) {
     throw new IeeeFlowError(
@@ -522,6 +637,18 @@ export async function retrieveIeeePaper(options) {
     workDir,
     timeoutMs,
   });
+  if (!downloaded && (paper.isFreeDocument || paper.isOpenAccess)) {
+    if (typeof options.page.waitForTimeout === "function") {
+      await options.page.waitForTimeout(Math.min(750, timeoutMs));
+    }
+    downloaded = await tryFetchPdf({
+      page: options.page,
+      browserContext: options.browserContext,
+      paper,
+      workDir,
+      timeoutMs,
+    });
+  }
   if (!downloaded) {
     await authenticateThroughCarsi({
       page: options.page,
@@ -536,6 +663,18 @@ export async function retrieveIeeePaper(options) {
       workDir,
       timeoutMs,
     });
+    if (!downloaded) {
+      if (typeof options.page.waitForTimeout === "function") {
+        await options.page.waitForTimeout(Math.min(750, timeoutMs));
+      }
+      downloaded = await tryFetchPdf({
+        page: options.page,
+        browserContext: options.browserContext,
+        paper,
+        workDir,
+        timeoutMs,
+      });
+    }
   }
   if (!downloaded) {
     throw new IeeeFlowError(
@@ -571,7 +710,8 @@ export async function runAutomatedRetrieval(options) {
   await mkdir(workDir, { recursive: true });
   const browserContext = await options.chromium.launchPersistentContext(profileDir, {
     channel: "chrome",
-    headless: options.headless !== false,
+    headless: options.headless === true,
+    args: ["--window-position=-32000,-32000", "--window-size=1280,900"],
     acceptDownloads: true,
     downloadsPath: workDir,
   });

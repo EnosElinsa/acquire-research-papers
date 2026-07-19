@@ -81,7 +81,7 @@ class SafeHttpClient:
         for attempt in range(retries + 1):
             try:
                 response = self._client.request(method, url, headers=headers, json=json_data)
-            except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            except httpx.TransportError as exc:
                 last_error = exc
                 if attempt == retries:
                     raise NetworkTransient(f"network retries exhausted for {url}") from exc

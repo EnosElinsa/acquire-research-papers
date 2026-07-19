@@ -242,15 +242,24 @@ class CorpusRunResult:
     candidates_path: Path
     pending_review_path: Path
     manifest_path: Path
+    acquisition_path: Path
     accepted: int
     pending: int
     rejected: int
+    delivered: int
+    deferred: int
     shortfall: int
 
 
 class CorpusWorkflow:
-    def __init__(self, *, discoverer: Callable[[dict[str, Any]], Iterable[CandidateMetadata]]) -> None:
+    def __init__(
+        self,
+        *,
+        discoverer: Callable[[dict[str, Any]], Iterable[CandidateMetadata]],
+        acquirer: Callable[[CandidateMetadata, Path], dict[str, Any]] | None = None,
+    ) -> None:
         self.discoverer = discoverer
+        self.acquirer = acquirer
 
     def run(self, spec: dict[str, Any], output: Path) -> CorpusRunResult:
         destination = output.resolve()
@@ -296,14 +305,82 @@ class CorpusWorkflow:
             )
         atomic_write_bytes(pending_path, buffer.getvalue().encode("utf-8-sig"))
 
+        acquisition_records: list[dict[str, Any]] = []
+        if self.acquirer is not None:
+            paper_root = destination / "papers"
+            for candidate in plan.auto_accepted:
+                outcome = self.acquirer(candidate, paper_root)
+                acquisition_records.append(
+                    {
+                        "key": candidate.key,
+                        "title": candidate.title,
+                        "doi": candidate.doi,
+                        "official_url": candidate.official_url,
+                        **outcome,
+                    }
+                )
+        acquisition_path = destination / "acquisition-manifest.jsonl"
+        acquisition_text = "".join(
+            json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n"
+            for record in acquisition_records
+        )
+        atomic_write_bytes(acquisition_path, acquisition_text.encode("utf-8"))
+        delivered = sum(record.get("status") == "delivered" for record in acquisition_records)
+        deferred = len(acquisition_records) - delivered
+        if deferred:
+            buffer = io.StringIO(newline="")
+            writer = csv.writer(buffer)
+            writer.writerow(["key", "title", "year", "venue", "relevance_score", "reasons"])
+            for candidate in plan.pending_review:
+                reasons = decision_by_key[candidate.key].reasons
+                writer.writerow(
+                    [
+                        candidate.key,
+                        candidate.title,
+                        candidate.year,
+                        candidate.venue,
+                        f"{candidate.relevance_score:.4f}",
+                        ";".join(reasons),
+                    ]
+                )
+            candidate_by_key = {candidate.key: candidate for candidate in plan.auto_accepted}
+            for record in acquisition_records:
+                if record.get("status") == "delivered":
+                    continue
+                candidate = candidate_by_key[str(record["key"])]
+                reason = f"acquisition_{record.get('error_code', 'deferred')}"
+                writer.writerow(
+                    [
+                        candidate.key,
+                        candidate.title,
+                        candidate.year,
+                        candidate.venue,
+                        f"{candidate.relevance_score:.4f}",
+                        reason,
+                    ]
+                )
+            atomic_write_bytes(pending_path, buffer.getvalue().encode("utf-8-sig"))
+
         manifest_path = destination / "corpus-manifest.json"
+        minimum = int(spec.get("target", {}).get("minimum", 0))
+        delivery_shortfall = max(0, minimum - delivered) if self.acquirer else plan.shortfall
+        if self.acquirer is None:
+            run_status = "shortfall" if plan.shortfall else "planned"
+        elif delivery_shortfall:
+            run_status = "shortfall"
+        elif deferred:
+            run_status = "partial"
+        else:
+            run_status = "delivered"
         manifest = {
-            "status": "shortfall" if plan.shortfall else "planned",
+            "status": run_status,
             "accepted": len(plan.auto_accepted),
             "pending": len(plan.pending_review),
             "rejected": len(plan.rejected),
             "not_selected": len(plan.not_selected),
-            "shortfall": plan.shortfall,
+            "delivered": delivered,
+            "deferred": deferred,
+            "shortfall": delivery_shortfall,
         }
         atomic_write_bytes(
             manifest_path,
@@ -314,8 +391,11 @@ class CorpusWorkflow:
             candidates_path=candidates_path,
             pending_review_path=pending_path,
             manifest_path=manifest_path,
+            acquisition_path=acquisition_path,
             accepted=int(manifest["accepted"]),
             pending=int(manifest["pending"]),
             rejected=int(manifest["rejected"]),
+            delivered=int(manifest["delivered"]),
+            deferred=int(manifest["deferred"]),
             shortfall=int(manifest["shortfall"]),
         )

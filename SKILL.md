@@ -60,6 +60,10 @@ Read [references/research-mode.md](references/research-mode.md) before searching
 
 PDF-to-Markdown is optional. Research mode may use a seven-day, SHA-256-addressed MinerU cache for internal reading. Do not copy that Markdown into the user's output. Export Markdown only when the user explicitly requests it and names or approves a destination.
 
+```powershell
+uv run --project $skill arp export-md --pdf <paper.pdf> --output <directory>
+```
+
 ## Completion rules
 
 - Preserve the publisher's raw BibTeX response; never generate or repair a citation with an LLM.

@@ -76,7 +76,7 @@ _VENUE_EXPANSIONS = {
 
 
 def _venue_tokens(value: str) -> list[str]:
-    ignored = {"of", "the"}
+    ignored = {"of", "the", "proceedings"}
     result = []
     for token in _normalized_text(value).split():
         token = _VENUE_EXPANSIONS.get(token, token)
@@ -90,6 +90,12 @@ def _venue_equivalent(expected: str, actual: str) -> bool:
     actual_tokens = _venue_tokens(actual)
     if expected_tokens == actual_tokens:
         return True
+    for shorter, longer in ((expected_tokens, actual_tokens), (actual_tokens, expected_tokens)):
+        if len(shorter) >= 3 and any(
+            longer[index : index + len(shorter)] == shorter
+            for index in range(len(longer) - len(shorter) + 1)
+        ):
+            return True
     return SequenceMatcher(None, " ".join(expected_tokens), " ".join(actual_tokens)).ratio() >= 0.9
 
 

@@ -56,6 +56,17 @@ def _is_exact_cdn_transport_failure(value: str) -> bool:
     return has_host and has_archive and has_transport
 
 
+def _is_exact_upload_transport_failure(value: str) -> bool:
+    has_host = bool(
+        re.search(r"(?i)https://mineru\.oss-cn-shanghai\.aliyuncs\.com(?:[/:?]|$)", value)
+    )
+    has_upload = bool(re.search(r"(?i)(\bput\b|\bupload(?:ing)?\b)", value))
+    has_transport = bool(
+        re.search(r"(?i)(unexpected\s+eof|\beof\b|tls(?:\s+handshake)?|handshake)", value)
+    )
+    return has_host and has_upload and has_transport
+
+
 def _with_no_proxy(environment: dict[str, str]) -> dict[str, str]:
     result = dict(environment)
     for name in ("NO_PROXY", "no_proxy"):
@@ -64,6 +75,20 @@ def _with_no_proxy(environment: dict[str, str]) -> dict[str, str]:
             entries.append(MINERU_CDN_HOST)
         result[name] = ",".join(entries)
     return result
+
+
+def _sanitize_process_log(value: str, token: str = "") -> str:
+    sanitized = value.replace(token, "[REDACTED]") if token else value
+    sanitized = re.sub(
+        r"(https?://[^\s?\"']+)\?[^\s\"']+",
+        r"\1?[REDACTED]",
+        sanitized,
+    )
+    return re.sub(
+        r"(?i)\b(ossaccesskeyid|signature|x-oss-security-token|token)=([^&\s]+)",
+        r"\1=[REDACTED]",
+        sanitized,
+    )
 
 
 def _find_markdown(output_dir: Path) -> Path:
@@ -113,11 +138,12 @@ class MineruCliRunner:
         *,
         token_provider: Callable[[], str],
         executable: str = "mineru-open-api",
+        executable_resolver: Callable[[str], str | None] = shutil.which,
         process_runner: Callable[..., CompletedProcess[str]] = subprocess.run,
         timeout_seconds: int = 1800,
     ) -> None:
         self.token_provider = token_provider
-        self.executable = executable
+        self.executable = executable_resolver(executable) or executable
         self.process_runner = process_runner
         self.timeout_seconds = timeout_seconds
 
@@ -140,7 +166,7 @@ class MineruCliRunner:
     @staticmethod
     def _combined(process: CompletedProcess[str], token: str = "") -> str:
         value = f"{process.stdout or ''}\n{process.stderr or ''}"
-        return value.replace(token, "[REDACTED]") if token else value
+        return _sanitize_process_log(value, token)
 
     def __call__(self, pdf: Path, output: Path) -> MineruResult:
         validate_pdf(pdf)
@@ -166,14 +192,20 @@ class MineruCliRunner:
             "en",
         ]
         try:
-            precision_process = self._invoke(command, dict(environment))
-            precision_log = self._combined(precision_process, token)
+            for attempt in range(2):
+                precision_process = self._invoke(command, dict(environment))
+                precision_log = self._combined(precision_process, token)
+                if _contains_rate_limit(precision_log):
+                    raise MineruRateLimited("MinerU rate limit detected; retry later")
+                if precision_process.returncode == 0:
+                    break
+                if attempt == 0 and _is_exact_upload_transport_failure(precision_log):
+                    continue
+                break
         finally:
             token = ""
             environment.pop("MINERU_TOKEN", None)
 
-        if _contains_rate_limit(precision_log):
-            raise MineruRateLimited("MinerU rate limit detected; retry later")
         if precision_process.returncode == 0:
             return MineruResult(
                 mode="precision",
