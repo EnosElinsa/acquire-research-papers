@@ -82,23 +82,31 @@ function Export-AcquisitionSecrets(
   Save-AcquisitionSecretPayload -Payload $payload -Path $Path
 }
 
-function Set-ScienceDirectCredential(
-  [Management.Automation.PSCredential]$Credential,
+function Set-ElsevierApiKey(
+  [Security.SecureString]$ApiKey,
   [string]$Path = (Get-AcquisitionSecretPath)
 ) {
-  if ($null -eq $Credential -or [string]::IsNullOrWhiteSpace($Credential.UserName)) {
-    throw "ScienceDirect SCAU credential is missing."
+  if ($null -eq $ApiKey -or $ApiKey.Length -eq 0) {
+    throw "Elsevier API key is missing."
   }
-  $payload = Import-AcquisitionSecrets -Path $Path
-  $scope = [pscustomobject]@{
-    Organization = "South China Agricultural University"
-    Credential = $Credential
-  }
-  if ($payload.Scopes.PSObject.Properties.Name -contains "sciencedirect_scau") {
-    $payload.Scopes.sciencedirect_scau = $scope
+  if (Test-Path -LiteralPath $Path -PathType Leaf) {
+    $payload = Import-AcquisitionSecrets -Path $Path
   }
   else {
-    $payload.Scopes | Add-Member -NotePropertyName sciencedirect_scau -NotePropertyValue $scope
+    $payload = [pscustomobject]@{
+      SchemaVersion = 1
+      Scopes = [pscustomobject]@{}
+    }
+  }
+  if ($payload.Scopes.PSObject.Properties.Name -notcontains "api_keys") {
+    $payload.Scopes | Add-Member -NotePropertyName api_keys -NotePropertyValue ([pscustomobject]@{})
+  }
+  if ($payload.Scopes.api_keys.PSObject.Properties.Name -contains "elsevier") {
+    $payload.Scopes.api_keys.elsevier = $ApiKey
+  }
+  else {
+    $payload.Scopes.api_keys |
+      Add-Member -NotePropertyName elsevier -NotePropertyValue $ApiKey
   }
   Save-AcquisitionSecretPayload -Payload $payload -Path $Path
 }
@@ -111,19 +119,23 @@ function Import-AcquisitionSecrets([string]$Path = (Get-AcquisitionSecretPath)) 
   if ($null -eq $payload -or [int]$payload.SchemaVersion -ne 1 -or $null -eq $payload.Scopes) {
     throw "Unsupported acquisition secret schema."
   }
-  if ($payload.Scopes.ieee_gxu.Organization -ne "Guangxi University" -or
-      $payload.Scopes.ieee_gxu.Credential -isnot [Management.Automation.PSCredential]) {
-    throw "IEEE Guangxi University credential scope is missing or invalid."
+  if ($payload.Scopes.PSObject.Properties.Name -contains "ieee_gxu") {
+    if ($payload.Scopes.ieee_gxu.Organization -ne "Guangxi University" -or
+        $payload.Scopes.ieee_gxu.Credential -isnot [Management.Automation.PSCredential]) {
+      throw "IEEE Guangxi University credential scope is invalid."
+    }
   }
-  if ($payload.Scopes.mineru.Token -isnot [Security.SecureString] -or
-      $payload.Scopes.mineru.Token.Length -eq 0) {
-    throw "MinerU token scope is missing or invalid."
+  if ($payload.Scopes.PSObject.Properties.Name -contains "mineru") {
+    if ($payload.Scopes.mineru.Token -isnot [Security.SecureString] -or
+        $payload.Scopes.mineru.Token.Length -eq 0) {
+      throw "MinerU token scope is invalid."
+    }
   }
-  if ($payload.Scopes.PSObject.Properties.Name -contains "sciencedirect_scau") {
-    if ($payload.Scopes.sciencedirect_scau.Organization -ne "South China Agricultural University" -or
-        $payload.Scopes.sciencedirect_scau.Credential -isnot [Management.Automation.PSCredential] -or
-        [string]::IsNullOrWhiteSpace($payload.Scopes.sciencedirect_scau.Credential.UserName)) {
-      throw "ScienceDirect SCAU credential scope is invalid."
+  if ($payload.Scopes.PSObject.Properties.Name -contains "api_keys" -and
+      $payload.Scopes.api_keys.PSObject.Properties.Name -contains "elsevier") {
+    if ($payload.Scopes.api_keys.elsevier -isnot [Security.SecureString] -or
+        $payload.Scopes.api_keys.elsevier.Length -eq 0) {
+      throw "Elsevier API key scope is invalid."
     }
   }
   return $payload

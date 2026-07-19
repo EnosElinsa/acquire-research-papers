@@ -18,7 +18,14 @@ def tracked_files() -> list[str]:
 
 def test_repository_contains_no_runtime_or_delivery_artifacts() -> None:
     forbidden_suffixes = {".clixml", ".sqlite", ".pdf", ".bib", ".docx"}
-    forbidden_parts = {"node_modules", ".venv", "browser-profiles", "downloads", "runs"}
+    forbidden_parts = {
+        "node_modules",
+        ".venv",
+        "browser-profiles",
+        "downloads",
+        "docs",
+        "runs",
+    }
     tracked = tracked_files()
     assert not [path for path in tracked if Path(path).suffix.casefold() in forbidden_suffixes]
     assert not [path for path in tracked if forbidden_parts.intersection(Path(path).parts)]
@@ -44,9 +51,15 @@ def test_progressive_disclosure_references_exist() -> None:
     assert required == {path.name for path in reference_root.glob("*.md")}
 
 
-def test_public_skill_has_no_placeholders_or_readme() -> None:
-    assert not (ROOT / "README.md").exists()
-    public_files = [ROOT / "SKILL.md", *(ROOT / "references").glob("*.md")]
+def test_public_documentation_is_present_and_has_no_placeholders() -> None:
+    public_files = [
+        ROOT / "README.md",
+        ROOT / "README.zh-CN.md",
+        ROOT / "SECURITY.md",
+        ROOT / "SKILL.md",
+        *(ROOT / "references").glob("*.md"),
+    ]
+    assert all(path.is_file() for path in public_files)
     placeholder = re.compile(r"\b(?:TODO|TBD|FIXME|XXX)\b|\[TODO", re.IGNORECASE)
     assert not [path for path in public_files if placeholder.search(path.read_text(encoding="utf-8"))]
 

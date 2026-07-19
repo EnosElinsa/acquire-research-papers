@@ -1,0 +1,124 @@
+# 研究论文获取（Acquire Research Papers）
+
+[English](README.md)
+
+[![CI](https://github.com/EnosElinsa/acquire-research-papers/actions/workflows/test.yml/badge.svg)](https://github.com/EnosElinsa/acquire-research-papers/actions/workflows/test.yml)
+[![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB.svg)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+这是一个全局 Codex skill 和确定性命令行工具，用于检索、筛选和获取研究论文。每项完成的交付都包含出版社托管的 PDF、出版社导出的原始 BibTeX，以及证明二者属于同一篇论文的来源与哈希记录。
+
+检索 API 只负责提出候选论文，不能替代正式文件。低置信度、边界或元数据冲突的论文会进入待确认清单。
+
+## 工作流
+
+| 工作流 | 适用任务 | 结果 |
+| --- | --- | --- |
+| `fetch` | DOI、出版社链接或明确论文清单 | 已核验的 PDF 与原始 BibTeX |
+| `manual-fetch` | 需要用户在授权浏览器中完成下载 | 自动接管本地文件、核验并交付 |
+| `discover corpus` | 指定期刊/会议、主题、年份和数量 | 高置信度论文及待确认清单 |
+| `discover research` | gap、相似工作、claim 引用或 Related Work | 证据表、对比、gap 与审核记录 |
+
+PDF 转 Markdown 是可选步骤。研究模式可以临时调用 MinerU 分析候选全文，但只在用户明确要求时才导出 Markdown。
+
+## 支持的来源
+
+- ACL Anthology 和 IJCAI proceedings
+- IEEE Xplore，以及可选的广西大学机构访问适配器
+- ACM Digital Library
+- ScienceDirect 人工机构登录接管流程
+- 能唯一提供正式 PDF 和原始 BibTeX 的出版社页面
+
+Crossref、OpenAlex 和 Semantic Scholar 只用于发现候选。镜像 PDF、模型生成引用和纯元数据记录都不算完成交付。
+
+## 全局安装
+
+需要 Git、[uv](https://docs.astral.sh/uv/) 和 Python 3.11+。只有 IEEE 等浏览器适配器需要 Node.js 与固定版本的 Playwright。机构凭据和可选 API key 通过 Windows DPAPI 加密。
+
+```powershell
+$skill = Join-Path $env:USERPROFILE ".codex\skills\acquire-research-papers"
+git clone https://github.com/EnosElinsa/acquire-research-papers.git $skill
+uv sync --project $skill --locked --all-groups
+& "$skill\scripts\install-playwright.ps1"
+uv run --project $skill arp --help
+```
+
+已有安装可先运行 `git pull --ff-only`，再执行 `uv sync --locked --all-groups`。
+
+## 使用方法
+
+直接获取受支持的论文：
+
+```powershell
+uv run --project $skill arp fetch `
+  --input "https://aclanthology.org/2024.acl-long.1/" `
+  --output "C:\Research\papers"
+```
+
+对于需要订阅权限的 ScienceDirect 论文，先启动监听：
+
+```powershell
+uv run --project $skill arp manual-fetch `
+  --input "10.1016/j.asieco.2024.101746" `
+  --watch "$HOME\Downloads" `
+  --output "C:\Research\papers"
+```
+
+命令只会打开规范的出版社论文页。你在正常 Chrome 中完成 organization login，并手动下载 PDF 和出版社原始 BibTeX；之后工具会自动识别本次新增或变更且已写入稳定的文件，核验 DOI、题名、年份、期刊、第一作者和 PDF 身份，再以 `manual_publisher_download` 来源交付。
+
+这条流程不会自动操作 ScienceDirect，不会连接正常 Chrome 的 profile，也不会读取、复制或导出 Cookie、Local Storage 或会话数据。
+
+如果文件已经下载，可以直接交给工具：
+
+```powershell
+uv run --project $skill arp manual-fetch --input <DOI> `
+  --pdf .\paper.pdf --bibtex .\citation.bib --output C:\Research\papers
+```
+
+论文集、文献调研和可选 Markdown 导出：
+
+```powershell
+uv run --project $skill arp discover corpus --spec .\corpus.yaml --output C:\Research\corpus
+uv run --project $skill arp discover research --brief .\brief.yaml --output C:\Research\review
+uv run --project $skill arp export-md --pdf .\paper.pdf --output C:\Research\markdown
+```
+
+交付目录必须位于本仓库之外。运行状态统一保存在 `%LOCALAPPDATA%\Codex`。
+
+## 凭据与 API key
+
+公开仓库不包含账号、密码、API key、token、Cookie 或浏览器配置。
+
+在交互式 PowerShell 中配置 IEEE/广西大学和 MinerU：
+
+```powershell
+& "$skill\scripts\setup-secrets.ps1"
+```
+
+配置只用于官方元数据查询的 Elsevier API key：
+
+```powershell
+& "$skill\scripts\setup-elsevier-api-key.ps1"
+```
+
+输入不会回显，密文通过 DPAPI 与当前 Windows 用户绑定。ScienceDirect 人工接管流程不会保存或释放华南农业大学密码。工具也不假设 API key 拥有 Article Retrieval 全文权限；遇到 403 时转入人工浏览器下载，不会改用网站自动化。
+
+配置前请阅读 [`references/credentials-and-cache.md`](references/credentials-and-cache.md) 和 [`SECURITY.md`](SECURITY.md)。
+
+## 开发与验证
+
+```powershell
+uv sync --locked --all-groups
+uv run ruff check src tests scripts/validate_skill.py
+uv run pytest -q
+uv run python scripts/validate_skill.py .
+node --test tests/node/test-ieee-playwright.mjs
+./tests/powershell/test-secret-store.ps1
+./tests/powershell/test-install-playwright.ps1
+```
+
+## 合规使用
+
+机构访问只能用于账号与学校许可范围内的资料。本项目不会绕过出版社访问控制、重新分发论文、自动化被禁止的出版社交互，或削弱学校认证流程。
+
+本项目采用 [MIT License](LICENSE)。

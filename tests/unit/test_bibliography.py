@@ -99,3 +99,48 @@ def test_proceedings_prefix_and_official_venue_suffix_are_equivalent() -> None:
         "doi={10.24963/ijcai.2025/1010}}"
     )
     verify_bibliography(metadata, parse_bibtex(raw))
+
+
+def test_first_author_scope_accepts_complete_publisher_author_list() -> None:
+    metadata = PaperMetadata(
+        title="Farmers' cooperatives and smallholder farmers' access to credit: Evidence from China",
+        authors=("Jiang",),
+        authors_complete=False,
+        year=2024,
+        venue="Journal of Asian Economics",
+        doi="10.1016/j.asieco.2024.101746",
+        publisher="Elsevier",
+        landing_url=(
+            "https://www.sciencedirect.com/science/article/pii/S1049007824000411"
+        ),
+    )
+    raw = (
+        "@article{k,"
+        "title={Farmers' cooperatives and smallholder farmers' access to credit: "
+        "Evidence from China},"
+        "author={Jiang, Ming and Paudel, Krishna and Mi, Yanbing},"
+        "year={2024},journal={Journal of Asian Economics},"
+        "doi={10.1016/j.asieco.2024.101746}}"
+    )
+
+    verify_bibliography(metadata, parse_bibtex(raw))
+
+
+def test_first_author_scope_rejects_wrong_first_author() -> None:
+    metadata = PaperMetadata(
+        title="Verified Paper",
+        authors=("Lovelace",),
+        authors_complete=False,
+        year=2026,
+        venue="Test Venue",
+        doi="10.1000/verified",
+        publisher="Publisher",
+        landing_url="https://publisher.example/verified",
+    )
+    raw = (
+        "@article{k,title={Verified Paper},author={Turing, Alan and Lovelace, Ada},"
+        "year={2026},journal={Test Venue},doi={10.1000/verified}}"
+    )
+
+    with pytest.raises(MetadataMismatch, match="author"):
+        verify_bibliography(metadata, parse_bibtex(raw))

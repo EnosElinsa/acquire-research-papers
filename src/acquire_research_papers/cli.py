@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
+import sys
+import webbrowser
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,9 +19,22 @@ from acquire_research_papers.acquisition.adapters.ieee import (
     IeeeXploreAdapter,
 )
 from acquire_research_papers.acquisition.adapters.ijcai import IjcaiProceedingsAdapter
+from acquire_research_papers.acquisition.adapters.elsevier_api import (
+    ELSEVIER_API_HOST,
+    DpapiElsevierApiKeyProvider,
+    ElsevierApiError,
+    ElsevierSearchClient,
+)
 from acquire_research_papers.acquisition.adapters.sciencedirect import ScienceDirectAdapter
-from acquire_research_papers.acquisition.adapters.sciencedirect_bridge import ScienceDirectBridge
 from acquire_research_papers.acquisition.base import AccessRequired, PageContractChanged, SourceAdapter
+from acquire_research_papers.acquisition.manual_handoff import (
+    ManualBrowserOpenError,
+    ManualDownloadAmbiguous,
+    ManualDownloadTimeout,
+    ManualHandoffWorkflow,
+    ManualSourceChanged,
+    PdfIdentityMismatch,
+)
 from acquire_research_papers.acquisition.router import AdapterRouter
 from acquire_research_papers.artifacts import InvalidPdfError, sha256_file
 from acquire_research_papers.bibliography import BibMissing, MetadataMismatch
@@ -50,6 +66,25 @@ from acquire_research_papers.specs import (
 )
 
 
+_RUNTIME_SCRIPT_NAMES = frozenset(
+    {
+        "ieee-playwright.mjs",
+        "install-playwright.ps1",
+        "read-browser-credential.ps1",
+        "read-mineru-token.ps1",
+        "read-elsevier-api-key.ps1",
+        "secret-store.ps1",
+    }
+)
+
+
+def _resolve_script_root(repository_root: Path, package_root: Path) -> Path:
+    for candidate in (repository_root / "scripts", package_root / "_scripts"):
+        if all((candidate / name).is_file() for name in _RUNTIME_SCRIPT_NAMES):
+            return candidate.resolve()
+    raise RuntimeError("acquire-research-papers runtime scripts are missing")
+
+
 @dataclass
 class Application:
     paths: AppPaths
@@ -59,6 +94,7 @@ class Application:
     corpus_workflow: CorpusWorkflow | None = None
     research_workflow: ResearchWorkflow | None = None
     mineru_cache: MineruCache | None = None
+    manual_handoff: ManualHandoffWorkflow | None = None
 
     @classmethod
     def for_test(
@@ -70,6 +106,7 @@ class Application:
         corpus_workflow: CorpusWorkflow | None = None,
         research_workflow: ResearchWorkflow | None = None,
         mineru_cache: MineruCache | None = None,
+        manual_handoff: ManualHandoffWorkflow | None = None,
     ) -> Application:
         paths = AppPaths.for_root(app_root)
         paths.create_directories()
@@ -86,6 +123,7 @@ class Application:
             corpus_workflow=corpus_workflow,
             research_workflow=research_workflow,
             mineru_cache=mineru_cache,
+            manual_handoff=manual_handoff,
         )
         return application
 
@@ -94,20 +132,14 @@ class Application:
         paths = AppPaths.default()
         paths.create_directories()
         repository_root = Path(__file__).resolve().parents[2]
+        script_root = _resolve_script_root(repository_root, Path(__file__).resolve().parent)
         acl = AclAnthologyAdapter(SafeHttpClient(allowed_hosts={"aclanthology.org"}))
         ijcai = IjcaiProceedingsAdapter(SafeHttpClient(allowed_hosts={"www.ijcai.org"}))
         acm = AcmDigitalLibraryAdapter.for_production()
-        sciencedirect_bridge = ScienceDirectBridge(
-            script=repository_root / "scripts" / "sciencedirect-playwright.mjs",
-            profile_root=paths.profiles / "sciencedirect-scau",
-            dependency_root=paths.dependencies,
-            work_root=paths.runs,
-            secret_path=paths.secrets / "secrets.clixml",
-        )
-        sciencedirect = ScienceDirectAdapter.for_production(bridge=sciencedirect_bridge)
+        sciencedirect = ScienceDirectAdapter.for_production()
         ieee = IeeeXploreAdapter(
             IeeeBridge(
-                script=repository_root / "scripts" / "ieee-playwright.mjs",
+                script=script_root / "ieee-playwright.mjs",
                 profile_root=paths.profiles / "ieee",
                 dependency_root=paths.dependencies,
                 work_root=paths.runs,
@@ -119,11 +151,22 @@ class Application:
         )
         mineru_runner = MineruCliRunner(
             token_provider=DpapiMineruTokenProvider(
-                script=repository_root / "scripts" / "read-mineru-token.ps1",
+                script=script_root / "read-mineru-token.ps1",
                 secret_path=paths.secrets / "secrets.clixml",
             )
         )
         mineru_cache = MineruCache(paths.cache, runner=mineru_runner)
+        elsevier_key = DpapiElsevierApiKeyProvider(
+            script=script_root / "read-elsevier-api-key.ps1",
+            secret_path=paths.secrets / "secrets.clixml",
+        )
+        manual_handoff = ManualHandoffWorkflow(
+            resolver=ElsevierSearchClient(
+                client=SafeHttpClient(allowed_hosts={ELSEVIER_API_HOST}),
+                key_provider=elsevier_key,
+            ),
+            opener=webbrowser.open,
+        )
         application = cls(
             paths=paths,
             repository_root=repository_root,
@@ -137,6 +180,7 @@ class Application:
                 mineru_cache=mineru_cache,
             ),
             mineru_cache=mineru_cache,
+            manual_handoff=manual_handoff,
         )
         application.corpus_workflow = CorpusWorkflow(
             discoverer=CorpusDiscoverer([crossref.corpus_searcher]),
@@ -144,17 +188,16 @@ class Application:
         )
         return application
 
-    def fetch(self, value: str, output: Path) -> DeliveryResult:
-        destination = ensure_outside_repository(output, self.repository_root)
-        cached = self.registry.verified_delivery(value, destination)
-        if cached:
-            return DeliveryResult(
-                pdf=cached["pdf"],
-                bibtex=cached["bibtex"],
-                provenance=cached["provenance"],
-            )
-        resolved = self.resolver.resolve(value)
-        metadata = resolved.document.metadata
+    def _deliver_pair(
+        self,
+        *,
+        pair,
+        destination: Path,
+        source: str,
+        provenance_extra: dict[str, Any] | None = None,
+        registry_payload: dict[str, Any] | None = None,
+    ) -> DeliveryResult:
+        metadata = pair.document.metadata
         paper_id = self.registry.upsert_paper(
             title=metadata.title,
             doi=metadata.doi,
@@ -170,11 +213,14 @@ class Application:
             self.registry.transition(paper_id, PaperStatus.RESOLVING)
             status = PaperStatus.RESOLVING
 
-        pair = resolved.adapter.acquire(resolved.document)
         if status is PaperStatus.RESOLVING:
             self.registry.transition(paper_id, PaperStatus.DOWNLOADED)
             status = PaperStatus.DOWNLOADED
-        result = GenericDelivery(destination).deliver(pair=pair, paper_id=paper_id)
+        result = GenericDelivery(destination).deliver(
+            pair=pair,
+            paper_id=paper_id,
+            provenance_extra=provenance_extra,
+        )
         if status is PaperStatus.DOWNLOADED:
             self.registry.transition(paper_id, PaperStatus.PAIR_VERIFIED)
             status = PaperStatus.PAIR_VERIFIED
@@ -203,15 +249,97 @@ class Application:
         )
         self.registry.record_provenance(
             paper_id,
-            source=resolved.adapter.name,
+            source=source,
             source_url=pair.document.metadata.landing_url,
             payload={
                 "pdf": str(result.pdf),
                 "bibtex": str(result.bibtex),
                 "provenance": str(result.provenance),
+                **(registry_payload or {}),
             },
         )
         return result
+
+    def fetch(self, value: str, output: Path) -> DeliveryResult:
+        try:
+            destination = ensure_outside_repository(output, self.repository_root)
+        except ValueError as exc:
+            raise AmbiguousInput(str(exc)) from exc
+        cached = self.registry.verified_delivery(value, destination)
+        if cached:
+            return DeliveryResult(
+                pdf=cached["pdf"],
+                bibtex=cached["bibtex"],
+                provenance=cached["provenance"],
+            )
+        resolved = self.resolver.resolve(value)
+        pair = resolved.adapter.acquire(resolved.document)
+        return self._deliver_pair(
+            pair=pair,
+            destination=destination,
+            source=resolved.adapter.name,
+        )
+
+    def manual_fetch(
+        self,
+        value: str,
+        output: Path,
+        *,
+        watch: Path | None,
+        timeout_seconds: float,
+        open_browser: bool,
+        pdf: Path | None,
+        bibtex: Path | None,
+        notifier,
+    ) -> DeliveryResult:
+        if (pdf is None) != (bibtex is None):
+            raise AmbiguousInput("--pdf and --bibtex must be supplied together")
+        if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+            raise AmbiguousInput("--timeout must be positive")
+        if pdf is not None and bibtex is not None:
+            if not pdf.is_file() or not bibtex.is_file():
+                raise AmbiguousInput("--pdf and --bibtex must both name existing files")
+        else:
+            watch_root = (watch or (Path.home() / "Downloads")).resolve()
+            if not watch_root.is_dir():
+                raise AmbiguousInput("--watch must name an existing directory")
+        if self.manual_handoff is None:
+            raise AccessRequired("manual publisher handoff is not configured")
+        try:
+            destination = ensure_outside_repository(output, self.repository_root)
+        except ValueError as exc:
+            raise AmbiguousInput(str(exc)) from exc
+        cached = self.registry.verified_delivery(value, destination)
+        if cached:
+            return DeliveryResult(
+                pdf=cached["pdf"],
+                bibtex=cached["bibtex"],
+                provenance=cached["provenance"],
+            )
+        acquired = self.manual_handoff.acquire(
+            value,
+            watch=watch,
+            timeout_seconds=timeout_seconds,
+            open_browser=open_browser,
+            pdf=pdf,
+            bibtex=bibtex,
+            notifier=notifier,
+        )
+        selection = acquired.selection
+        provenance = {
+            "acquisition_method": "manual_publisher_download",
+            "metadata_source_url": acquired.record.metadata_url,
+            "metadata_author_scope": acquired.record.author_scope,
+            "source_pdf_filename": selection.source_pdf.name,
+            "source_bibtex_filename": selection.source_bibtex.name,
+        }
+        return self._deliver_pair(
+            pair=selection.pair,
+            destination=destination,
+            source="manual_publisher_download",
+            provenance_extra=provenance,
+            registry_payload=provenance,
+        )
 
     def export_markdown(self, pdf: Path, output: Path) -> tuple[MineruResult, Path, Path]:
         if self.mineru_cache is None:
@@ -269,6 +397,18 @@ def build_parser() -> argparse.ArgumentParser:
     fetch.add_argument("--input", required=True)
     fetch.add_argument("--output", type=Path, required=True)
 
+    manual_fetch = subparsers.add_parser(
+        "manual-fetch",
+        help="take over after manual publisher PDF and BibTeX downloads",
+    )
+    manual_fetch.add_argument("--input", required=True)
+    manual_fetch.add_argument("--output", type=Path, required=True)
+    manual_fetch.add_argument("--watch", type=Path)
+    manual_fetch.add_argument("--timeout", type=float, default=900)
+    manual_fetch.add_argument("--no-open", action="store_true")
+    manual_fetch.add_argument("--pdf", type=Path)
+    manual_fetch.add_argument("--bibtex", type=Path)
+
     export_md = subparsers.add_parser(
         "export-md", help="explicitly parse a PDF with MinerU and export Markdown"
     )
@@ -313,6 +453,37 @@ def run_cli(
     try:
         if args.command == "fetch":
             result = app.fetch(args.input, args.output)
+            _emit(
+                {
+                    "status": result.status,
+                    "pdf": str(result.pdf),
+                    "bibtex": str(result.bibtex),
+                    "provenance": str(result.provenance),
+                }
+            )
+            return 0
+        if args.command == "manual-fetch":
+            if (args.pdf is None) != (args.bibtex is None):
+                raise AmbiguousInput("--pdf and --bibtex must be supplied together")
+
+            def notify(landing_url: str, watch: Path) -> None:
+                print(
+                    "Download the official PDF and raw BibTeX from "
+                    f"{landing_url} into {watch}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+
+            result = app.manual_fetch(
+                args.input,
+                args.output,
+                watch=args.watch,
+                timeout_seconds=args.timeout,
+                open_browser=not args.no_open,
+                pdf=args.pdf,
+                bibtex=args.bibtex,
+                notifier=notify,
+            )
             _emit(
                 {
                     "status": result.status,
@@ -385,6 +556,18 @@ def run_cli(
     except AccessRequired as exc:
         _emit({"status": "error", "error_code": "access_required", "message": str(exc)})
         return 69
+    except ElsevierApiError as exc:
+        if exc.phase == "reference":
+            error_code, exit_code = "invalid_input", 64
+        elif exc.phase in {"api-key", "entitlement"}:
+            error_code, exit_code = "access_required", 69
+        else:
+            error_code, exit_code = "contract_error", 78
+        _emit({"status": "error", "error_code": error_code, "message": str(exc)})
+        return exit_code
+    except (ManualDownloadTimeout, ManualBrowserOpenError) as exc:
+        _emit({"status": "error", "error_code": "manual_handoff_required", "message": str(exc)})
+        return 69
     except IeeeBridgeError as exc:
         error_code = (
             "access_required"
@@ -405,6 +588,11 @@ def run_cli(
         BibMissing,
         InvalidPdfError,
         MineruExtractionError,
+        ManualDownloadAmbiguous,
+        ManualSourceChanged,
+        PdfIdentityMismatch,
+        UnicodeError,
+        OSError,
     ) as exc:
         _emit({"status": "error", "error_code": "contract_error", "message": str(exc)})
         return 78

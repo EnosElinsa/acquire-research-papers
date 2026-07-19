@@ -7,6 +7,8 @@ from urllib.parse import urljoin, urlsplit
 
 import httpx
 
+from acquire_research_papers import __version__
+
 
 class HostBoundaryError(ValueError):
     """A request or redirect escaped the adapter's approved hosts."""
@@ -33,6 +35,7 @@ _SENSITIVE_HEADERS = {
     "proxy-authorization",
     "x-api-key",
     "api-key",
+    "x-els-apikey",
 }
 
 
@@ -45,7 +48,8 @@ class SafeHttpClient:
         max_redirects: int = 5,
         retries: int = 2,
         sleeper: Callable[[float], None] = time.sleep,
-        user_agent: str = "acquire-research-papers/0.1.0",
+        user_agent: str | None = None,
+        trust_env: bool = True,
     ) -> None:
         self.allowed_hosts = frozenset(host.casefold().rstrip(".") for host in allowed_hosts)
         self.max_redirects = max_redirects
@@ -54,7 +58,8 @@ class SafeHttpClient:
         self._client = httpx.Client(
             follow_redirects=False,
             timeout=httpx.Timeout(timeout),
-            headers={"User-Agent": user_agent},
+            headers={"User-Agent": user_agent or f"acquire-research-papers/{__version__}"},
+            trust_env=trust_env,
         )
 
     def close(self) -> None:

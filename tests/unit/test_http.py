@@ -1,12 +1,19 @@
 import httpx
 import pytest
 
+from acquire_research_papers import __version__
 from acquire_research_papers.http import (
     HostBoundaryError,
     NetworkTransient,
     RateLimited,
     SafeHttpClient,
 )
+
+
+def test_default_user_agent_matches_package_version() -> None:
+    client = SafeHttpClient(allowed_hosts={"publisher.example"})
+
+    assert client._client.headers["User-Agent"] == f"acquire-research-papers/{__version__}"
 
 
 def test_redirect_outside_allowed_hosts_is_rejected(httpserver) -> None:
@@ -77,3 +84,33 @@ def test_exhausted_transport_disconnect_is_network_transient(monkeypatch) -> Non
     monkeypatch.setattr(client._client, "request", request)
     with pytest.raises(NetworkTransient, match="network retries exhausted"):
         client.get("https://publisher.example/paper.pdf")
+
+
+def test_elsevier_api_key_is_stripped_on_cross_host_redirect(monkeypatch) -> None:
+    client = SafeHttpClient(
+        allowed_hosts={"api.elsevier.test", "pdf.elsevier.test"},
+        retries=0,
+    )
+    observed: list[tuple[str, dict[str, str]]] = []
+
+    def request(method, url, **kwargs):
+        headers = dict(kwargs.get("headers") or {})
+        observed.append((url, headers))
+        request = httpx.Request(method, url)
+        if url == "https://api.elsevier.test/article":
+            return httpx.Response(
+                302,
+                request=request,
+                headers={"Location": "https://pdf.elsevier.test/paper.pdf"},
+            )
+        return httpx.Response(200, request=request, content=b"%PDF-1.7")
+
+    monkeypatch.setattr(client._client, "request", request)
+    response = client.get(
+        "https://api.elsevier.test/article",
+        headers={"X-ELS-APIKey": "synthetic-key", "Accept": "application/pdf"},
+    )
+
+    assert response.content.startswith(b"%PDF-")
+    assert observed[0][1]["X-ELS-APIKey"] == "synthetic-key"
+    assert "X-ELS-APIKey" not in observed[1][1]

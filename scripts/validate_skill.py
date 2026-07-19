@@ -10,6 +10,9 @@ import yaml
 
 EXPECTED_NAME = "acquire-research-papers"
 REQUIRED_FILES = {
+    "README.md",
+    "README.zh-CN.md",
+    "SECURITY.md",
     "SKILL.md",
     "agents/openai.yaml",
     "pyproject.toml",
@@ -20,9 +23,9 @@ REQUIRED_FILES = {
     "references/research-mode.md",
     "references/source-policies.md",
     "references/credentials-and-cache.md",
-    "scripts/setup-sciencedirect-secret.ps1",
-    "scripts/read-sciencedirect-credential.ps1",
-    "scripts/sciencedirect-playwright.mjs",
+    "scripts/setup-elsevier-api-key.ps1",
+    "scripts/read-elsevier-api-key.ps1",
+    "src/acquire_research_papers/acquisition/manual_handoff.py",
 }
 PLACEHOLDERS = ("TODO", "TBD", "FIXME", "XXX", "[TODO")
 
@@ -86,10 +89,13 @@ def validate(root: Path) -> list[str]:
             f"repository folder must be named {EXPECTED_NAME!r}; found {repository_name!r}"
         )
 
-    if (root / "README.md").exists():
-        errors.append("README.md is not allowed in a skill repository; use SKILL.md")
-
-    public_files = [skill_path, *(root / "references").glob("*.md")]
+    public_files = [
+        root / "README.md",
+        root / "README.zh-CN.md",
+        root / "SECURITY.md",
+        skill_path,
+        *(root / "references").glob("*.md"),
+    ]
     for path in public_files:
         if not path.is_file():
             continue

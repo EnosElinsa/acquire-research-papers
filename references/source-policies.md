@@ -34,11 +34,11 @@ Require exact `dl.acm.org` landing/PDF hosts and a page-exposed `/action/exportC
 
 ### ScienceDirect
 
-Use exact `www.sciencedirect.com` article, `pdfft`, and `/sdfe/arp/cite` endpoints for the same PII. Try open access or the current South China Agricultural University campus/IP entitlement before reading an institutional credential.
+ScienceDirect acquisition is manual-only. Use `manual-fetch` for exact `www.sciencedirect.com` PII articles; ordinary `fetch` must not request or automate the article page, even when the current network might be entitled.
 
-When direct access returns `access_required`, the dedicated off-screen browser may try the university's official WebVPN once. Release the `sciencedirect_scau` credential only while the current hostname exactly equals `vpn.scau.edu.cn`, submit it once, and require the browser to return to `www-sciencedirect-com-s.vpn.scau.edu.cn`. Retrieve the PDF and raw `/sdfe/arp/cite` BibTeX through that exact proxy host while recording canonical `www.sciencedirect.com` publisher URLs. Stop on CAPTCHA, OTP, an unknown host, an incomplete login, metadata/PII mismatch, or a redirect away from the exact proxy.
+Resolve the expected PII, DOI, title, year, venue, and first creator through the official Elsevier Scopus Search API. Snapshot the selected download directory before opening the canonical article page. The user completes organization login and downloads the PDF plus the publisher's raw BibTeX in a normal browser. Consider only new or changed stable files, verify PDF identity and the raw citation, deduplicate by SHA-256, and require exactly one valid pair. Record `manual_publisher_download` provenance and preserve the source files.
 
-The [university remote-access instructions](https://lib.scau.edu.cn/2021/0415/c14674a298762/page.htm) state that Elsevier full text may require the aTrust client when WebVPN is insufficient. In that case return `atrust_required`; do not install, launch, or automate aTrust without separate user authorization, and never report the WebVPN login alone as successful paper access.
+Never automate the ScienceDirect page, submit an organization login, attach to normal Chrome, read a browser profile, export Cookie/session data, or inject browser state into an API request. Do not retry an Article Retrieval API 403 with browser credentials. Crossref and other discovery metadata cannot replace the raw `/sdfe/arp/cite` BibTeX.
 
 ### Direct official sources
 

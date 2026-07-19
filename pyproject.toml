@@ -6,19 +6,48 @@ build-backend = "hatchling.build"
 name = "acquire-research-papers"
 version = "0.2.0"
 description = "Codex skill and CLI for verified academic paper acquisition"
+readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
+keywords = [
+  "academic-research",
+  "bibtex",
+  "codex-skill",
+  "literature-review",
+  "research-papers",
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Scientific/Engineering",
+  "Topic :: Scientific/Engineering :: Information Analysis",
+]
 dependencies = [
   "beautifulsoup4>=4.13,<5",
   "httpx>=0.28,<1",
   "jsonschema>=4.23,<5",
   "platformdirs>=4.3,<5",
   "pybtex>=0.25,<1",
+  "pypdf>=6.14.2,<7",
   "PyYAML>=6.0,<7",
 ]
 
 [project.scripts]
 arp = "acquire_research_papers.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/EnosElinsa/acquire-research-papers"
+Issues = "https://github.com/EnosElinsa/acquire-research-papers/issues"
+Repository = "https://github.com/EnosElinsa/acquire-research-papers"
+
+[tool.hatch.build]
+exclude = ["/docs"]
 
 [dependency-groups]
 dev = [
@@ -29,6 +58,9 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/acquire_research_papers"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"scripts" = "acquire_research_papers/_scripts"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

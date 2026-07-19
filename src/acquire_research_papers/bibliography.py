@@ -121,7 +121,13 @@ def verify_bibliography(metadata: PaperMetadata, parsed: ParsedBibliography) -> 
         raise MetadataMismatch(f"venue mismatch: expected {metadata.venue}, got {actual_venue or 'missing'}")
 
     expected_surnames = tuple(_surname(author) for author in metadata.authors)
-    if expected_surnames and tuple(parsed.author_surnames) != expected_surnames:
+    actual_surnames = tuple(parsed.author_surnames)
+    if metadata.authors_complete:
+        authors_match = actual_surnames == expected_surnames
+    else:
+        expected_surnames = tuple(_normalized_text(author) for author in metadata.authors)
+        authors_match = actual_surnames[: len(expected_surnames)] == expected_surnames
+    if expected_surnames and not authors_match:
         raise MetadataMismatch(
-            f"author mismatch: expected {expected_surnames}, got {parsed.author_surnames or 'missing'}"
+            f"author mismatch: expected {expected_surnames}, got {actual_surnames or 'missing'}"
         )

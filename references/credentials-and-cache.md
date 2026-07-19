@@ -22,13 +22,13 @@ The `ieee_gxu` scope contains the Guangxi University credential. The browser bri
 
 The `mineru` scope contains the MinerU API token. It is read through a child-process bridge and injected only into the precision CLI child's `MINERU_TOKEN` environment. Do not export it in the parent shell.
 
-The optional `sciencedirect_scau` scope contains the South China Agricultural University unified-authentication credential. Add or replace only this scope with `scripts/setup-sciencedirect-secret.ps1`; the update preserves `ieee_gxu` and `mineru`. The browser bridge rejects every host except exact `vpn.scau.edu.cn`, clears decrypted strings after one submission, and stores the authenticated session only in the dedicated `sciencedirect-scau` browser profile. The exact artifact proxy is `www-sciencedirect-com-s.vpn.scau.edu.cn`; it can receive cookies but never the plaintext credential.
+The optional `api_keys.elsevier` scope contains the Elsevier API key used for official metadata resolution. Add or replace it with `scripts/setup-elsevier-api-key.ps1`; the update preserves `ieee_gxu`, `mineru`, and unknown legacy scopes. The exact-host reader releases it only for `api.elsevier.com`. The key is never sent to ScienceDirect or exposed in a URL, command line, log, or provenance record.
 
-Optional discovery or publisher API keys belong in named encrypted scopes. A missing optional key disables that enhancement without weakening selection rules. ScienceDirect direct/open and campus-IP access remain credential-free and run before the optional SCAU scope is read.
+The manual ScienceDirect workflow stores no university credential. Organization login remains inside the user's normal browser, and the CLI receives only the PDF and raw BibTeX files the user downloads. Article Retrieval or Authentication API entitlement is optional and is not inferred from a working Search API key.
 
 ## Browser isolation
 
-Use only the skill's dedicated persistent profiles. Never locate, attach to, enumerate, or copy the user's normal Chrome profile. Cookies remain inside the browser context. PDF and citation requests disable automatic redirects so headers cannot be forwarded off the approved host. IEEE and ScienceDirect use separate `ieee` and `sciencedirect-scau` profile directories.
+Automated publishers must use only the skill's dedicated persistent profiles. Never locate, attach to, enumerate, or copy the user's normal Chrome profile. Cookies remain inside the browser context. PDF and citation requests disable automatic redirects so headers cannot be forwarded off the approved host. ScienceDirect is not an automated browser adapter: `manual-fetch` may open its canonical page but never controls or inspects that browser session.
 
 Playwright Core is fixed at version `1.61.1`, its npm tarball and integrity hash are pinned, lifecycle scripts are disabled, and installation occurs only under the global dependency root.
 

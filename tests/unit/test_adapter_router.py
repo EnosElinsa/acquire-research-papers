@@ -1,3 +1,4 @@
+from acquire_research_papers.acquisition.adapters.sciencedirect import ScienceDirectAdapter
 from acquire_research_papers.acquisition.router import AdapterRouter
 
 
@@ -13,3 +14,15 @@ def test_router_recognizes_initial_provider_set() -> None:
     assert router.name_for("https://www.ijcai.org/proceedings/2025/1") == "ijcai-proceedings"
     assert router.name_for("https://dl.acm.org/doi/10.1145/1") == "acm-dl"
     assert router.name_for("https://www.sciencedirect.com/science/article/pii/X") == "sciencedirect"
+
+
+def test_router_reaches_sciencedirect_manual_guard() -> None:
+    adapter = ScienceDirectAdapter.for_production()
+    router = AdapterRouter.with_defaults([adapter])
+
+    assert (
+        router.adapter_for(
+            "https://www.sciencedirect.com/science/article/pii/S1049007824000411"
+        )
+        is adapter
+    )

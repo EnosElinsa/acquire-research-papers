@@ -54,6 +54,7 @@ class PaperMetadata:
     publisher: str
     landing_url: str
     publication_type: str | None = None
+    authors_complete: bool = True
 
     def __post_init__(self) -> None:
         for field_name in ("title", "publisher", "landing_url"):
