@@ -8,9 +8,11 @@ from pathlib import Path
 from typing import Any
 
 from acquire_research_papers import __version__
+from acquire_research_papers.acquisition.adapters.acm import AcmDigitalLibraryAdapter
 from acquire_research_papers.acquisition.adapters.acl import AclAnthologyAdapter
 from acquire_research_papers.acquisition.adapters.ieee import IeeeBridge, IeeeXploreAdapter
 from acquire_research_papers.acquisition.adapters.ijcai import IjcaiProceedingsAdapter
+from acquire_research_papers.acquisition.adapters.sciencedirect import ScienceDirectAdapter
 from acquire_research_papers.acquisition.base import AccessRequired, PageContractChanged, SourceAdapter
 from acquire_research_papers.acquisition.router import AdapterRouter
 from acquire_research_papers.artifacts import InvalidPdfError
@@ -79,6 +81,8 @@ class Application:
         repository_root = Path(__file__).resolve().parents[2]
         acl = AclAnthologyAdapter(SafeHttpClient(allowed_hosts={"aclanthology.org"}))
         ijcai = IjcaiProceedingsAdapter(SafeHttpClient(allowed_hosts={"www.ijcai.org"}))
+        acm = AcmDigitalLibraryAdapter.for_production()
+        sciencedirect = ScienceDirectAdapter.for_production()
         ieee = IeeeXploreAdapter(
             IeeeBridge(
                 script=repository_root / "scripts" / "ieee-playwright.mjs",
@@ -101,7 +105,9 @@ class Application:
             paths=paths,
             repository_root=repository_root,
             registry=Registry(paths.registry),
-            resolver=Resolver(AdapterRouter.with_defaults([acl, ijcai, ieee])),
+            resolver=Resolver(
+                AdapterRouter.with_defaults([acl, ijcai, ieee, acm, sciencedirect])
+            ),
             corpus_workflow=CorpusWorkflow(
                 discoverer=CorpusDiscoverer([crossref.corpus_searcher])
             ),
