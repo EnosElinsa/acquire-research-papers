@@ -11,6 +11,7 @@ def test_runtime_script_root_falls_back_to_wheel_bundled_scripts(tmp_path: Path)
         "ieee-playwright.mjs",
         "install-playwright.ps1",
         "read-browser-credential.ps1",
+        "read-institution-profile.ps1",
         "read-mineru-token.ps1",
         "read-elsevier-api-key.ps1",
         "secret-store.ps1",

@@ -24,7 +24,7 @@ PDF-to-Markdown is optional. Research mode may temporarily parse selected PDFs w
 ## Supported sources
 
 - ACL Anthology and IJCAI proceedings
-- IEEE Xplore, including an optional Guangxi University institutional adapter
+- IEEE Xplore, including an optional user-configured CARSI institutional profile
 - ACM Digital Library
 - ScienceDirect through a manual organization-login handoff
 - Direct publisher pages exposing one unambiguous PDF and raw BibTeX link
@@ -81,16 +81,24 @@ uv run --project $skill arp discover research --brief .\brief.yaml --output C:\R
 uv run --project $skill arp export-md --pdf .\paper.pdf --output C:\Research\markdown
 ```
 
+Corpus runs do not stop when a selected paper requires access that is unavailable. They finish the remaining acquisitions and write the inaccessible items to `manual-download.csv` with DOI, official URL, publisher host, and the concrete reason for manual follow-up. If discovery has only a DOI, the file uses its canonical `https://doi.org/<DOI>` resolver link.
+
 Delivery directories must remain outside this repository. Runtime state is stored under `%LOCALAPPDATA%\Codex`.
 
 ## Credentials and API keys
 
 This repository contains no accounts, passwords, API keys, tokens, cookies, or browser profiles.
 
-Configure IEEE/Guangxi University and MinerU from an interactive PowerShell terminal:
+Configure your own IEEE institution profile and credential from an interactive PowerShell terminal:
 
 ```powershell
-& "$skill\scripts\setup-secrets.ps1"
+& "$skill\scripts\setup-ieee-institution.ps1"
+```
+
+Configure MinerU independently only when Markdown extraction is needed:
+
+```powershell
+& "$skill\scripts\setup-mineru-token.ps1"
 ```
 
 Configure the Elsevier API key used only for official metadata resolution:
@@ -99,7 +107,7 @@ Configure the Elsevier API key used only for official metadata resolution:
 & "$skill\scripts\setup-elsevier-api-key.ps1"
 ```
 
-Prompts do not echo values. DPAPI ties the encrypted payload to the current Windows user. The manual ScienceDirect workflow does not store or release a South China Agricultural University password. An Elsevier Article Retrieval entitlement is not assumed; a 403 falls back to the user-driven browser download rather than website automation.
+The setup asks for the institution's exact CARSI option, exact identity-provider hostname, and accessible form labels; the repository supplies no school-specific defaults. Credential prompts do not echo values, and DPAPI ties the encrypted payload to the current Windows user. The manual ScienceDirect workflow stores no institution password. An Elsevier Article Retrieval entitlement is not assumed; a 403 falls back to the user-driven browser download rather than website automation.
 
 See [`references/credentials-and-cache.md`](references/credentials-and-cache.md) and [`SECURITY.md`](SECURITY.md).
 

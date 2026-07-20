@@ -41,8 +41,8 @@ For every auto-accepted or user-approved candidate, route the canonical DOI or o
 
 Use stable, gap-free numbering only after pair verification. Reuse the global registry for DOI/title deduplication and interrupted-run recovery. A corpus run without an explicit Markdown request delivers PDF, BibTeX, manifests, and review files only.
 
-The default CLI automatically acquires selected high-confidence candidates and writes `acquisition-manifest.jsonl`. A known access, network, or page-contract failure defers that paper and records a concrete reason instead of terminating unrelated acquisitions. The delivered count, not the discovered count, determines whether the minimum target was met.
+The default CLI automatically acquires selected high-confidence candidates and writes `acquisition-manifest.jsonl`. A known access, network, or page-contract failure defers that paper and records a concrete reason instead of terminating unrelated acquisitions. An `access_required` result is also written to `manual-download.csv` with the title, DOI, official URL, publisher host, reason, and message. When discovery has only a DOI, the official URL column falls back to its canonical `https://doi.org/<DOI>` resolver. Finish the entire corpus run before asking the user to download those papers. The delivered count, not the discovered count, determines whether the minimum target was met.
 
 ## Review output
 
-`candidates.jsonl` is an auditable candidate ledger, not a citation library. `pending-review.csv` contains only decisions requiring human or agent semantic judgment. After review, acquire accepted items through the same verified fetch path; do not add a source-specific shortcut.
+`candidates.jsonl` is an auditable candidate ledger, not a citation library. `pending-review.csv` contains semantic decisions and deferred acquisition reasons. `manual-download.csv` contains only inaccessible papers that the user can retrieve from the official page after the automated run finishes. After review or manual download, acquire accepted items through the same verified fetch or `manual-fetch` path; do not add a source-specific shortcut.

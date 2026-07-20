@@ -8,6 +8,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote, urlsplit
 
 from acquire_research_papers.artifacts import atomic_write_bytes
 from acquire_research_papers.models import PaperStatus
@@ -34,6 +35,14 @@ class CandidateMetadata:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+def _manual_download_url(candidate: CandidateMetadata) -> str:
+    if candidate.official_url:
+        return candidate.official_url
+    if candidate.doi:
+        return f"https://doi.org/{quote(candidate.doi, safe='/().;:-_')}"
+    return ""
 
 
 @dataclass(frozen=True)
@@ -243,6 +252,7 @@ class CorpusRunResult:
     pending_review_path: Path
     manifest_path: Path
     acquisition_path: Path
+    manual_download_path: Path
     accepted: int
     pending: int
     rejected: int
@@ -327,6 +337,48 @@ class CorpusWorkflow:
         atomic_write_bytes(acquisition_path, acquisition_text.encode("utf-8"))
         delivered = sum(record.get("status") == "delivered" for record in acquisition_records)
         deferred = len(acquisition_records) - delivered
+
+        candidate_by_key = {candidate.key: candidate for candidate in plan.auto_accepted}
+        manual_path = destination / "manual-download.csv"
+        manual_buffer = io.StringIO(newline="")
+        manual_writer = csv.DictWriter(
+            manual_buffer,
+            fieldnames=[
+                "key",
+                "title",
+                "doi",
+                "official_url",
+                "publisher",
+                "reason",
+                "message",
+            ],
+        )
+        manual_writer.writeheader()
+        for record in acquisition_records:
+            if record.get("error_code") != "access_required":
+                continue
+            candidate = candidate_by_key[str(record["key"])]
+            official_url = _manual_download_url(candidate)
+            try:
+                publisher = urlsplit(official_url).hostname or ""
+            except ValueError:
+                publisher = ""
+            manual_writer.writerow(
+                {
+                    "key": candidate.key,
+                    "title": candidate.title,
+                    "doi": candidate.doi or "",
+                    "official_url": official_url,
+                    "publisher": publisher,
+                    "reason": "access_required",
+                    "message": str(record.get("message") or ""),
+                }
+            )
+        atomic_write_bytes(manual_path, manual_buffer.getvalue().encode("utf-8-sig"))
+        manual_required = sum(
+            record.get("error_code") == "access_required" for record in acquisition_records
+        )
+
         if deferred:
             buffer = io.StringIO(newline="")
             writer = csv.writer(buffer)
@@ -343,7 +395,6 @@ class CorpusWorkflow:
                         ";".join(reasons),
                     ]
                 )
-            candidate_by_key = {candidate.key: candidate for candidate in plan.auto_accepted}
             for record in acquisition_records:
                 if record.get("status") == "delivered":
                     continue
@@ -381,6 +432,8 @@ class CorpusWorkflow:
             "delivered": delivered,
             "deferred": deferred,
             "shortfall": delivery_shortfall,
+            "manual_download": manual_path.name,
+            "manual_required": manual_required,
         }
         atomic_write_bytes(
             manifest_path,
@@ -392,6 +445,7 @@ class CorpusWorkflow:
             pending_review_path=pending_path,
             manifest_path=manifest_path,
             acquisition_path=acquisition_path,
+            manual_download_path=manual_path,
             accepted=int(manifest["accepted"]),
             pending=int(manifest["pending"]),
             rejected=int(manifest["rejected"]),

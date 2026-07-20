@@ -55,29 +55,115 @@ function Save-AcquisitionSecretPayload(
   }
 }
 
-function Export-AcquisitionSecrets(
-  [Management.Automation.PSCredential]$IeeeCredential,
-  [Security.SecureString]$MinerUToken,
+function New-AcquisitionSecretPayload {
+  return [pscustomobject]@{
+    SchemaVersion = 1
+    Scopes = [pscustomobject]@{}
+  }
+}
+
+function Get-AcquisitionProfileValue([object]$Profile, [string]$Name) {
+  if ($null -eq $Profile) { return "" }
+  if ($Profile -is [Collections.IDictionary]) {
+    return [string]$Profile[$Name]
+  }
+  $property = $Profile.PSObject.Properties[$Name]
+  if ($null -eq $property) { return "" }
+  return [string]$property.Value
+}
+
+function ConvertTo-IeeeInstitutionProfile([object]$Institution) {
+  $required = @(
+    "Organization",
+    "CarsiSchoolPlaceholder",
+    "CarsiSearchText",
+    "CarsiInstitution",
+    "CarsiLoginButtonName",
+    "CredentialHost",
+    "UsernameLabel",
+    "PasswordLabel",
+    "LoginButtonName"
+  )
+  $values = @{}
+  foreach ($name in $required) {
+    $value = (Get-AcquisitionProfileValue -Profile $Institution -Name $name).Trim()
+    if ([string]::IsNullOrWhiteSpace($value)) {
+      throw "IEEE institution profile field is missing: $name"
+    }
+    $values[$name] = $value
+  }
+  $credentialHost = $values.CredentialHost
+  if (-not $credentialHost.Contains(".") -or $credentialHost.EndsWith(".") -or
+      $credentialHost.Contains(":") -or
+      $credentialHost.Contains("/") -or $credentialHost.Contains("*") -or
+      [Uri]::CheckHostName($credentialHost) -ne [UriHostNameType]::Dns) {
+    throw "IEEE credential host must be one exact DNS hostname without scheme, port, path, wildcard, or trailing dot."
+  }
+  $values.CredentialHost = $credentialHost.ToLowerInvariant()
+  $consentTitle = (Get-AcquisitionProfileValue -Profile $Institution -Name "ConsentTitle").Trim()
+  $consentButton = (Get-AcquisitionProfileValue -Profile $Institution -Name "ConsentButtonName").Trim()
+  if ([string]::IsNullOrWhiteSpace($consentTitle) -xor [string]::IsNullOrWhiteSpace($consentButton)) {
+    throw "ConsentTitle and ConsentButtonName must both be provided or both be empty."
+  }
+  return [pscustomobject]@{
+    Organization = $values.Organization
+    CarsiSchoolPlaceholder = $values.CarsiSchoolPlaceholder
+    CarsiSearchText = $values.CarsiSearchText
+    CarsiInstitution = $values.CarsiInstitution
+    CarsiLoginButtonName = $values.CarsiLoginButtonName
+    CredentialHost = $values.CredentialHost
+    UsernameLabel = $values.UsernameLabel
+    PasswordLabel = $values.PasswordLabel
+    LoginButtonName = $values.LoginButtonName
+    ConsentTitle = $consentTitle
+    ConsentButtonName = $consentButton
+  }
+}
+
+function Get-OrCreateAcquisitionSecretPayload([string]$Path) {
+  if (Test-Path -LiteralPath $Path -PathType Leaf) {
+    return Import-AcquisitionSecrets -Path $Path
+  }
+  return New-AcquisitionSecretPayload
+}
+
+function Set-IeeeInstitutionCredential(
+  [object]$Institution,
+  [Management.Automation.PSCredential]$Credential,
   [string]$Path = (Get-AcquisitionSecretPath)
 ) {
-  if ($null -eq $IeeeCredential -or [string]::IsNullOrWhiteSpace($IeeeCredential.UserName)) {
+  if ($null -eq $Credential -or [string]::IsNullOrWhiteSpace($Credential.UserName)) {
     throw "IEEE institutional credential is missing."
   }
-  if ($null -eq $MinerUToken -or $MinerUToken.Length -eq 0) {
+  $profile = ConvertTo-IeeeInstitutionProfile -Institution $Institution
+  $payload = Get-OrCreateAcquisitionSecretPayload -Path $Path
+  $scope = [pscustomobject]@{
+    Profile = $profile
+    Credential = $Credential
+  }
+  if ($payload.Scopes.PSObject.Properties.Name -contains "ieee_institution") {
+    $payload.Scopes.ieee_institution = $scope
+  }
+  else {
+    $payload.Scopes | Add-Member -NotePropertyName ieee_institution -NotePropertyValue $scope
+  }
+  Save-AcquisitionSecretPayload -Payload $payload -Path $Path
+}
+
+function Set-MineruToken(
+  [Security.SecureString]$Token,
+  [string]$Path = (Get-AcquisitionSecretPath)
+) {
+  if ($null -eq $Token -or $Token.Length -eq 0) {
     throw "MinerU token is missing."
   }
-  $payload = [pscustomobject]@{
-    SchemaVersion = 1
-    Scopes = [pscustomobject]@{
-      ieee_gxu = [pscustomobject]@{
-        Organization = "Guangxi University"
-        Credential = $IeeeCredential
-      }
-      mineru = [pscustomobject]@{
-        Token = $MinerUToken
-      }
-      api_keys = [pscustomobject]@{}
-    }
+  $payload = Get-OrCreateAcquisitionSecretPayload -Path $Path
+  $scope = [pscustomobject]@{ Token = $Token }
+  if ($payload.Scopes.PSObject.Properties.Name -contains "mineru") {
+    $payload.Scopes.mineru = $scope
+  }
+  else {
+    $payload.Scopes | Add-Member -NotePropertyName mineru -NotePropertyValue $scope
   }
   Save-AcquisitionSecretPayload -Payload $payload -Path $Path
 }
@@ -93,10 +179,7 @@ function Set-ElsevierApiKey(
     $payload = Import-AcquisitionSecrets -Path $Path
   }
   else {
-    $payload = [pscustomobject]@{
-      SchemaVersion = 1
-      Scopes = [pscustomobject]@{}
-    }
+    $payload = New-AcquisitionSecretPayload
   }
   if ($payload.Scopes.PSObject.Properties.Name -notcontains "api_keys") {
     $payload.Scopes | Add-Member -NotePropertyName api_keys -NotePropertyValue ([pscustomobject]@{})
@@ -119,11 +202,12 @@ function Import-AcquisitionSecrets([string]$Path = (Get-AcquisitionSecretPath)) 
   if ($null -eq $payload -or [int]$payload.SchemaVersion -ne 1 -or $null -eq $payload.Scopes) {
     throw "Unsupported acquisition secret schema."
   }
-  if ($payload.Scopes.PSObject.Properties.Name -contains "ieee_gxu") {
-    if ($payload.Scopes.ieee_gxu.Organization -ne "Guangxi University" -or
-        $payload.Scopes.ieee_gxu.Credential -isnot [Management.Automation.PSCredential]) {
-      throw "IEEE Guangxi University credential scope is invalid."
+  if ($payload.Scopes.PSObject.Properties.Name -contains "ieee_institution") {
+    $scope = $payload.Scopes.ieee_institution
+    if ($scope.Credential -isnot [Management.Automation.PSCredential]) {
+      throw "IEEE institution credential scope is invalid."
     }
+    $scope.Profile = ConvertTo-IeeeInstitutionProfile -Institution $scope.Profile
   }
   if ($payload.Scopes.PSObject.Properties.Name -contains "mineru") {
     if ($payload.Scopes.mineru.Token -isnot [Security.SecureString] -or

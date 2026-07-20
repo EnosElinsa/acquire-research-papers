@@ -19,6 +19,9 @@ function Assert-Throws([scriptblock]$Action, [string]$Message) {
 $root = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..\..")).Path
 $storePath = Join-Path $root "scripts\secret-store.ps1"
 $bridgePath = Join-Path $root "scripts\read-browser-credential.ps1"
+$profileBridgePath = Join-Path $root "scripts\read-institution-profile.ps1"
+$ieeeSetupPath = Join-Path $root "scripts\setup-ieee-institution.ps1"
+$mineruSetupPath = Join-Path $root "scripts\setup-mineru-token.ps1"
 $elsevierBridgePath = Join-Path $root "scripts\read-elsevier-api-key.ps1"
 $elsevierSetupPath = Join-Path $root "scripts\setup-elsevier-api-key.ps1"
 $mineruPath = Join-Path $root "scripts\read-mineru-token.ps1"
@@ -26,6 +29,9 @@ $migrationPath = Join-Path $root "scripts\migrate-legacy-secrets.ps1"
 foreach ($required in @(
   $storePath,
   $bridgePath,
+  $profileBridgePath,
+  $ieeeSetupPath,
+  $mineruSetupPath,
   $elsevierBridgePath,
   $elsevierSetupPath,
   $mineruPath,
@@ -47,6 +53,19 @@ try {
   $token = ConvertTo-SecureString "synthetic-token" -AsPlainText -Force
   $credential = [Management.Automation.PSCredential]::new("synthetic-user", $password)
   $elsevierKey = ConvertTo-SecureString "synthetic-elsevier-key" -AsPlainText -Force
+  $institution = [ordered]@{
+    Organization = "Example University"
+    CarsiSchoolPlaceholder = "Institution name"
+    CarsiSearchText = "Example University"
+    CarsiInstitution = "Example University (Example)"
+    CarsiLoginButtonName = "Continue"
+    CredentialHost = "login.example.edu"
+    UsernameLabel = "Account"
+    PasswordLabel = "Passcode"
+    LoginButtonName = "Sign in"
+    ConsentTitle = "Release information"
+    ConsentButtonName = "Accept"
+  }
 
   $elsevierOnlyPath = Join-Path $tempRoot "elsevier-only\secrets.clixml"
   Set-ElsevierApiKey -ApiKey $elsevierKey -Path $elsevierOnlyPath
@@ -55,38 +74,52 @@ try {
     ConvertFrom-AcquisitionSecureString $elsevierOnly.Scopes.api_keys.elsevier
   ) "synthetic-elsevier-key" "standalone Elsevier API key"
   Assert-True (
-    $elsevierOnly.Scopes.PSObject.Properties.Name -notcontains "ieee_gxu"
+    $elsevierOnly.Scopes.PSObject.Properties.Name -notcontains "ieee_institution"
   ) "Elsevier-only setup must not require an IEEE scope"
   Assert-True (
     $elsevierOnly.Scopes.PSObject.Properties.Name -notcontains "mineru"
   ) "Elsevier-only setup must not require a MinerU scope"
 
   Assert-Equal (Get-AcquisitionSecretPath $localAppData) $secretPath "default path"
-  Export-AcquisitionSecrets -IeeeCredential $credential -MinerUToken $token -Path $secretPath
+  Set-IeeeInstitutionCredential `
+    -Institution $institution `
+    -Credential $credential `
+    -Path $secretPath
+  Set-MineruToken -Token $token -Path $secretPath
   $serialized = Get-Content -Raw -LiteralPath $secretPath
   Assert-True (-not $serialized.Contains("synthetic-password")) "password must stay encrypted"
   Assert-True (-not $serialized.Contains("synthetic-token")) "token must stay encrypted"
 
   $payload = Import-AcquisitionSecrets -Path $secretPath
   Assert-Equal $payload.SchemaVersion 1 "schema version"
-  Assert-Equal $payload.Scopes.ieee_gxu.Organization "Guangxi University" "IEEE scope"
-  Assert-Equal $payload.Scopes.ieee_gxu.Credential.UserName "synthetic-user" "username"
+  Assert-Equal $payload.Scopes.ieee_institution.Profile.Organization "Example University" "IEEE organization"
+  Assert-Equal $payload.Scopes.ieee_institution.Profile.CredentialHost "login.example.edu" "IEEE credential host"
+  Assert-Equal $payload.Scopes.ieee_institution.Credential.UserName "synthetic-user" "username"
   Assert-Equal (ConvertFrom-AcquisitionSecureString $payload.Scopes.mineru.Token) "synthetic-token" "token"
 
   Set-ElsevierApiKey -ApiKey $elsevierKey -Path $secretPath
   $withElsevier = Import-AcquisitionSecrets -Path $secretPath
   $serialized = Get-Content -Raw -LiteralPath $secretPath
   Assert-True (-not $serialized.Contains("synthetic-elsevier-key")) "Elsevier key must stay encrypted"
-  Assert-Equal $withElsevier.Scopes.ieee_gxu.Credential.UserName "synthetic-user" "IEEE scope preserved after Elsevier update"
+  Assert-Equal $withElsevier.Scopes.ieee_institution.Credential.UserName "synthetic-user" "IEEE scope preserved after Elsevier update"
   Assert-Equal (ConvertFrom-AcquisitionSecureString $withElsevier.Scopes.mineru.Token) "synthetic-token" "MinerU scope preserved after Elsevier update"
   Assert-Equal (ConvertFrom-AcquisitionSecureString $withElsevier.Scopes.api_keys.elsevier) "synthetic-elsevier-key" "Elsevier API key"
 
   Assert-Throws {
-    & $bridgePath -ExpectedHost "idp.gxu.edu.cn.evil.example" -SecretPath $secretPath | Out-Null
+    & $bridgePath -ExpectedHost "login.example.edu.evil.example" -SecretPath $secretPath | Out-Null
   } "lookalike host must be rejected"
-  $credentialJson = & $bridgePath -ExpectedHost "idp.gxu.edu.cn" -SecretPath $secretPath | ConvertFrom-Json
+  Assert-Throws {
+    & $bridgePath -ExpectedHost "login.example.edu." -SecretPath $secretPath | Out-Null
+  } "trailing-dot host must be rejected"
+  $credentialJson = & $bridgePath -ExpectedHost "LOGIN.EXAMPLE.EDU" -SecretPath $secretPath | ConvertFrom-Json
   Assert-Equal $credentialJson.username "synthetic-user" "bridge username"
   Assert-Equal $credentialJson.password "synthetic-password" "bridge password"
+  $profileJson = & $profileBridgePath -SecretPath $secretPath | ConvertFrom-Json
+  Assert-Equal $profileJson.organization "Example University" "profile organization"
+  Assert-Equal $profileJson.credentialHost "login.example.edu" "profile credential host"
+  Assert-Equal $profileJson.usernameLabel "Account" "profile username label"
+  Assert-True ($profileJson.PSObject.Properties.Name -notcontains "username") "profile bridge must not release username"
+  Assert-True ($profileJson.PSObject.Properties.Name -notcontains "password") "profile bridge must not release password"
   foreach ($rejectedHost in @(
     "api.elsevier.com.evil.example",
     "www.sciencedirect.com",
@@ -104,20 +137,113 @@ try {
   $legacyPath = Join-Path $tempRoot "legacy.clixml"
   [pscustomobject]@{
     SchemaVersion = 1
-    Organization = "Guangxi University"
+    Organization = "Legacy Example University"
     IeeeCredential = $credential
     MinerUToken = $token
   } | Export-Clixml -LiteralPath $legacyPath
   $migratedPath = Join-Path $tempRoot "migrated\secrets.clixml"
-  $migration = & $migrationPath -LegacyPath $legacyPath -DestinationPath $migratedPath -Force | ConvertFrom-Json
+  $migration = & $migrationPath `
+    -LegacyPath $legacyPath `
+    -DestinationPath $migratedPath `
+    -CarsiSchoolPlaceholder $institution.CarsiSchoolPlaceholder `
+    -CarsiSearchText $institution.CarsiSearchText `
+    -CarsiInstitution $institution.CarsiInstitution `
+    -CarsiLoginButtonName $institution.CarsiLoginButtonName `
+    -CredentialHost $institution.CredentialHost `
+    -UsernameLabel $institution.UsernameLabel `
+    -PasswordLabel $institution.PasswordLabel `
+    -LoginButtonName $institution.LoginButtonName `
+    -ConsentTitle $institution.ConsentTitle `
+    -ConsentButtonName $institution.ConsentButtonName `
+    -Force | ConvertFrom-Json
   Assert-Equal $migration.status "migrated" "migration status"
-  Assert-Equal (Import-AcquisitionSecrets -Path $migratedPath).Scopes.ieee_gxu.Credential.UserName "synthetic-user" "migrated username"
+  $migrated = Import-AcquisitionSecrets -Path $migratedPath
+  Assert-Equal $migrated.Scopes.ieee_institution.Profile.Organization "Legacy Example University" "migrated organization"
+  Assert-Equal $migrated.Scopes.ieee_institution.Credential.UserName "synthetic-user" "migrated username"
+
+  $legacyScopedPath = Join-Path $tempRoot "legacy-scoped.clixml"
+  [pscustomobject]@{
+    SchemaVersion = 1
+    Scopes = [pscustomobject]@{
+      institutional_access = [pscustomobject]@{
+        Organization = "Scoped Example University"
+        Credential = $credential
+      }
+      mineru = [pscustomobject]@{ Token = $token }
+    }
+  } | Export-Clixml -LiteralPath $legacyScopedPath
+  $migratedScopedPath = Join-Path $tempRoot "migrated-scoped\secrets.clixml"
+  & $migrationPath `
+    -LegacyPath $legacyScopedPath `
+    -DestinationPath $migratedScopedPath `
+    -CarsiSchoolPlaceholder $institution.CarsiSchoolPlaceholder `
+    -CarsiSearchText $institution.CarsiSearchText `
+    -CarsiInstitution $institution.CarsiInstitution `
+    -CarsiLoginButtonName $institution.CarsiLoginButtonName `
+    -CredentialHost $institution.CredentialHost `
+    -UsernameLabel $institution.UsernameLabel `
+    -PasswordLabel $institution.PasswordLabel `
+    -LoginButtonName $institution.LoginButtonName `
+    -ConsentTitle $institution.ConsentTitle `
+    -ConsentButtonName $institution.ConsentButtonName `
+    -Force | Out-Null
+  $migratedScoped = Import-AcquisitionSecrets -Path $migratedScopedPath
+  Assert-Equal $migratedScoped.Scopes.ieee_institution.Profile.Organization "Scoped Example University" "migrated scoped organization"
+  Assert-Equal $migratedScoped.Scopes.ieee_institution.Credential.UserName "synthetic-user" "migrated scoped username"
+
+  $invalidPath = Join-Path $tempRoot "invalid\secrets.clixml"
+  $invalidInstitution = [ordered]@{}
+  foreach ($name in $institution.Keys) { $invalidInstitution[$name] = $institution[$name] }
+  $invalidInstitution.CredentialHost = "https://login.example.edu/path"
+  Assert-Throws {
+    Set-IeeeInstitutionCredential -Institution $invalidInstitution -Credential $credential -Path $invalidPath
+  } "credential host must be an exact hostname without scheme or path"
+  $invalidInstitution.CredentialHost = "localhost"
+  Assert-Throws {
+    Set-IeeeInstitutionCredential -Institution $invalidInstitution -Credential $credential -Path $invalidPath
+  } "credential host must be a fully qualified DNS hostname"
+
+  $setupValues = @{
+    "Institution display name" = "Setup Example University"
+    "CARSI institution-search placeholder" = "Institution name"
+    "CARSI search text" = "Setup Example University"
+    "Exact CARSI institution option" = "Setup Example University (Example)"
+    "CARSI login button name" = "Continue"
+    "Exact institutional IdP hostname (no scheme or path)" = "setup.example.edu"
+    "Username field label" = "Account"
+    "Password field label" = "Passcode"
+    "Institution login button name" = "Sign in"
+    "Optional attribute-release page title" = ""
+    "Optional attribute-release accept button name" = ""
+  }
+  function global:Read-Host {
+    param([string]$Prompt, [switch]$AsSecureString)
+    if ($AsSecureString) {
+      $value = switch ($Prompt) {
+        "Institution username" { "setup-user" }
+        "Institution password" { "setup-password" }
+        "MinerU API token" { "setup-token" }
+        default { "setup-value" }
+      }
+      return ConvertTo-SecureString $value -AsPlainText -Force
+    }
+    return $setupValues[$Prompt]
+  }
+  $setupPath = Join-Path $tempRoot "setup\secrets.clixml"
+  & $ieeeSetupPath -Path $setupPath -Force | Out-Null
+  $setupPayload = Import-AcquisitionSecrets -Path $setupPath
+  Assert-Equal $setupPayload.Scopes.ieee_institution.Profile.Organization "Setup Example University" "interactive IEEE setup"
+  Assert-Equal $setupPayload.Scopes.ieee_institution.Profile.CredentialHost "setup.example.edu" "interactive host setup"
+  & $mineruSetupPath -Path $setupPath -Force | Out-Null
+  Assert-Equal (ConvertFrom-AcquisitionSecureString (Import-AcquisitionSecrets -Path $setupPath).Scopes.mineru.Token) "setup-token" "interactive MinerU setup"
+  Remove-Item Function:\global:Read-Host -ErrorAction SilentlyContinue
 
   Write-Output "PASS scoped DPAPI secret storage"
-  Write-Output "PASS exact-host credential gate"
+  Write-Output "PASS user-configured exact-host credential gate"
   Write-Output "PASS independent Elsevier API key scope"
   Write-Output "PASS standalone Elsevier API key setup"
   Write-Output "PASS legacy ciphertext migration"
+  Write-Output "PASS independent interactive institution setup"
 }
 finally {
   if (Test-Path -LiteralPath $tempRoot) {

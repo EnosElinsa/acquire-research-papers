@@ -33,6 +33,9 @@ uv run --project $skill arp fetch --input <DOI-or-official-URL> --output <direct
 
 Use output only when the JSON status is `delivered`. A title that is not uniquely resolved must go through discovery.
 
+For subscribed IEEE content, use only the institution profile configured by the current user through `scripts/setup-ieee-institution.ps1`. The repository provides no institution name, identity-provider host, form label, or credential default.
+If the profile is absent or the page contract does not match it, classify the paper as `access_required`, add it to the corpus manual-download list, and continue; never guess an institution or selector.
+
 ### ScienceDirect manual handoff
 
 Configure the DPAPI-protected Elsevier API key once in an interactive terminal:
@@ -57,6 +60,8 @@ uv run --project $skill arp discover corpus --spec <job.yaml> --output <director
 uv run --project $skill arp discover research --brief <brief.yaml> --output <directory>
 ```
 
+Corpus mode continues after a known access failure. It writes each inaccessible paper to `manual-download.csv` with its DOI, official URL, publisher host, reason, and message, then processes the remaining candidates without waiting for a manual download.
+
 Read [references/corpus-mode.md](references/corpus-mode.md) or [references/research-mode.md](references/research-mode.md) before running the corresponding mode. Read [references/source-policies.md](references/source-policies.md) before changing a publisher contract and [references/credentials-and-cache.md](references/credentials-and-cache.md) before institutional access or MinerU.
 
 ## Markdown policy
@@ -79,7 +84,7 @@ uv run --project $skill arp export-md --pdf <paper.pdf> --output <directory>
 ## Hard stops
 
 - Never print, log, summarize, or commit credentials, API keys, tokens, cookies, browser storage, or decrypted values.
-- Release the Guangxi University credential only to exact host `idp.gxu.edu.cn`; stop on any other host, CAPTCHA, OTP, or incomplete login.
+- Release an IEEE credential only when the current hostname exactly equals the credential host in the current user's institution profile; stop on any other host, CAPTCHA, OTP, or incomplete login.
 - Never automate ScienceDirect pages, submit its organization login, attach to the user's normal Chrome, read a Chrome profile, or export Cookie/session data. User authorization does not relax this boundary.
 - Never use Crossref, OpenAlex, Semantic Scholar, a mirror, or generated BibTeX as the final citation artifact.
 - Never bypass publisher/institution access controls, publish partial MinerU output, or overwrite a delivery without identity and hash validation.

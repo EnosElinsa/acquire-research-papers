@@ -16,8 +16,11 @@ def test_required_skill_and_package_files_exist() -> None:
         "src/acquire_research_papers/__init__.py",
         "src/acquire_research_papers/cli.py",
         "src/acquire_research_papers/acquisition/manual_handoff.py",
+        "scripts/setup-ieee-institution.ps1",
+        "scripts/setup-mineru-token.ps1",
         "scripts/setup-elsevier-api-key.ps1",
         "scripts/read-elsevier-api-key.ps1",
+        "scripts/read-institution-profile.ps1",
     ]
     assert all((ROOT / relative).is_file() for relative in required)
 
@@ -77,8 +80,6 @@ def test_sciencedirect_manual_handoff_contract_is_explicit() -> None:
     for forbidden in (
         "setup-sciencedirect-secret.ps1",
         "sciencedirect-playwright.mjs",
-        "www-sciencedirect-com-s.vpn.scau.edu.cn",
-        "unattended South China Agricultural University ScienceDirect access",
     ):
         assert forbidden not in public_contract
 
@@ -95,10 +96,38 @@ def test_retired_sciencedirect_website_automation_is_not_distributed() -> None:
     assert all(not (ROOT / relative).exists() for relative in obsolete)
 
 
-def test_release_version_is_synchronized_at_0_2_0() -> None:
+def test_repository_contains_no_built_in_institution_identity() -> None:
+    public_and_runtime_files = [
+        ROOT / "README.md",
+        ROOT / "README.zh-CN.md",
+        ROOT / "SECURITY.md",
+        ROOT / "SKILL.md",
+        *(ROOT / "references").glob("*.md"),
+        *(ROOT / "scripts").glob("*.ps1"),
+        ROOT / "scripts" / "ieee-playwright.mjs",
+    ]
+    forbidden = (
+        "Guangxi " + "University",
+        "广西" + "大学",
+        "idp." + "gxu.edu.cn",
+        "ieee_" + "gxu",
+        "South China Agricultural " + "University",
+        "华南" + "农业大学",
+        "scau." + "edu.cn",
+    )
+    offenders = {
+        path.relative_to(ROOT).as_posix(): token
+        for path in public_and_runtime_files
+        for token in forbidden
+        if token.casefold() in path.read_text(encoding="utf-8").casefold()
+    }
+    assert not offenders
+
+
+def test_release_version_is_synchronized_at_0_3_0() -> None:
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     package_init = (ROOT / "src/acquire_research_papers/__init__.py").read_text(
         encoding="utf-8"
     )
-    assert project["project"]["version"] == "0.2.0"
-    assert '__version__ = "0.2.0"' in package_init
+    assert project["project"]["version"] == "0.3.0"
+    assert '__version__ = "0.3.0"' in package_init

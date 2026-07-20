@@ -141,6 +141,45 @@ def test_fetch_cli_classifies_uncovered_ieee_item_as_access_required(tmp_path, c
     assert payload["error_code"] == "access_required"
 
 
+class InstitutionProfileMismatchAdapter(SourceAdapter):
+    name = "institution-profile-mismatch"
+    production_hosts = frozenset({"ieeexplore.ieee.org"})
+
+    def resolve(self, value):
+        raise IeeeBridgeError(
+            "institution-login",
+            "configured institution login fields did not match the page",
+        )
+
+    def acquire(self, document):
+        raise AssertionError("unreachable")
+
+
+def test_fetch_cli_classifies_institution_profile_mismatch_as_access_required(
+    tmp_path,
+    capsys,
+) -> None:
+    application = Application.for_test(
+        app_root=tmp_path / "app",
+        repository_root=tmp_path / "repository",
+        adapter=InstitutionProfileMismatchAdapter(),
+    )
+    exit_code = run_cli(
+        [
+            "fetch",
+            "--input",
+            "https://ieeexplore.ieee.org/document/2",
+            "--output",
+            str(tmp_path / "out"),
+        ],
+        application=application,
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 69
+    assert payload["status"] == "error"
+    assert payload["error_code"] == "access_required"
+
+
 class CountingAdapter(SourceAdapter):
     name = "counting"
     production_hosts = frozenset({"publisher.example"})

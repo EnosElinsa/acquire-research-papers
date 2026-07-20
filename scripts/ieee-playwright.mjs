@@ -9,18 +9,10 @@ const execFileAsync = promisify(execFile);
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const CARSI_DISCOVERY_URL = "https://ds.carsi.edu.cn/ds/index.html";
 const IEEE_HOST = "ieeexplore.ieee.org";
-const GXU_IDP_HOST = "idp.gxu.edu.cn";
 const CITATION_URL = `https://${IEEE_HOST}/rest/search/citation/format`;
+const DNS_HOST = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;
 
 export const SELECTORS = Object.freeze({
-  carsiSchoolPlaceholder: "请输入高校/机构名称",
-  carsiSearchText: "广西大学",
-  carsiInstitution: "广西大学（GuangXi University）",
-  carsiLogin: "登录",
-  gxuUsername: "用户名",
-  gxuPassword: "密码",
-  gxuConsentTitle: "信息发布",
-  gxuConsentAccept: "接受",
   documentTitle: "h1.document-title",
   pdfHref: 'a[href*="/stamp/stamp.jsp"]',
   pdfPrimaryHref: 'a.xpl-btn-pdf[href*="/stamp/stamp.jsp"]',
@@ -44,8 +36,43 @@ export function classifyPaperReference(reference) {
   return { kind: "title", value };
 }
 
-export function isApprovedCredentialHost(hostname) {
-  return String(hostname ?? "").toLowerCase() === GXU_IDP_HOST;
+export function normalizeInstitutionProfile(payload = {}) {
+  const required = [
+    "organization",
+    "carsiSchoolPlaceholder",
+    "carsiSearchText",
+    "carsiInstitution",
+    "carsiLoginButtonName",
+    "credentialHost",
+    "usernameLabel",
+    "passwordLabel",
+    "loginButtonName",
+  ];
+  const profile = {};
+  for (const name of required) {
+    const value = String(payload[name] ?? "").trim();
+    if (!value) throw new IeeeFlowError("credential-read", `Institution profile field is missing: ${name}.`);
+    profile[name] = value;
+  }
+  profile.credentialHost = profile.credentialHost.toLowerCase();
+  if (profile.credentialHost.endsWith(".") || !DNS_HOST.test(profile.credentialHost)) {
+    throw new IeeeFlowError("credential-read", "Institution credential host must be one exact DNS hostname.");
+  }
+  profile.consentTitle = String(payload.consentTitle ?? "").trim();
+  profile.consentButtonName = String(payload.consentButtonName ?? "").trim();
+  if (Boolean(profile.consentTitle) !== Boolean(profile.consentButtonName)) {
+    throw new IeeeFlowError(
+      "credential-read",
+      "Institution consent title and button name must both be configured or both be empty.",
+    );
+  }
+  return profile;
+}
+
+export function isApprovedCredentialHost(hostname, institutionProfile) {
+  const value = String(hostname ?? "").trim().toLowerCase();
+  if (!value || value.endsWith(".")) return false;
+  return value === normalizeInstitutionProfile(institutionProfile).credentialHost;
 }
 
 function samePath(left, right) {
@@ -442,8 +469,34 @@ async function exportOfficialBibtex({ browserContext, paper, timeoutMs }) {
   return bibtex;
 }
 
-export async function readCredentialForHost(hostname, { secretPath = "" } = {}) {
-  if (!isApprovedCredentialHost(hostname)) {
+export async function readInstitutionProfile({ secretPath = "" } = {}) {
+  const bridge = path.join(MODULE_DIR, "read-institution-profile.ps1");
+  const args = [
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    bridge,
+  ];
+  if (secretPath) args.push("-SecretPath", secretPath);
+  let stdout;
+  try {
+    ({ stdout } = await execFileAsync("powershell", args, {
+      encoding: "utf8",
+      windowsHide: true,
+      maxBuffer: 64 * 1024,
+    }));
+    return normalizeInstitutionProfile(JSON.parse(stdout));
+  } catch {
+    throw new IeeeFlowError("credential-read", "The IEEE institution profile could not be loaded.");
+  }
+}
+
+export async function readCredentialForHost(
+  hostname,
+  { secretPath = "", institutionProfile } = {},
+) {
+  if (!isApprovedCredentialHost(hostname, institutionProfile)) {
     throw new IeeeFlowError(
       "unexpected-auth-host",
       "Credential release denied for an unapproved hostname.",
@@ -482,26 +535,29 @@ export async function readCredentialForHost(hostname, { secretPath = "" } = {}) 
   }
 }
 
-async function openCarsiInstitutionLogin(page, timeoutMs) {
+async function openCarsiInstitutionLogin(page, timeoutMs, institutionProfile) {
   await page.goto(CARSI_DISCOVERY_URL, { waitUntil: "domcontentloaded", timeout: timeoutMs });
   const school = await uniqueLocator(
-    page.getByPlaceholder(SELECTORS.carsiSchoolPlaceholder, { exact: true }),
+    page.getByPlaceholder(institutionProfile.carsiSchoolPlaceholder, { exact: true }),
     "carsi-school",
     "CARSI institution search",
   );
-  await school.fill(SELECTORS.carsiSearchText);
-  const candidate = page.getByRole("option", { name: SELECTORS.carsiInstitution, exact: true });
+  await school.fill(institutionProfile.carsiSearchText);
+  const candidate = page.getByRole("option", {
+    name: institutionProfile.carsiInstitution,
+    exact: true,
+  });
   if (typeof candidate.waitFor === "function") {
     await candidate.waitFor({ state: "visible", timeout: timeoutMs });
   }
   const institution = await uniqueLocator(
     candidate,
     "carsi-institution",
-    "Guangxi University CARSI option",
+    `${institutionProfile.organization} CARSI option`,
   );
   await institution.click();
   const carsiLogin = await uniqueLocator(
-    page.getByRole("button", { name: SELECTORS.carsiLogin, exact: true }),
+    page.getByRole("button", { name: institutionProfile.carsiLoginButtonName, exact: true }),
     "carsi-login",
     "CARSI login button",
   );
@@ -519,14 +575,20 @@ async function openCarsiInstitutionLogin(page, timeoutMs) {
   return hostnameOf(page.url(), "unexpected-auth-host");
 }
 
-async function authenticateThroughCarsi({ page, credentialReader, secretPath, timeoutMs }) {
+async function authenticateThroughCarsi({
+  page,
+  credentialReader,
+  institutionProfile,
+  secretPath,
+  timeoutMs,
+}) {
   let authHost = "";
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    authHost = await openCarsiInstitutionLogin(page, timeoutMs);
+    authHost = await openCarsiInstitutionLogin(page, timeoutMs, institutionProfile);
     if (authHost !== "chromewebdata") break;
   }
   if (authHost === "ds.carsi.edu.cn") return;
-  if (!isApprovedCredentialHost(authHost)) {
+  if (!isApprovedCredentialHost(authHost, institutionProfile)) {
     throw new IeeeFlowError(
       "unexpected-auth-host",
       `CARSI redirected to unapproved authentication host ${authHost}.`,
@@ -534,29 +596,29 @@ async function authenticateThroughCarsi({ page, credentialReader, secretPath, ti
     );
   }
 
-  const credential = await credentialReader(authHost, { secretPath });
+  const credential = await credentialReader(authHost, { secretPath, institutionProfile });
   try {
     const username = await uniqueLocator(
-      page.getByLabel(SELECTORS.gxuUsername, { exact: true }),
-      "gxu-username",
-      "Guangxi University username field",
+      page.getByLabel(institutionProfile.usernameLabel, { exact: true }),
+      "institution-username",
+      `${institutionProfile.organization} username field`,
     );
     const password = await uniqueLocator(
-      page.getByLabel(SELECTORS.gxuPassword, { exact: true }),
-      "gxu-password",
-      "Guangxi University password field",
+      page.getByLabel(institutionProfile.passwordLabel, { exact: true }),
+      "institution-password",
+      `${institutionProfile.organization} password field`,
     );
     const login = await uniqueLocator(
-      page.getByRole("button", { name: SELECTORS.carsiLogin, exact: true }),
-      "gxu-login",
-      "Guangxi University login button",
+      page.getByRole("button", { name: institutionProfile.loginButtonName, exact: true }),
+      "institution-login",
+      `${institutionProfile.organization} login button`,
     );
     await username.fill(credential.username);
     await password.fill(credential.password);
     await login.click();
     if (typeof page.waitForURL === "function") {
       try {
-        await page.waitForURL((url) => url.hostname.toLowerCase() !== GXU_IDP_HOST, {
+        await page.waitForURL((url) => url.hostname.toLowerCase() !== institutionProfile.credentialHost, {
           timeout: Math.min(timeoutMs, 15_000),
         });
       } catch {
@@ -568,18 +630,24 @@ async function authenticateThroughCarsi({ page, credentialReader, secretPath, ti
     credential.username = null;
     credential.password = null;
   }
-  if (isApprovedCredentialHost(hostnameOf(page.url(), "authentication-result"))) {
+  if (
+    institutionProfile.consentTitle
+    && isApprovedCredentialHost(
+      hostnameOf(page.url(), "authentication-result"),
+      institutionProfile,
+    )
+  ) {
     const title = await page.title();
     const consent = page.getByRole("button", {
-      name: SELECTORS.gxuConsentAccept,
+      name: institutionProfile.consentButtonName,
       exact: true,
     });
     const consentCount = await consent.count();
-    if (title === SELECTORS.gxuConsentTitle && consentCount === 1) {
+    if (title === institutionProfile.consentTitle && consentCount === 1) {
       await consent.click();
       if (typeof page.waitForURL === "function") {
         try {
-          await page.waitForURL((url) => url.hostname.toLowerCase() !== GXU_IDP_HOST, {
+          await page.waitForURL((url) => url.hostname.toLowerCase() !== institutionProfile.credentialHost, {
             timeout: Math.min(timeoutMs, 30_000),
           });
         } catch {
@@ -589,7 +657,7 @@ async function authenticateThroughCarsi({ page, credentialReader, secretPath, ti
       await waitForDocument(page, timeoutMs);
     }
   }
-  if (isApprovedCredentialHost(hostnameOf(page.url(), "authentication-result"))) {
+  if (isApprovedCredentialHost(hostnameOf(page.url(), "authentication-result"), institutionProfile)) {
     throw new IeeeFlowError(
       "authentication-not-complete",
       "Institutional login did not complete; CAPTCHA, OTP, or corrected credentials may be required.",
@@ -622,6 +690,7 @@ export async function retrieveIeeePaper(options) {
   const workDir = path.resolve(String(options.workDir));
   const timeoutMs = Number(options.timeoutMs ?? 45_000);
   const credentialReader = options.credentialReader ?? readCredentialForHost;
+  const profileReader = options.profileReader ?? readInstitutionProfile;
   const secretPath = options.secretPath ? path.resolve(String(options.secretPath)) : "";
   await mkdir(workDir, { recursive: true });
 
@@ -650,9 +719,13 @@ export async function retrieveIeeePaper(options) {
     });
   }
   if (!downloaded) {
+    const institutionProfile = options.institutionProfile
+      ? normalizeInstitutionProfile(options.institutionProfile)
+      : await profileReader({ secretPath });
     await authenticateThroughCarsi({
       page: options.page,
       credentialReader,
+      institutionProfile,
       secretPath,
       timeoutMs,
     });

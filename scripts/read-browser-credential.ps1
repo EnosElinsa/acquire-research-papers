@@ -4,17 +4,22 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-if ($ExpectedHost.Trim().ToLowerInvariant() -ne "idp.gxu.edu.cn") {
-  throw "Credential release denied for unapproved host."
-}
-
 . (Join-Path $PSScriptRoot "secret-store.ps1")
 if ([string]::IsNullOrWhiteSpace($SecretPath)) { $SecretPath = Get-AcquisitionSecretPath }
 
 $password = $null
 try {
   $payload = Import-AcquisitionSecrets -Path $SecretPath
-  $credential = $payload.Scopes.ieee_gxu.Credential
+  if ($payload.Scopes.PSObject.Properties.Name -notcontains "ieee_institution") {
+    throw "IEEE institution profile is not configured."
+  }
+  $scope = $payload.Scopes.ieee_institution
+  $expected = $ExpectedHost.Trim()
+  if ($expected.EndsWith(".") -or
+      $expected.ToLowerInvariant() -ne $scope.Profile.CredentialHost.ToLowerInvariant()) {
+    throw "Credential release denied for unapproved host."
+  }
+  $credential = $scope.Credential
   $password = ConvertFrom-AcquisitionSecureString $credential.Password
   [pscustomobject]@{
     username = $credential.UserName

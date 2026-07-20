@@ -11,6 +11,20 @@ try {
   // RED: tests below define the generalized bridge contract.
 }
 
+const INSTITUTION_PROFILE = Object.freeze({
+  organization: "Example University",
+  carsiSchoolPlaceholder: "Institution name",
+  carsiSearchText: "Example University",
+  carsiInstitution: "Example University (Example)",
+  carsiLoginButtonName: "Continue",
+  credentialHost: "login.example.edu",
+  usernameLabel: "Account",
+  passwordLabel: "Passcode",
+  loginButtonName: "Sign in",
+  consentTitle: "Release information",
+  consentButtonName: "Accept",
+});
+
 class FakeResponse {
   constructor(body, { status = 200, contentType = "application/pdf" } = {}) {
     this.bytes = Buffer.from(body);
@@ -94,7 +108,7 @@ class FakeLocator {
       } else {
         this.page.currentUrl = `https://${this.page.redirectHost}/login`;
       }
-    } else if (this.key === "gxu-login") {
+    } else if (this.key === "institution-login") {
       this.page.authenticated = true;
       if (this.page.requiresConsent) {
         this.page.consentReady = true;
@@ -102,7 +116,7 @@ class FakeLocator {
       } else {
         this.page.currentUrl = "https://ds.carsi.edu.cn/ds/index.html";
       }
-    } else if (this.key === "gxu-consent") {
+    } else if (this.key === "institution-consent") {
       this.page.consentReady = false;
       this.page.consentAccepted = true;
       this.page.currentUrl = "https://ds.carsi.edu.cn/ds/index.html";
@@ -112,7 +126,7 @@ class FakeLocator {
 
 class FakePage {
   constructor({
-    redirectHost = "idp.gxu.edu.cn",
+    redirectHost = "login.example.edu",
     denyFirstStamp = false,
     evaluateFailures = 0,
     carsiNavigationFailures = 0,
@@ -147,7 +161,7 @@ class FakePage {
   async waitForURL() {}
   async waitForTimeout() {}
   async title() {
-    return this.consentReady ? "信息发布" : "A Synthetic IEEE Paper | IEEE Xplore";
+    return this.consentReady ? "Release information" : "A Synthetic IEEE Paper | IEEE Xplore";
   }
 
   async evaluate() {
@@ -180,14 +194,35 @@ class FakePage {
     throw new Error(`Unexpected selector: ${selector}`);
   }
 
-  getByPlaceholder() { return new FakeLocator(this, "school"); }
-  getByLabel(name) { return new FakeLocator(this, name === "用户名" ? "username" : "password"); }
-  getByRole(role) {
-    if (role === "option") return new FakeLocator(this, "institution");
+  getByPlaceholder(name) {
+    assert.equal(name, INSTITUTION_PROFILE.carsiSchoolPlaceholder);
+    return new FakeLocator(this, "school");
+  }
+  getByLabel(name) {
+    if (name === INSTITUTION_PROFILE.usernameLabel) return new FakeLocator(this, "username");
+    if (name === INSTITUTION_PROFILE.passwordLabel) return new FakeLocator(this, "password");
+    throw new Error(`Unexpected label: ${name}`);
+  }
+  getByRole(role, options = {}) {
+    if (role === "option") {
+      assert.equal(options.name, INSTITUTION_PROFILE.carsiInstitution);
+      return new FakeLocator(this, "institution");
+    }
     if (role === "link") return new FakeLocator(this, "title-result");
     if (role === "button") {
-      if (this.consentReady) return new FakeLocator(this, "gxu-consent");
-      return new FakeLocator(this, this.currentUrl.includes(this.redirectHost) ? "gxu-login" : "carsi-login");
+      if (this.consentReady && options.name === INSTITUTION_PROFILE.consentButtonName) {
+        return new FakeLocator(this, "institution-consent");
+      }
+      if (this.consentReady) throw new Error(`Unexpected consent button: ${options.name}`);
+      if (this.currentUrl.includes(this.redirectHost)) {
+        assert.equal(options.name, INSTITUTION_PROFILE.loginButtonName);
+      } else {
+        assert.equal(options.name, INSTITUTION_PROFILE.carsiLoginButtonName);
+      }
+      return new FakeLocator(
+        this,
+        this.currentUrl.includes(this.redirectHost) ? "institution-login" : "carsi-login",
+      );
     }
     throw new Error(`Unexpected role: ${role}`);
   }
@@ -197,12 +232,18 @@ function fakeContext(options) {
   return { request: new FakeRequestContext(options) };
 }
 
-test("pins reference classification, selectors, and exact credential host", () => {
+test("uses a configured institution profile and exact credential host", () => {
   assert.equal(subject.classifyPaperReference("https://ieeexplore.ieee.org/document/11014597").kind, "url");
   assert.equal(subject.classifyPaperReference("10.1109/TAP.2025.3571069").kind, "doi");
-  assert.equal(subject.isApprovedCredentialHost("IDP.GXU.EDU.CN"), true);
-  assert.equal(subject.isApprovedCredentialHost("idp.gxu.edu.cn.evil.example"), false);
-  assert.equal(subject.SELECTORS.carsiInstitution, "广西大学（GuangXi University）");
+  assert.deepEqual(subject.normalizeInstitutionProfile(INSTITUTION_PROFILE), INSTITUTION_PROFILE);
+  assert.equal(subject.isApprovedCredentialHost("LOGIN.EXAMPLE.EDU", INSTITUTION_PROFILE), true);
+  assert.equal(subject.isApprovedCredentialHost("login.example.edu.evil.example", INSTITUTION_PROFILE), false);
+  assert.equal(subject.isApprovedCredentialHost("login.example.edu.", INSTITUTION_PROFILE), false);
+  assert.throws(
+    () => subject.normalizeInstitutionProfile({ ...INSTITUTION_PROFILE, credentialHost: "https://login.example.edu/path" }),
+    /exact DNS hostname/,
+  );
+  assert.equal(Object.hasOwn(subject.SELECTORS, "carsiInstitution"), false);
   assert.equal(subject.SELECTORS.pdfPrimaryHref, 'a.xpl-btn-pdf[href*="/stamp/stamp.jsp"]');
 });
 
@@ -306,9 +347,10 @@ test("authenticates once and retries PDF without releasing credentials to lookal
       browserContext: context,
       reference: "https://ieeexplore.ieee.org/document/11014597",
       workDir: root,
+      institutionProfile: INSTITUTION_PROFILE,
       credentialReader: async (host) => {
         reads += 1;
-        assert.equal(host, "idp.gxu.edu.cn");
+        assert.equal(host, "login.example.edu");
         return { username: "synthetic-user", password: "synthetic-password" };
       },
     });
@@ -319,10 +361,11 @@ test("authenticates once and retries PDF without releasing credentials to lookal
 
     await assert.rejects(
       subject.retrieveIeeePaper({
-        page: new FakePage({ redirectHost: "idp.gxu.edu.cn.evil.example" }),
+        page: new FakePage({ redirectHost: "login.example.edu.evil.example" }),
         browserContext: fakeContext({ pdfResponses: [new FakeResponse("denied", { status: 403 })] }),
         reference: "https://ieeexplore.ieee.org/document/11014597",
         workDir: path.join(root, "evil"),
+        institutionProfile: INSTITUTION_PROFILE,
         credentialReader: async () => { throw new Error("credential leak"); },
       }),
       (error) => error?.phase === "unexpected-auth-host",
@@ -348,6 +391,7 @@ test("retries one transient CARSI navigation before reading credentials", async 
       browserContext: context,
       reference: "https://ieeexplore.ieee.org/document/11014597",
       workDir: root,
+      institutionProfile: INSTITUTION_PROFILE,
       credentialReader: async () => {
         reads += 1;
         return { username: "synthetic-user", password: "synthetic-password" };
@@ -361,7 +405,7 @@ test("retries one transient CARSI navigation before reading credentials", async 
   }
 });
 
-test("accepts the exact Guangxi attribute-release page without a second credential read", async () => {
+test("accepts a configured attribute-release page without a second credential read", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "arp-ieee-consent-"));
   let reads = 0;
   try {
@@ -377,6 +421,7 @@ test("accepts the exact Guangxi attribute-release page without a second credenti
       browserContext: context,
       reference: "https://ieeexplore.ieee.org/document/11014597",
       workDir: root,
+      institutionProfile: INSTITUTION_PROFILE,
       credentialReader: async () => {
         reads += 1;
         return { username: "synthetic-user", password: "synthetic-password" };

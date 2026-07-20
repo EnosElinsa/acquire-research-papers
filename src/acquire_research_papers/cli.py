@@ -71,11 +71,32 @@ _RUNTIME_SCRIPT_NAMES = frozenset(
         "ieee-playwright.mjs",
         "install-playwright.ps1",
         "read-browser-credential.ps1",
+        "read-institution-profile.ps1",
         "read-mineru-token.ps1",
         "read-elsevier-api-key.ps1",
         "secret-store.ps1",
     }
 )
+
+_IEEE_ACCESS_PHASES = frozenset(
+    {
+        "authentication-not-complete",
+        "authentication-result",
+        "credential-read",
+        "unexpected-auth-host",
+        "carsi-school",
+        "carsi-institution",
+        "carsi-login",
+        "institution-username",
+        "institution-password",
+        "institution-login",
+        "download-after-auth",
+    }
+)
+
+
+def _is_ieee_access_phase(phase: str) -> bool:
+    return phase in _IEEE_ACCESS_PHASES
 
 
 def _resolve_script_root(repository_root: Path, package_root: Path) -> Path:
@@ -365,8 +386,7 @@ class Application:
         except IeeeBridgeError as exc:
             code = (
                 "access_required"
-                if exc.phase
-                in {"authentication-not-complete", "credential-read", "download-after-auth"}
+                if _is_ieee_access_phase(exc.phase)
                 else "contract_error"
             )
             return {"status": "deferred", "error_code": code, "message": str(exc)}
@@ -519,6 +539,7 @@ def run_cli(
                     "pending_review": str(result.pending_review_path),
                     "manifest": str(result.manifest_path),
                     "acquisition_manifest": str(result.acquisition_path),
+                    "manual_download": str(result.manual_download_path),
                     "accepted": result.accepted,
                     "pending": result.pending,
                     "rejected": result.rejected,
@@ -571,7 +592,7 @@ def run_cli(
     except IeeeBridgeError as exc:
         error_code = (
             "access_required"
-            if exc.phase in {"authentication-not-complete", "credential-read", "download-after-auth"}
+            if _is_ieee_access_phase(exc.phase)
             else "contract_error"
         )
         _emit({"status": "error", "error_code": error_code, "message": str(exc)})

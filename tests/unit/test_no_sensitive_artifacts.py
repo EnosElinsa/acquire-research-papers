@@ -37,6 +37,8 @@ def test_skill_routes_all_three_modes_and_explicit_markdown_policy() -> None:
     assert "discover corpus" in text
     assert "discover research" in text
     assert "Markdown" in text and "explicit" in text
+    assert "manual-download.csv" in text
+    assert "institution profile" in text
     assert len(text.splitlines()) < 500
 
 

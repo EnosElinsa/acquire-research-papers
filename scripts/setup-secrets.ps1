@@ -5,24 +5,24 @@ param(
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "secret-store.ps1")
-
 if ([string]::IsNullOrWhiteSpace($Path)) { $Path = Get-AcquisitionSecretPath }
-if ((Test-Path -LiteralPath $Path) -and -not $Force) {
-  throw "Secret file already exists. Re-run with -Force to replace it: $Path"
+if ((Test-Path -LiteralPath $Path -PathType Leaf) -and -not $Force) {
+  $existing = Import-AcquisitionSecrets -Path $Path
+  if ($existing.Scopes.PSObject.Properties.Name -contains "ieee_institution" -or
+      $existing.Scopes.PSObject.Properties.Name -contains "mineru") {
+    throw "An IEEE institution or MinerU scope already exists. Re-run with -Force to replace both scopes."
+  }
 }
+$arguments = @{}
+$arguments.Path = $Path
+if ($Force) { $arguments.Force = $true }
 
-$usernameSecure = Read-Host "Guangxi University username" -AsSecureString
-$password = Read-Host "Guangxi University password" -AsSecureString
-$mineruToken = Read-Host "MinerU API token" -AsSecureString
-$username = $null
-try {
-  $username = ConvertFrom-AcquisitionSecureString $usernameSecure
-  if ([string]::IsNullOrWhiteSpace($username)) { throw "Username cannot be empty." }
-  $credential = [Management.Automation.PSCredential]::new($username.Trim(), $password)
-  Export-AcquisitionSecrets -IeeeCredential $credential -MinerUToken $mineruToken -Path $Path
-  [ordered]@{ status = "stored"; path = $Path } | ConvertTo-Json -Compress
-}
-finally {
-  $username = $null
-  $credential = $null
-}
+$ieeeResult = & (Join-Path $PSScriptRoot "setup-ieee-institution.ps1") @arguments |
+  Select-Object -Last 1 | ConvertFrom-Json
+$mineruResult = & (Join-Path $PSScriptRoot "setup-mineru-token.ps1") @arguments |
+  Select-Object -Last 1 | ConvertFrom-Json
+[ordered]@{
+  status = "stored"
+  scopes = @($ieeeResult.scope, $mineruResult.scope)
+  path = $ieeeResult.path
+} | ConvertTo-Json -Compress
