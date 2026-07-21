@@ -33,6 +33,7 @@ from acquire_research_papers.acquisition.manual_handoff import (
     ManualDownloadAmbiguous,
     ManualDownloadTimeout,
     ManualHandoffWorkflow,
+    ManualSelectionWorkflow,
     ManualSourceChanged,
     PdfIdentityMismatch,
 )
@@ -59,7 +60,7 @@ from acquire_research_papers.paths import AppPaths, ensure_outside_repository
 from acquire_research_papers.registry import Registry
 from acquire_research_papers.research.workflow import ResearchDiscoverer, ResearchWorkflow
 from acquire_research_papers.resolver import AmbiguousInput, Resolver
-from acquire_research_papers.selection import SelectionRecord
+from acquire_research_papers.selection import SelectionRecord, SelectionStore
 from acquire_research_papers.specs import (
     SpecValidationError,
     load_corpus_spec,
@@ -118,6 +119,7 @@ class Application:
     research_workflow: ResearchWorkflow | None = None
     mineru_cache: MineruCache | None = None
     manual_handoff: ManualHandoffWorkflow | None = None
+    manual_selection: ManualSelectionWorkflow | None = None
 
     @classmethod
     def for_test(
@@ -131,6 +133,7 @@ class Application:
         research_workflow: ResearchWorkflow | None = None,
         mineru_cache: MineruCache | None = None,
         manual_handoff: ManualHandoffWorkflow | None = None,
+        manual_selection: ManualSelectionWorkflow | None = None,
     ) -> Application:
         paths = AppPaths.for_root(app_root)
         paths.create_directories()
@@ -149,6 +152,7 @@ class Application:
             research_workflow=research_workflow,
             mineru_cache=mineru_cache,
             manual_handoff=manual_handoff,
+            manual_selection=manual_selection,
         )
         return application
 
@@ -211,6 +215,7 @@ class Application:
             ),
             mineru_cache=mineru_cache,
             manual_handoff=manual_handoff,
+            manual_selection=ManualSelectionWorkflow(opener=webbrowser.open),
         )
         application.corpus_acquisition = CorpusAcquisitionWorkflow(
             acquirer=application.acquire_selected
@@ -381,6 +386,72 @@ class Application:
         markdown = exported / result.markdown.relative_to(result.output_dir)
         return result, exported, markdown
 
+    def manual_fetch_selected(
+        self,
+        selection_manifest: Path,
+        selection_id: str,
+        output: Path,
+        *,
+        watch: Path | None,
+        timeout_seconds: float,
+        open_browser: bool,
+        pdf: Path | None,
+        bibtex: Path | None,
+        notifier,
+    ) -> DeliveryResult:
+        try:
+            store = SelectionStore.load(selection_manifest)
+        except ValueError as exc:
+            raise AmbiguousInput(str(exc)) from exc
+        matches = [record for record in store.records if record.selection_id == selection_id]
+        if len(matches) != 1:
+            raise AmbiguousInput("--key must match exactly one frozen selection ID")
+        record = matches[0]
+        if (pdf is None) != (bibtex is None):
+            raise AmbiguousInput("--pdf and --bibtex must be supplied together")
+        if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+            raise AmbiguousInput("--timeout must be positive")
+        if pdf is not None and bibtex is not None:
+            if not pdf.is_file() or not bibtex.is_file():
+                raise AmbiguousInput("--pdf and --bibtex must both name existing files")
+        else:
+            watch_root = (watch or (Path.home() / "Downloads")).resolve()
+            if not watch_root.is_dir():
+                raise AmbiguousInput("--watch must name an existing directory")
+        if self.manual_selection is None:
+            raise AccessRequired("selected-paper manual handoff is not configured")
+        try:
+            destination = ensure_outside_repository(output, self.repository_root)
+        except ValueError as exc:
+            raise AmbiguousInput(str(exc)) from exc
+        selection = self.manual_selection.acquire(
+            record,
+            watch=watch,
+            timeout_seconds=timeout_seconds,
+            open_browser=open_browser,
+            pdf=pdf,
+            bibtex=bibtex,
+            notifier=notifier,
+        )
+        provenance = {
+            "selection_id": record.selection_id,
+            "acquisition_method": "manual_publisher_download",
+            "source_pdf_filename": selection.source_pdf.name,
+            "source_bibtex_filename": selection.source_bibtex.name,
+        }
+        return self._deliver_pair(
+            pair=selection.pair,
+            destination=destination,
+            source="manual_publisher_download",
+            provenance_extra=provenance,
+            registry_payload=provenance,
+            relative_paths=(
+                Path(record.relative_pdf),
+                Path(record.relative_bibtex),
+                Path(record.relative_provenance),
+            ),
+        )
+
     def acquire_candidate(self, candidate: CandidateMetadata, output: Path) -> dict[str, Any]:
         reference = candidate.doi or candidate.official_url
         if not reference:
@@ -477,7 +548,9 @@ def build_parser() -> argparse.ArgumentParser:
         "manual-fetch",
         help="take over after manual publisher PDF and BibTeX downloads",
     )
-    manual_fetch.add_argument("--input", required=True)
+    manual_fetch.add_argument("--input")
+    manual_fetch.add_argument("--selection", type=Path)
+    manual_fetch.add_argument("--key")
     manual_fetch.add_argument("--output", type=Path, required=True)
     manual_fetch.add_argument("--watch", type=Path)
     manual_fetch.add_argument("--timeout", type=float, default=900)
@@ -545,6 +618,16 @@ def run_cli(
             )
             return 0
         if args.command == "manual-fetch":
+            if (args.selection is None) != (args.key is None):
+                raise AmbiguousInput(
+                    "manual-fetch requires either --input or both --selection and --key"
+                )
+            single_mode = bool(args.input)
+            selection_mode = bool(args.selection and args.key)
+            if single_mode == selection_mode:
+                raise AmbiguousInput(
+                    "manual-fetch requires either --input or both --selection and --key"
+                )
             if (args.pdf is None) != (args.bibtex is None):
                 raise AmbiguousInput("--pdf and --bibtex must be supplied together")
 
@@ -556,16 +639,29 @@ def run_cli(
                     flush=True,
                 )
 
-            result = app.manual_fetch(
-                args.input,
-                args.output,
-                watch=args.watch,
-                timeout_seconds=args.timeout,
-                open_browser=not args.no_open,
-                pdf=args.pdf,
-                bibtex=args.bibtex,
-                notifier=notify,
-            )
+            if selection_mode:
+                result = app.manual_fetch_selected(
+                    args.selection,
+                    args.key,
+                    args.output,
+                    watch=args.watch,
+                    timeout_seconds=args.timeout,
+                    open_browser=not args.no_open,
+                    pdf=args.pdf,
+                    bibtex=args.bibtex,
+                    notifier=notify,
+                )
+            else:
+                result = app.manual_fetch(
+                    args.input,
+                    args.output,
+                    watch=args.watch,
+                    timeout_seconds=args.timeout,
+                    open_browser=not args.no_open,
+                    pdf=args.pdf,
+                    bibtex=args.bibtex,
+                    notifier=notify,
+                )
             _emit(
                 {
                     "status": result.status,

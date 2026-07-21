@@ -9,6 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
+from urllib.parse import urlsplit
 
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
@@ -17,6 +18,8 @@ from acquire_research_papers.acquisition.base import AcquiredPair, SourceDocumen
 from acquire_research_papers.acquisition.adapters.elsevier_api import ElsevierSearchRecord
 from acquire_research_papers.artifacts import sha256_file, validate_pdf
 from acquire_research_papers.bibliography import parse_bibtex, verify_bibliography
+from acquire_research_papers.models import PaperMetadata
+from acquire_research_papers.selection import SelectionRecord
 
 
 class PdfIdentityMismatch(ValueError):
@@ -335,3 +338,79 @@ class ManualHandoffWorkflow:
             timeout_seconds=timeout_seconds,
         )
         return ManualHandoffAcquisition(record=record, selection=selection)
+
+
+def document_from_selection(record: SelectionRecord) -> SourceDocument:
+    if not record.official_url:
+        raise ValueError("selected paper has no official URL for manual handoff")
+    host = urlsplit(record.official_url).hostname
+    if not host:
+        raise ValueError("selected paper official URL is invalid")
+    metadata = PaperMetadata(
+        title=record.title,
+        authors=record.authors,
+        year=record.year,
+        venue=record.venue,
+        doi=record.doi,
+        publisher=record.publisher or host,
+        landing_url=record.official_url,
+        publication_type=record.publication_type,
+    )
+    return SourceDocument(
+        metadata=metadata,
+        pdf_url=record.official_url,
+        bibtex_url=record.official_url,
+        allowed_hosts=frozenset({host}),
+    )
+
+
+class ManualSelectionWorkflow:
+    def __init__(
+        self,
+        *,
+        opener: Callable[[str], bool],
+        watcher_factory: Callable[[Path], ManualDownloadWatcher] = ManualDownloadWatcher,
+    ) -> None:
+        self.opener = opener
+        self.watcher_factory = watcher_factory
+
+    def acquire(
+        self,
+        record: SelectionRecord,
+        *,
+        watch: Path | None = None,
+        timeout_seconds: float = 900,
+        open_browser: bool = True,
+        pdf: Path | None = None,
+        bibtex: Path | None = None,
+        notifier: Callable[[str, Path], None] | None = None,
+    ) -> ManualHandoffSelection:
+        if (pdf is None) != (bibtex is None):
+            raise ValueError("--pdf and --bibtex must be supplied together")
+        if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+            raise ValueError("manual download timeout must be positive")
+        document = document_from_selection(record)
+        if pdf is not None and bibtex is not None:
+            return validate_manual_pair(document, pdf, bibtex)
+
+        watch_root = (watch or (Path.home() / "Downloads")).resolve()
+        watcher = self.watcher_factory(watch_root)
+        baseline = watcher.snapshot()
+        if notifier is not None:
+            notifier(document.metadata.landing_url, watch_root)
+        if open_browser:
+            try:
+                opened = self.opener(document.metadata.landing_url)
+            except (OSError, webbrowser.Error) as exc:
+                raise ManualBrowserOpenError(
+                    "the canonical publisher page could not be opened"
+                ) from exc
+            if not opened:
+                raise ManualBrowserOpenError(
+                    "the canonical publisher page could not be opened"
+                )
+        return watcher.wait_for_pair(
+            document,
+            baseline,
+            timeout_seconds=timeout_seconds,
+        )
