@@ -27,6 +27,7 @@ from acquire_research_papers.acquisition.adapters.elsevier_api import (
 )
 from acquire_research_papers.acquisition.adapters.sciencedirect import ScienceDirectAdapter
 from acquire_research_papers.acquisition.base import AccessRequired, PageContractChanged, SourceAdapter
+from acquire_research_papers.acquisition.corpus import CorpusAcquisitionWorkflow
 from acquire_research_papers.acquisition.manual_handoff import (
     ManualBrowserOpenError,
     ManualDownloadAmbiguous,
@@ -58,6 +59,7 @@ from acquire_research_papers.paths import AppPaths, ensure_outside_repository
 from acquire_research_papers.registry import Registry
 from acquire_research_papers.research.workflow import ResearchDiscoverer, ResearchWorkflow
 from acquire_research_papers.resolver import AmbiguousInput, Resolver
+from acquire_research_papers.selection import SelectionRecord
 from acquire_research_papers.specs import (
     SpecValidationError,
     load_corpus_spec,
@@ -112,7 +114,7 @@ class Application:
     registry: Registry
     resolver: Resolver
     corpus_discovery: CorpusDiscoveryWorkflow | None = None
-    corpus_acquisition: Any | None = None
+    corpus_acquisition: CorpusAcquisitionWorkflow | None = None
     research_workflow: ResearchWorkflow | None = None
     mineru_cache: MineruCache | None = None
     manual_handoff: ManualHandoffWorkflow | None = None
@@ -125,7 +127,7 @@ class Application:
         repository_root: Path,
         adapter: SourceAdapter | None = None,
         corpus_discovery: CorpusDiscoveryWorkflow | None = None,
-        corpus_acquisition: Any | None = None,
+        corpus_acquisition: CorpusAcquisitionWorkflow | None = None,
         research_workflow: ResearchWorkflow | None = None,
         mineru_cache: MineruCache | None = None,
         manual_handoff: ManualHandoffWorkflow | None = None,
@@ -210,6 +212,9 @@ class Application:
             mineru_cache=mineru_cache,
             manual_handoff=manual_handoff,
         )
+        application.corpus_acquisition = CorpusAcquisitionWorkflow(
+            acquirer=application.acquire_selected
+        )
         return application
 
     def _deliver_pair(
@@ -220,6 +225,7 @@ class Application:
         source: str,
         provenance_extra: dict[str, Any] | None = None,
         registry_payload: dict[str, Any] | None = None,
+        relative_paths: tuple[Path, Path, Path] | None = None,
     ) -> DeliveryResult:
         metadata = pair.document.metadata
         paper_id = self.registry.upsert_paper(
@@ -244,6 +250,7 @@ class Application:
             pair=pair,
             paper_id=paper_id,
             provenance_extra=provenance_extra,
+            relative_paths=relative_paths,
         )
         if status is PaperStatus.DOWNLOADED:
             self.registry.transition(paper_id, PaperStatus.PAIR_VERIFIED)
@@ -410,6 +417,52 @@ class Application:
             "provenance": str(result.provenance),
         }
 
+    def acquire_selected(self, record: SelectionRecord, output: Path) -> dict[str, Any]:
+        reference = record.doi or record.official_url
+        if not reference:
+            return {
+                "error_code": "contract_error",
+                "message": "selected paper has no DOI or official publisher URL",
+            }
+        try:
+            resolved = self.resolver.resolve(reference)
+            pair = resolved.adapter.acquire(resolved.document)
+            result = self._deliver_pair(
+                pair=pair,
+                destination=output,
+                source=resolved.adapter.name,
+                relative_paths=(
+                    Path(record.relative_pdf),
+                    Path(record.relative_bibtex),
+                    Path(record.relative_provenance),
+                ),
+                provenance_extra={"selection_id": record.selection_id},
+                registry_payload={"selection_id": record.selection_id},
+            )
+        except AccessRequired as exc:
+            return {
+                "error_code": "access_required",
+                "message": str(exc),
+            }
+        except IeeeBridgeError as exc:
+            code = "access_required" if _is_ieee_access_phase(exc.phase) else "contract_error"
+            return {"error_code": code, "message": str(exc)}
+        except RateLimited as exc:
+            return {"error_code": "rate_limited", "message": str(exc)}
+        except NetworkTransient as exc:
+            return {"error_code": "network_transient", "message": str(exc)}
+        except (AmbiguousInput, PageContractChanged, MetadataMismatch, BibMissing, InvalidPdfError) as exc:
+            return {"error_code": "contract_error", "message": str(exc)}
+        return {
+            "status": "delivered",
+            "pdf": str(result.pdf),
+            "bibtex": str(result.bibtex),
+            "provenance": str(result.provenance),
+            "pdf_sha256": sha256_file(result.pdf),
+            "bibtex_sha256": sha256_file(result.bibtex),
+            "provenance_sha256": sha256_file(result.provenance),
+        }
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="arp")
@@ -455,6 +508,12 @@ def build_parser() -> argparse.ArgumentParser:
     research = discover_modes.add_parser("research", help="plan evidence-driven literature research")
     research.add_argument("--brief", type=Path, required=True)
     research.add_argument("--output", type=Path, required=True)
+
+    acquire = subparsers.add_parser("acquire", help="acquire a frozen corpus selection")
+    acquire_modes = acquire.add_subparsers(dest="acquire_mode", required=True)
+    acquire_corpus = acquire_modes.add_parser("corpus", help="acquire selected paper pairs")
+    acquire_corpus.add_argument("--selection", type=Path, required=True)
+    acquire_corpus.add_argument("--output", type=Path, required=True)
     return parser
 
 
@@ -568,6 +627,30 @@ def run_cli(
                     "nearest_work_matrix": str(result.delivery.nearest_work_matrix),
                     "gap_analysis": str(result.delivery.gap_analysis),
                     "research_plan": str(result.delivery.research_plan),
+                }
+            )
+            return 0
+        if args.command == "acquire" and args.acquire_mode == "corpus":
+            if app.corpus_acquisition is None:
+                raise AmbiguousInput("corpus acquisition is not configured")
+            destination = ensure_outside_repository(args.output, app.repository_root)
+            try:
+                result = app.corpus_acquisition.run(args.selection, destination)
+            except ValueError as exc:
+                raise AmbiguousInput(str(exc)) from exc
+            _emit(
+                {
+                    "status": result.status,
+                    "acquisition_manifest": str(result.acquisition_path),
+                    "manual_download": str(result.manual_download_path),
+                    "retryable_downloads": str(result.retryable_path),
+                    "manifest": str(result.manifest_path),
+                    "total": result.total,
+                    "delivered": result.delivered,
+                    "manual_required": result.manual_required,
+                    "retryable": result.retryable,
+                    "contract_error": result.contract_error,
+                    "complete": result.complete,
                 }
             )
             return 0

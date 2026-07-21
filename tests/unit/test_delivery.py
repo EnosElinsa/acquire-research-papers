@@ -96,3 +96,34 @@ def test_delivery_reuses_verbatim_crlf_bibtex_without_rewriting(
 
     assert result.bibtex.read_bytes() == pair.bibtex_text.encode("utf-8")
     assert result.provenance.read_bytes() == first_provenance
+
+
+def test_delivery_uses_reserved_verified_paths(tmp_path: Path, verified_pair) -> None:
+    result = GenericDelivery(tmp_path / "out").deliver(
+        pair=verified_pair,
+        paper_id="paper-1",
+        relative_paths=(
+            Path("Venue/1.pdf"),
+            Path("Venue/1.bib"),
+            Path("Venue/1.provenance.json"),
+        ),
+    )
+
+    assert result.pdf == (tmp_path / "out" / "Venue" / "1.pdf").resolve()
+    assert result.bibtex.name == "1.bib"
+    assert result.provenance.name == "1.provenance.json"
+
+
+def test_delivery_rejects_reserved_path_escape(tmp_path: Path, verified_pair) -> None:
+    with pytest.raises(ValueError, match="escapes the delivery root"):
+        GenericDelivery(tmp_path / "out").deliver(
+            pair=verified_pair,
+            paper_id="paper-1",
+            relative_paths=(
+                Path("../1.pdf"),
+                Path("Venue/1.bib"),
+                Path("Venue/1.provenance.json"),
+            ),
+        )
+
+    assert not (tmp_path / "1.pdf").exists()

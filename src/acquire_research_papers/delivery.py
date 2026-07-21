@@ -59,6 +59,18 @@ class GenericDelivery:
             provenance=bundle / "provenance.json",
         )
 
+    def _reserved_paths(self, values: tuple[Path, Path, Path]) -> DeliveryResult:
+        resolved = tuple((self.root / value).resolve() for value in values)
+        if any(path == self.root or self.root not in path.parents for path in resolved):
+            raise ValueError("reserved delivery path escapes the delivery root")
+        if len({path.as_posix().casefold() for path in resolved}) != 3:
+            raise ValueError("reserved delivery paths must be distinct")
+        return DeliveryResult(
+            pdf=resolved[0],
+            bibtex=resolved[1],
+            provenance=resolved[2],
+        )
+
     def _existing_is_valid(
         self,
         result: DeliveryResult,
@@ -87,6 +99,7 @@ class GenericDelivery:
         pair: AcquiredPair,
         paper_id: str,
         provenance_extra: Mapping[str, Any] | None = None,
+        relative_paths: tuple[Path, Path, Path] | None = None,
     ) -> DeliveryResult:
         extra = dict(provenance_extra or {})
         collisions = _RESERVED_PROVENANCE_FIELDS & set(extra)
@@ -94,7 +107,11 @@ class GenericDelivery:
             raise ValueError(f"provenance extras cannot replace reserved fields: {sorted(collisions)}")
         parsed = parse_bibtex(pair.bibtex_text)
         verify_bibliography(pair.document.metadata, parsed)
-        result = self._paths(pair, paper_id)
+        result = (
+            self._reserved_paths(relative_paths)
+            if relative_paths is not None
+            else self._paths(pair, paper_id)
+        )
         if self._existing_is_valid(result, pair, paper_id, extra):
             return result
 
