@@ -78,6 +78,25 @@ def test_acl_provider_reports_page_drift_without_copying_page_body(fixture_serve
     assert "secret" not in batch.diagnostics[0].message
 
 
+def test_acl_provider_parses_current_volume_list_structure(fixture_server) -> None:
+    fixture_server.serve_text(
+        "/events/acl-2025/",
+        (FIXTURES / "event-current.html").read_text(encoding="utf-8"),
+    )
+    provider = AclAnthologyDiscoveryProvider(
+        client=fixture_server.client,
+        event_template=fixture_server.url("/events/acl-{year}/"),
+        production_hosts={fixture_server.host},
+    )
+
+    batch = provider.discover(request())
+
+    assert batch.diagnostics == ()
+    assert [item.key for item in batch.candidates] == ["2025.acl-long.1"]
+    assert batch.candidates[0].authors == ("Ada Lovelace", "Alan Turing")
+    assert batch.candidates[0].abstract == "Multi-agent evolutionary collaboration."
+
+
 def test_acl_capabilities_are_scoped_without_core_venue_logic() -> None:
     provider = AclAnthologyDiscoveryProvider(client=None)  # type: ignore[arg-type]
 

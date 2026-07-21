@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from html.parser import HTMLParser
 from urllib.parse import urljoin, urlsplit
 
 from bs4 import BeautifulSoup, Tag
@@ -36,12 +37,97 @@ def _split_values(value: str) -> tuple[str, ...]:
     )
 
 
+def _clean_fragments(fragments: list[str], *, preserve_boundaries: bool = False) -> str:
+    joined = "".join(fragments) if preserve_boundaries else " ".join(fragments)
+    return " ".join(joined.split())
+
+
+class _AclVolumeParser(HTMLParser):
+    """Extract only long-paper evidence without materializing a multi-megabyte DOM."""
+
+    def __init__(self, year: int) -> None:
+        super().__init__(convert_charrefs=True)
+        self.year = year
+        self._landing_path = re.compile(rf"^/{year}\.acl-long\.[1-9]\d*/$")
+        self.order: list[str] = []
+        self.records: dict[str, dict[str, object]] = {}
+        self.current_id = ""
+        self.title_id = ""
+        self.title_fragments: list[str] = []
+        self.author_id = ""
+        self.author_fragments: list[str] = []
+        self.abstract_id = ""
+        self.abstract_depth = 0
+        self.abstract_fragments: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attributes = dict(attrs)
+        if tag == "a":
+            href = str(attributes.get("href") or "")
+            path = urlsplit(href).path
+            if self._landing_path.fullmatch(path):
+                anthology_id = path.strip("/")
+                if anthology_id not in self.records:
+                    self.records[anthology_id] = {"title": "", "authors": [], "abstract": ""}
+                    self.order.append(anthology_id)
+                self.current_id = anthology_id
+                self.title_id = anthology_id
+                self.title_fragments = []
+            elif self.current_id and path.startswith("/people/"):
+                self.author_id = self.current_id
+                self.author_fragments = []
+        if tag == "div":
+            if self.abstract_id:
+                self.abstract_depth += 1
+                return
+            identifier = str(attributes.get("id") or "")
+            match = re.fullmatch(rf"abstract-{self.year}--acl-long--([1-9]\d*)", identifier)
+            if match:
+                self.abstract_id = f"{self.year}.acl-long.{match.group(1)}"
+                self.abstract_depth = 1
+                self.abstract_fragments = []
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "a" and self.title_id:
+            self.records[self.title_id]["title"] = _clean_fragments(
+                self.title_fragments,
+                preserve_boundaries=True,
+            )
+            self.title_id = ""
+            self.title_fragments = []
+        elif tag == "a" and self.author_id:
+            author = _clean_fragments(self.author_fragments, preserve_boundaries=True)
+            if author:
+                authors = self.records[self.author_id]["authors"]
+                assert isinstance(authors, list)
+                authors.append(author)
+            self.author_id = ""
+            self.author_fragments = []
+        if tag == "div" and self.abstract_id:
+            self.abstract_depth -= 1
+            if self.abstract_depth == 0:
+                if self.abstract_id in self.records:
+                    self.records[self.abstract_id]["abstract"] = _clean_fragments(
+                        self.abstract_fragments
+                    )
+                self.abstract_id = ""
+                self.abstract_fragments = []
+
+    def handle_data(self, data: str) -> None:
+        if self.title_id:
+            self.title_fragments.append(data)
+        elif self.author_id:
+            self.author_fragments.append(data)
+        if self.abstract_id:
+            self.abstract_fragments.append(data)
+
+
 class AclAnthologyDiscoveryProvider:
     def __init__(
         self,
         client: SafeHttpClient,
         *,
-        event_template: str = "https://aclanthology.org/events/acl-{year}/",
+        event_template: str = "https://aclanthology.org/volumes/{year}.acl-long/",
         production_hosts: set[str] | frozenset[str] = frozenset({"aclanthology.org"}),
     ) -> None:
         self.client = client
@@ -75,23 +161,18 @@ class AclAnthologyDiscoveryProvider:
         return not included or bool(included & _FULL_TYPES)
 
     @staticmethod
-    def _candidate(article: Tag, year: int, event_url: str) -> CandidateMetadata | None:
-        anthology_id = str(article.get("data-anthology-id", "")).strip()
-        if not _LONG_ID.fullmatch(anthology_id):
-            return None
-        record_type = article.select_one(".type")
-        if record_type and "front matter" in record_type.get_text(" ", strip=True).casefold():
-            return None
-        title_link = article.select_one("h5 a[href]")
-        abstract_node = article.select_one(".abstract")
-        title = title_link.get_text(" ", strip=True) if title_link else ""
-        abstract = abstract_node.get_text(" ", strip=True) if abstract_node else ""
+    def _build_candidate(
+        *,
+        anthology_id: str,
+        title: str,
+        abstract: str,
+        authors: tuple[str, ...],
+        keywords: tuple[str, ...],
+        year: int,
+        event_url: str,
+    ) -> CandidateMetadata | None:
         if not title or not abstract:
             return None
-        authors_node = article.select_one(".authors")
-        authors = _split_values(authors_node.get_text(" ", strip=True)) if authors_node else ()
-        keywords_node = article.select_one(".keywords")
-        keywords = _split_values(keywords_node.get_text(" ", strip=True)) if keywords_node else ()
         evidence = ["title", "abstract", "venue", "publication_type", "doi"]
         if authors:
             evidence.append("authors")
@@ -117,6 +198,84 @@ class AclAnthologyDiscoveryProvider:
             field_provenance=source_fields,
         )
 
+    @classmethod
+    def _article_candidate(
+        cls,
+        article: Tag,
+        year: int,
+        event_url: str,
+    ) -> CandidateMetadata | None:
+        anthology_id = str(article.get("data-anthology-id", "")).strip()
+        if not _LONG_ID.fullmatch(anthology_id):
+            return None
+        record_type = article.select_one(".type")
+        if record_type and "front matter" in record_type.get_text(" ", strip=True).casefold():
+            return None
+        title_link = article.select_one("h5 a[href]")
+        abstract_node = article.select_one(".abstract")
+        authors_node = article.select_one(".authors")
+        keywords_node = article.select_one(".keywords")
+        return cls._build_candidate(
+            anthology_id=anthology_id,
+            title=title_link.get_text(" ", strip=True) if title_link else "",
+            abstract=abstract_node.get_text(" ", strip=True) if abstract_node else "",
+            authors=(
+                _split_values(authors_node.get_text(" ", strip=True)) if authors_node else ()
+            ),
+            keywords=(
+                _split_values(keywords_node.get_text(" ", strip=True))
+                if keywords_node
+                else ()
+            ),
+            year=year,
+            event_url=event_url,
+        )
+
+    @classmethod
+    def _volume_candidates(
+        cls,
+        html: str,
+        year: int,
+        event_url: str,
+    ) -> tuple[int, list[CandidateMetadata]]:
+        parser = _AclVolumeParser(year)
+        parser.feed(html)
+        parser.close()
+        candidates: list[CandidateMetadata] = []
+        for anthology_id in parser.order:
+            record = parser.records[anthology_id]
+            raw_authors = record["authors"]
+            assert isinstance(raw_authors, list)
+            candidate = cls._build_candidate(
+                anthology_id=anthology_id,
+                title=str(record["title"]),
+                abstract=str(record["abstract"]),
+                authors=tuple(str(author) for author in raw_authors),
+                keywords=(),
+                year=year,
+                event_url=event_url,
+            )
+            if candidate is not None:
+                candidates.append(candidate)
+        return len(parser.order), candidates
+
+    @staticmethod
+    def _matches_topics(candidate: CandidateMetadata, request: DiscoveryRequest) -> bool:
+        terms = tuple(
+            " ".join(re.findall(r"\w+", value.casefold()))
+            for value in (*request.include_topics, *request.synonyms)
+            if value.strip()
+        )
+        if not terms:
+            return True
+        haystack = " ".join(
+            re.findall(
+                r"\w+",
+                f"{candidate.title} {candidate.abstract} {' '.join(candidate.keywords)}".casefold(),
+            )
+        )
+        return any(term in haystack for term in terms)
+
     def discover(self, request: DiscoveryRequest) -> DiscoveryBatch:
         if not self._supports_request(request):
             return DiscoveryBatch()
@@ -128,9 +287,19 @@ class AclAnthologyDiscoveryProvider:
             host = urlsplit(event_url).hostname
             if not host or host.casefold() not in self.production_hosts:
                 raise ValueError("ACL event URL is outside the configured host boundary")
-            soup = BeautifulSoup(self.client.get(event_url).text, "html.parser")
-            articles = soup.select("article[data-anthology-id]")
-            if not articles:
+            html = self.client.get(event_url).text
+            if "data-anthology-id" in html:
+                soup = BeautifulSoup(html, "html.parser")
+                articles = soup.select("article[data-anthology-id]")
+                recognized = len(articles)
+                year_candidates = [
+                    candidate
+                    for article in articles
+                    if (candidate := self._article_candidate(article, year, event_url)) is not None
+                ]
+            else:
+                recognized, year_candidates = self._volume_candidates(html, year, event_url)
+            if not recognized:
                 diagnostics.append(
                     DiscoveryDiagnostic(
                         provider_id=_PROVIDER_ID,
@@ -144,9 +313,8 @@ class AclAnthologyDiscoveryProvider:
                 )
                 continue
             covered.append(f"{_PROVIDER_ID}:{year}")
-            for article in articles:
-                candidate = self._candidate(article, year, event_url)
-                if candidate is not None:
+            for candidate in year_candidates:
+                if self._matches_topics(candidate, request):
                     candidates.append(candidate)
         return DiscoveryBatch(
             candidates=tuple(candidates),
