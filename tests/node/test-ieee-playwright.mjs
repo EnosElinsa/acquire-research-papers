@@ -79,6 +79,7 @@ class FakeLocator {
     if (this.key === "iframe") return this.page.currentUrl.includes("/stamp/stamp.jsp") ? 1 : 0;
     if (this.key === "institution") return this.page.institutionReady ? 1 : 0;
     if (this.key === "username" && this.page.idpSessionActive) return 0;
+    if (this.key === "username" && this.page.attributeReleaseReady) return 0;
     if (this.key === "username" && this.page.delayedIdpForm && !this.page.idpFormReady) return 0;
     if (this.key === "attribute-accept" || this.key === "attribute-reject") {
       return this.page.attributeReleaseReady ? 1 : 0;
@@ -121,7 +122,13 @@ class FakeLocator {
         this.page.carsiNavigationFailures -= 1;
         this.page.currentUrl = "chrome-error://chromewebdata/";
       } else {
-        this.page.currentUrl = `https://${this.page.redirectHost}/login`;
+        if (this.page.attributeReleaseForExistingSession) {
+          this.page.attributeReleaseOrigin = "login";
+          this.page.attributeReleaseReady = true;
+          this.page.currentUrl = `https://${this.page.redirectHost}/idp/profile/SAML2/Redirect/SSO?execution=e1s2`;
+        } else {
+          this.page.currentUrl = `https://${this.page.redirectHost}/login`;
+        }
       }
     } else if (this.key === "institution-login") {
       this.page.authenticated = true;
@@ -138,7 +145,9 @@ class FakeLocator {
       this.page.currentUrl = this.page.attributeReleaseOrigin === "login"
         ? "https://ds.carsi.edu.cn/ds/index.html"
         : (
-          this.page.resourceGatewayReturnsIeee
+          this.page.attributeReleaseReturnsCarsiOnce
+            ? "https://ds.carsi.edu.cn/ds/index.html"
+            : this.page.resourceGatewayReturnsIeee
             ? "https://ieeexplore.ieee.org/document/11014597"
             : "https://ds.carsi.edu.cn/ds/index.html"
         );
@@ -158,6 +167,8 @@ class FakePage {
     idpSessionActive = false,
     delayedIdpForm = false,
     attributeReleaseAfterLogin = false,
+    attributeReleaseForExistingSession = false,
+    attributeReleaseReturnsCarsiOnce = false,
     requiresAttributeRelease = false,
     resourceGatewayReturnsIeee = true,
     xplMetadata = {},
@@ -173,6 +184,8 @@ class FakePage {
     this.delayedIdpForm = delayedIdpForm;
     this.idpFormReady = !delayedIdpForm;
     this.attributeReleaseAfterLogin = attributeReleaseAfterLogin;
+    this.attributeReleaseForExistingSession = attributeReleaseForExistingSession;
+    this.attributeReleaseReturnsCarsiOnce = attributeReleaseReturnsCarsiOnce;
     this.attributeReleaseOrigin = "";
     this.requiresAttributeRelease = requiresAttributeRelease;
     this.resourceGatewayReturnsIeee = resourceGatewayReturnsIeee;
@@ -191,7 +204,7 @@ class FakePage {
     if (url.includes("/stamp/stamp.jsp") && this.denyFirstStamp && !this.authenticated) {
       this.currentUrl = "https://ieeexplore.ieee.org/document/11014597?denied=";
     } else if (url === INSTITUTION_PROFILE.resourceAccessUrl) {
-      if (this.requiresAttributeRelease) {
+      if (this.requiresAttributeRelease && !this.attributeReleaseAccepted) {
         this.attributeReleaseOrigin = "resource";
         this.attributeReleaseReady = true;
         this.currentUrl = `https://${this.redirectHost}/idp/profile/SAML2/Redirect/SSO?execution=e1s2`;
@@ -599,6 +612,37 @@ test("waits for a delayed IdP form before the single credential read", async () 
   }
 });
 
+test("handles attribute release from an existing IdP session without reading credentials", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "arp-ieee-existing-release-"));
+  let reads = 0;
+  try {
+    const page = new FakePage({ attributeReleaseForExistingSession: true });
+    const result = await subject.retrieveIeeePaper({
+      page,
+      browserContext: fakeContext({
+        pdfResponses: [
+          new FakeResponse("denied", { status: 403, contentType: "text/html" }),
+          new FakeResponse("%PDF-1.7\nauthorized\n%%EOF\n"),
+        ],
+      }),
+      reference: "https://ieeexplore.ieee.org/document/11014597",
+      workDir: root,
+      institutionProfile: INSTITUTION_PROFILE,
+      acceptAttributeRelease: true,
+      credentialReader: async () => {
+        reads += 1;
+        throw new Error("credentials must not be read for an existing IdP session");
+      },
+    });
+    assert.equal(result.status, "downloaded");
+    assert.equal(reads, 0);
+    assert.equal(page.attributeReleaseAccepted, true);
+    assert.ok(page.navigations.includes(INSTITUTION_PROFILE.resourceAccessUrl));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("does not click accept or reject without explicit attribute-release authorization", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "arp-ieee-attribute-manual-"));
   try {
@@ -664,6 +708,44 @@ test("explicit attribute-release authorization clicks only accept", async () => 
   }
 });
 
+test("revisits the configured resource once when attribute acceptance returns to CARSI", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "arp-ieee-release-carsi-"));
+  try {
+    const page = new FakePage({
+      requiresAttributeRelease: true,
+      attributeReleaseReturnsCarsiOnce: true,
+    });
+    const result = await subject.retrieveIeeePaper({
+      page,
+      browserContext: fakeContext({
+        pdfResponses: [
+          new FakeResponse("denied", { status: 403, contentType: "text/html" }),
+          new FakeResponse("%PDF-1.7\nauthorized\n%%EOF\n"),
+        ],
+      }),
+      reference: "https://ieeexplore.ieee.org/document/11014597",
+      workDir: root,
+      institutionProfile: INSTITUTION_PROFILE,
+      acceptAttributeRelease: true,
+      credentialReader: async () => ({
+        username: "synthetic-user",
+        password: "synthetic-password",
+      }),
+    });
+    assert.equal(result.status, "downloaded");
+    assert.equal(
+      page.navigations.filter((url) => url === INSTITUTION_PROFILE.resourceAccessUrl).length,
+      2,
+    );
+    assert.deepEqual(
+      page.actions.filter((action) => action[1] === "attribute-accept"),
+      [["click", "attribute-accept"]],
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("handles a configured attribute-release page before CARSI return and still visits the resource", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "arp-ieee-attribute-login-"));
   try {
@@ -712,7 +794,10 @@ test("does not retry the PDF when the resource gateway fails to return to IEEE",
           password: "synthetic-password",
         }),
       }),
-      (error) => error?.phase === "institutional-return",
+      (error) => (
+        error?.phase === "institutional-return"
+        && error.message.includes("received ds.carsi.edu.cn")
+      ),
     );
     assert.equal(context.request.calls.filter((call) => call.method === "GET").length, 1);
   } finally {

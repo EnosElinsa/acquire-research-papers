@@ -663,6 +663,21 @@ async function authenticateThroughCarsi({
       return;
     }
     if (await usernameCandidate.count() === 0) {
+      const handledRelease = await handleConfiguredAttributeRelease({
+        page,
+        institutionProfile,
+        acceptAttributeRelease,
+        timeoutMs,
+      });
+      if (
+        handledRelease
+        && !isApprovedCredentialHost(
+          hostnameOf(page.url(), "authentication-result"),
+          institutionProfile,
+        )
+      ) {
+        return;
+      }
       throw new IeeeFlowError(
         "authentication-not-complete",
         "The institutional page exposed neither the configured login form nor a completed session return.",
@@ -802,18 +817,28 @@ async function authorizeIeeeResource({
   await waitForDocument(page, timeoutMs);
   if (hostnameOf(page.url(), "institutional-return") === IEEE_HOST) return;
 
-  await handleConfiguredAttributeRelease({
+  const handledRelease = await handleConfiguredAttributeRelease({
     page,
     institutionProfile,
     acceptAttributeRelease,
     timeoutMs,
   });
+  if (
+    handledRelease
+    && hostnameOf(page.url(), "institutional-return") === CARSI_HOST
+  ) {
+    await page.goto(institutionProfile.resourceAccessUrl, {
+      waitUntil: "domcontentloaded",
+      timeout: timeoutMs,
+    });
+    await waitForDocument(page, timeoutMs);
+  }
 
   const returnHost = hostnameOf(page.url(), "institutional-return");
   if (returnHost !== IEEE_HOST) {
     throw new IeeeFlowError(
       "institutional-return",
-      `The configured CARSI resource did not return to the exact ${IEEE_HOST} host.`,
+      `The configured CARSI resource did not return to the exact ${IEEE_HOST} host; received ${returnHost}.`,
       { hostname: returnHost, requiresUserAction: true },
     );
   }
