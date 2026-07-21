@@ -1,0 +1,91 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from acquire_research_papers.discovery.contracts import DiscoveryRequest
+from acquire_research_papers.discovery.official.acl import AclAnthologyDiscoveryProvider
+
+
+FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "discovery" / "acl"
+
+
+def request() -> DiscoveryRequest:
+    return DiscoveryRequest.from_spec(
+        {
+            "name": "acl",
+            "target": {"minimum": 1, "preferred": 1, "maximum": 10},
+            "scope": {
+                "venues": [
+                    {
+                        "name": "Annual Meeting of the Association for Computational Linguistics",
+                        "aliases": ["ACL"],
+                    }
+                ],
+                "years": {"include": [2025]},
+                "publication_types": {"include": ["full"]},
+                "topics": {"include": ["multi-agent"]},
+            },
+        }
+    )
+
+
+def test_acl_provider_emits_only_requested_long_papers(fixture_server) -> None:
+    fixture_server.serve_text(
+        "/events/acl-2025/",
+        (FIXTURES / "event.html").read_text(encoding="utf-8"),
+    )
+    provider = AclAnthologyDiscoveryProvider(
+        client=fixture_server.client,
+        event_template=fixture_server.url("/events/acl-{year}/"),
+        production_hosts={fixture_server.host},
+    )
+
+    batch = provider.discover(request())
+
+    assert [item.key for item in batch.candidates] == ["2025.acl-long.1"]
+    candidate = batch.candidates[0]
+    assert candidate.abstract == "Multi-agent evolutionary collaboration."
+    assert candidate.doi == "10.18653/v1/2025.acl-long.1"
+    assert candidate.authors == ("Ada Lovelace", "Alan Turing")
+    assert candidate.publication_type == "full"
+    assert candidate.track == "long"
+    assert candidate.keywords == (
+        "evolutionary computation",
+        "large language models",
+    )
+    assert batch.covered_slices == ("acl-anthology:2025",)
+    assert batch.diagnostics == ()
+
+
+def test_acl_provider_reports_page_drift_without_copying_page_body(fixture_server) -> None:
+    fixture_server.serve_text(
+        "/events/acl-2025/",
+        "<html><body>secret page body without articles</body></html>",
+    )
+    provider = AclAnthologyDiscoveryProvider(
+        client=fixture_server.client,
+        event_template=fixture_server.url("/events/acl-{year}/"),
+        production_hosts={fixture_server.host},
+    )
+
+    batch = provider.discover(request())
+
+    assert batch.candidates == ()
+    assert batch.covered_slices == ()
+    assert len(batch.diagnostics) == 1
+    assert batch.diagnostics[0].error_code == "page_contract_changed"
+    assert batch.diagnostics[0].year == 2025
+    assert "secret" not in batch.diagnostics[0].message
+
+
+def test_acl_capabilities_are_scoped_without_core_venue_logic() -> None:
+    provider = AclAnthologyDiscoveryProvider(client=None)  # type: ignore[arg-type]
+
+    capabilities = provider.capabilities()
+
+    assert capabilities.provider_id == "acl-anthology"
+    assert capabilities.source_class == "official_index"
+    assert "ACL" in capabilities.venue_aliases
+    assert {"title", "abstract", "authors", "venue"}.issubset(
+        capabilities.evidence_fields
+    )
