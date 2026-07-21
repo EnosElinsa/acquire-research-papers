@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 
 let subject = {};
 try {
@@ -72,6 +76,9 @@ class FakeLocator {
     if (this.key === "pdf-primary") return 1;
     if (this.key === "iframe") return this.page.currentUrl.includes("/stamp/stamp.jsp") ? 1 : 0;
     if (this.key === "institution") return this.page.institutionReady ? 1 : 0;
+    if (this.key === "school" && this.page.requireCurrentCarsiLoginUrl) {
+      return this.page.currentUrl === "https://ds.carsi.edu.cn/login/index.html" ? 1 : 0;
+    }
     if (this.key === "document-title") return 1;
     return 1;
   }
@@ -130,6 +137,7 @@ class FakePage {
     denyFirstStamp = false,
     evaluateFailures = 0,
     carsiNavigationFailures = 0,
+    requireCurrentCarsiLoginUrl = false,
     requiresConsent = false,
     xplMetadata = {},
   } = {}) {
@@ -138,6 +146,7 @@ class FakePage {
     this.denyFirstStamp = denyFirstStamp;
     this.evaluateFailures = evaluateFailures;
     this.carsiNavigationFailures = carsiNavigationFailures;
+    this.requireCurrentCarsiLoginUrl = requireCurrentCarsiLoginUrl;
     this.carsiAttempts = 0;
     this.requiresConsent = requiresConsent;
     this.consentReady = false;
@@ -245,6 +254,57 @@ test("uses a configured institution profile and exact credential host", () => {
   );
   assert.equal(Object.hasOwn(subject.SELECTORS, "carsiInstitution"), false);
   assert.equal(subject.SELECTORS.pdfPrimaryHref, 'a.xpl-btn-pdf[href*="/stamp/stamp.jsp"]');
+});
+
+test("preserves Unicode across the PowerShell profile and credential bridges", async () => {
+  if (process.platform !== "win32") return;
+  const root = await mkdtemp(path.join(os.tmpdir(), "arp-ieee-utf8-"));
+  const secretPath = path.join(root, "secrets.clixml");
+  const setupPath = path.join(root, "setup.ps1");
+  const secretStore = path.resolve("scripts", "secret-store.ps1").replaceAll("'", "''");
+  const escapedSecretPath = secretPath.replaceAll("'", "''");
+  try {
+    const setup = `
+$ErrorActionPreference = "Stop"
+. '${secretStore}'
+$password = ConvertTo-SecureString "测试密码" -AsPlainText -Force
+$credential = [Management.Automation.PSCredential]::new("测试用户", $password)
+$institution = [pscustomobject]@{
+  Organization = "测试大学"
+  CarsiSchoolPlaceholder = "请输入高校/机构名称"
+  CarsiSearchText = "测试大学"
+  CarsiInstitution = "测试大学（Test University）"
+  CarsiLoginButtonName = "登录"
+  CredentialHost = "login.example.edu"
+  UsernameLabel = "用户名"
+  PasswordLabel = "密码"
+  LoginButtonName = "登录"
+  ConsentTitle = ""
+  ConsentButtonName = ""
+}
+Set-IeeeInstitutionCredential -Institution $institution -Credential $credential -Path '${escapedSecretPath}'
+`;
+    await writeFile(setupPath, `\ufeff${setup}`, "utf8");
+    await execFileAsync("powershell", [
+      "-NoProfile",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      setupPath,
+    ]);
+
+    const profile = await subject.readInstitutionProfile({ secretPath });
+    assert.equal(profile.organization, "测试大学");
+    assert.equal(profile.carsiSchoolPlaceholder, "请输入高校/机构名称");
+    assert.equal(profile.usernameLabel, "用户名");
+    const credential = await subject.readCredentialForHost("login.example.edu", {
+      secretPath,
+      institutionProfile: profile,
+    });
+    assert.deepEqual(credential, { username: "测试用户", password: "测试密码" });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("normalizes current xplGlobal metadata when citation meta tags are absent", () => {
@@ -400,6 +460,32 @@ test("retries one transient CARSI navigation before reading credentials", async 
     assert.equal(result.status, "downloaded");
     assert.equal(page.carsiAttempts, 2);
     assert.equal(reads, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("opens the current CARSI login endpoint before resolving institution controls", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "arp-ieee-carsi-entry-"));
+  try {
+    const context = fakeContext({
+      pdfResponses: [
+        new FakeResponse("denied", { status: 403, contentType: "text/html" }),
+        new FakeResponse("%PDF-1.7\nauthorized\n%%EOF\n"),
+      ],
+    });
+    const result = await subject.retrieveIeeePaper({
+      page: new FakePage({ requireCurrentCarsiLoginUrl: true }),
+      browserContext: context,
+      reference: "https://ieeexplore.ieee.org/document/11014597",
+      workDir: root,
+      institutionProfile: INSTITUTION_PROFILE,
+      credentialReader: async () => ({
+        username: "synthetic-user",
+        password: "synthetic-password",
+      }),
+    });
+    assert.equal(result.status, "downloaded");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

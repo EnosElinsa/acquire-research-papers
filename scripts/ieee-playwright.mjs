@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
-const CARSI_DISCOVERY_URL = "https://ds.carsi.edu.cn/ds/index.html";
+const CARSI_DISCOVERY_URL = "https://ds.carsi.edu.cn/login/index.html";
 const IEEE_HOST = "ieeexplore.ieee.org";
 const CITATION_URL = `https://${IEEE_HOST}/rest/search/citation/format`;
 const DNS_HOST = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;
