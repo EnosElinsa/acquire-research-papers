@@ -6,25 +6,22 @@ import json
 import math
 import re
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import date
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote, urlsplit
 
 from acquire_research_papers.artifacts import atomic_write_bytes
-from acquire_research_papers.discovery.contracts import CandidateMetadata, CandidatePage
+from acquire_research_papers.discovery.contracts import (
+    CandidateMetadata,
+    CandidatePage,
+    DiscoveryBatch,
+    DiscoveryRequest,
+)
 from acquire_research_papers.models import PaperStatus
+from acquire_research_papers.selection import SelectionStore, build_selection_records
 
 __all__ = ["CandidateMetadata", "CandidatePage"]
-
-
-def _manual_download_url(candidate: CandidateMetadata) -> str:
-    if candidate.official_url:
-        return candidate.official_url
-    if candidate.doi:
-        return f"https://doi.org/{quote(candidate.doi, safe='/().;:-_')}"
-    return ""
 
 
 @dataclass(frozen=True)
@@ -291,45 +288,53 @@ class CorpusDiscoverer:
 
 
 @dataclass(frozen=True)
-class CorpusRunResult:
+class CorpusDiscoveryResult:
     status: str
     candidates_path: Path
+    selected_path: Path
     pending_review_path: Path
+    diagnostics_path: Path
+    selection_manifest_path: Path
     manifest_path: Path
-    acquisition_path: Path
-    manual_download_path: Path
     accepted: int
     pending: int
     rejected: int
-    delivered: int
-    deferred: int
+    not_selected: int
     shortfall: int
+    quota_shortfalls: tuple[str, ...]
 
 
-class CorpusWorkflow:
-    def __init__(
-        self,
-        *,
-        discoverer: Callable[[dict[str, Any]], Iterable[CandidateMetadata]],
-        acquirer: Callable[[CandidateMetadata, Path], dict[str, Any]] | None = None,
-    ) -> None:
+class CorpusDiscoveryWorkflow:
+    """Discover, screen, and freeze a corpus without acquiring artifacts."""
+
+    def __init__(self, *, discoverer: Callable[[DiscoveryRequest], DiscoveryBatch]) -> None:
         self.discoverer = discoverer
-        self.acquirer = acquirer
 
-    def run(self, spec: dict[str, Any], output: Path) -> CorpusRunResult:
+    @staticmethod
+    def _write_jsonl(path: Path, records: Iterable[dict[str, Any]]) -> None:
+        payload = "".join(
+            json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n"
+            for record in records
+        )
+        atomic_write_bytes(path, payload.encode("utf-8"))
+
+    def run(self, spec: dict[str, Any], output: Path) -> CorpusDiscoveryResult:
         destination = output.resolve()
         destination.mkdir(parents=True, exist_ok=True)
-        candidates = list(self.discoverer(spec))
+        request = DiscoveryRequest.from_spec(spec)
+        batch = self.discoverer(request)
+        candidates = [CorpusDiscoverer._screen(item, spec) for item in batch.candidates]
         plan = CorpusPlanner(spec).select(candidates)
         decision_by_key = {decision.candidate.key: decision for decision in plan.decisions}
         selected_keys = {candidate.key for candidate in plan.auto_accepted}
-        records = []
+
+        candidate_records: list[dict[str, Any]] = []
         for candidate in sorted(candidates, key=lambda item: item.key):
             decision = decision_by_key[candidate.key]
             status = decision.status.value
             if decision.status is PaperStatus.AUTO_ACCEPTED and candidate.key not in selected_keys:
                 status = "not_selected"
-            records.append(
+            candidate_records.append(
                 {
                     **candidate.to_dict(),
                     "decision": status,
@@ -337,18 +342,17 @@ class CorpusWorkflow:
                 }
             )
         candidates_path = destination / "candidates.jsonl"
-        candidates_text = "".join(
-            json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n" for record in records
-        )
-        atomic_write_bytes(candidates_path, candidates_text.encode("utf-8"))
+        self._write_jsonl(candidates_path, candidate_records)
 
         pending_path = destination / "pending-review.csv"
-        buffer = io.StringIO(newline="")
-        writer = csv.writer(buffer)
-        writer.writerow(["key", "title", "year", "venue", "relevance_score", "reasons"])
+        pending_buffer = io.StringIO(newline="")
+        pending_writer = csv.writer(pending_buffer)
+        pending_writer.writerow(
+            ["key", "title", "year", "venue", "relevance_score", "reasons"]
+        )
         for candidate in plan.pending_review:
             reasons = decision_by_key[candidate.key].reasons
-            writer.writerow(
+            pending_writer.writerow(
                 [
                     candidate.key,
                     candidate.title,
@@ -358,143 +362,65 @@ class CorpusWorkflow:
                     ";".join(reasons),
                 ]
             )
-        atomic_write_bytes(pending_path, buffer.getvalue().encode("utf-8-sig"))
+        atomic_write_bytes(pending_path, pending_buffer.getvalue().encode("utf-8-sig"))
 
-        acquisition_records: list[dict[str, Any]] = []
-        if self.acquirer is not None:
-            paper_root = destination / "papers"
-            for candidate in plan.auto_accepted:
-                outcome = self.acquirer(candidate, paper_root)
-                acquisition_records.append(
-                    {
-                        "key": candidate.key,
-                        "title": candidate.title,
-                        "doi": candidate.doi,
-                        "official_url": candidate.official_url,
-                        **outcome,
-                    }
-                )
-        acquisition_path = destination / "acquisition-manifest.jsonl"
-        acquisition_text = "".join(
-            json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n"
-            for record in acquisition_records
-        )
-        atomic_write_bytes(acquisition_path, acquisition_text.encode("utf-8"))
-        delivered = sum(record.get("status") == "delivered" for record in acquisition_records)
-        deferred = len(acquisition_records) - delivered
+        diagnostics_path = destination / "discovery-errors.jsonl"
+        self._write_jsonl(diagnostics_path, (asdict(item) for item in batch.diagnostics))
 
-        candidate_by_key = {candidate.key: candidate for candidate in plan.auto_accepted}
-        manual_path = destination / "manual-download.csv"
-        manual_buffer = io.StringIO(newline="")
-        manual_writer = csv.DictWriter(
-            manual_buffer,
-            fieldnames=[
-                "key",
-                "title",
-                "doi",
-                "official_url",
-                "publisher",
-                "reason",
-                "message",
-            ],
+        selected_records = build_selection_records(
+            plan.auto_accepted,
+            venues=request.venues,
+            delivery=spec["delivery"],
         )
-        manual_writer.writeheader()
-        for record in acquisition_records:
-            if record.get("error_code") != "access_required":
-                continue
-            candidate = candidate_by_key[str(record["key"])]
-            official_url = _manual_download_url(candidate)
-            try:
-                publisher = urlsplit(official_url).hostname or ""
-            except ValueError:
-                publisher = ""
-            manual_writer.writerow(
-                {
-                    "key": candidate.key,
-                    "title": candidate.title,
-                    "doi": candidate.doi or "",
-                    "official_url": official_url,
-                    "publisher": publisher,
-                    "reason": "access_required",
-                    "message": str(record.get("message") or ""),
-                }
-            )
-        atomic_write_bytes(manual_path, manual_buffer.getvalue().encode("utf-8-sig"))
-        manual_required = sum(
-            record.get("error_code") == "access_required" for record in acquisition_records
+        selection = SelectionStore.write(
+            destination,
+            spec,
+            selected_records,
+            discovery_summary={
+                "provider_coverage": list(batch.covered_slices),
+                "discovery_errors": len(batch.diagnostics),
+                "quota_shortfalls": list(plan.quota_shortfalls),
+            },
         )
 
-        if deferred:
-            buffer = io.StringIO(newline="")
-            writer = csv.writer(buffer)
-            writer.writerow(["key", "title", "year", "venue", "relevance_score", "reasons"])
-            for candidate in plan.pending_review:
-                reasons = decision_by_key[candidate.key].reasons
-                writer.writerow(
-                    [
-                        candidate.key,
-                        candidate.title,
-                        candidate.year,
-                        candidate.venue,
-                        f"{candidate.relevance_score:.4f}",
-                        ";".join(reasons),
-                    ]
-                )
-            for record in acquisition_records:
-                if record.get("status") == "delivered":
-                    continue
-                candidate = candidate_by_key[str(record["key"])]
-                reason = f"acquisition_{record.get('error_code', 'deferred')}"
-                writer.writerow(
-                    [
-                        candidate.key,
-                        candidate.title,
-                        candidate.year,
-                        candidate.venue,
-                        f"{candidate.relevance_score:.4f}",
-                        reason,
-                    ]
-                )
-            atomic_write_bytes(pending_path, buffer.getvalue().encode("utf-8-sig"))
-
+        run_status = "shortfall" if plan.quota_shortfalls else "planned"
         manifest_path = destination / "corpus-manifest.json"
-        minimum = int(spec.get("target", {}).get("minimum", 0))
-        delivery_shortfall = max(0, minimum - delivered) if self.acquirer else plan.shortfall
-        if self.acquirer is None:
-            run_status = "shortfall" if plan.shortfall else "planned"
-        elif delivery_shortfall:
-            run_status = "shortfall"
-        elif deferred:
-            run_status = "partial"
-        else:
-            run_status = "delivered"
         manifest = {
+            "schema_version": 1,
+            "phase": "discovery",
             "status": run_status,
             "accepted": len(plan.auto_accepted),
             "pending": len(plan.pending_review),
             "rejected": len(plan.rejected),
             "not_selected": len(plan.not_selected),
-            "delivered": delivered,
-            "deferred": deferred,
-            "shortfall": delivery_shortfall,
-            "manual_download": manual_path.name,
-            "manual_required": manual_required,
+            "shortfall": plan.shortfall,
+            "quota_shortfalls": list(plan.quota_shortfalls),
+            "discovery_errors": len(batch.diagnostics),
+            "provider_coverage": list(batch.covered_slices),
+            "candidates": candidates_path.name,
+            "selected": selection.selected_path.name,
+            "pending_review": pending_path.name,
+            "discovery_errors_file": diagnostics_path.name,
+            "selection_manifest": selection.manifest_path.name,
         }
         atomic_write_bytes(
             manifest_path,
-            (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8"),
+            (json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode(
+                "utf-8"
+            ),
         )
-        return CorpusRunResult(
-            status=str(manifest["status"]),
+        return CorpusDiscoveryResult(
+            status=run_status,
             candidates_path=candidates_path,
+            selected_path=selection.selected_path,
             pending_review_path=pending_path,
+            diagnostics_path=diagnostics_path,
+            selection_manifest_path=selection.manifest_path,
             manifest_path=manifest_path,
-            acquisition_path=acquisition_path,
-            manual_download_path=manual_path,
-            accepted=int(manifest["accepted"]),
-            pending=int(manifest["pending"]),
-            rejected=int(manifest["rejected"]),
-            delivered=int(manifest["delivered"]),
-            deferred=int(manifest["deferred"]),
-            shortfall=int(manifest["shortfall"]),
+            accepted=len(plan.auto_accepted),
+            pending=len(plan.pending_review),
+            rejected=len(plan.rejected),
+            not_selected=len(plan.not_selected),
+            shortfall=plan.shortfall,
+            quota_shortfalls=plan.quota_shortfalls,
         )

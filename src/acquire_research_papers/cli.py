@@ -39,12 +39,11 @@ from acquire_research_papers.acquisition.router import AdapterRouter
 from acquire_research_papers.artifacts import InvalidPdfError, sha256_file
 from acquire_research_papers.bibliography import BibMissing, MetadataMismatch
 from acquire_research_papers.delivery import DeliveryResult, GenericDelivery
-from acquire_research_papers.discovery.corpus import (
-    CandidateMetadata,
-    CorpusDiscoverer,
-    CorpusWorkflow,
-)
+from acquire_research_papers.discovery.contracts import CandidateMetadata
+from acquire_research_papers.discovery.coordinator import DiscoveryCoordinator
+from acquire_research_papers.discovery.corpus import CorpusDiscoveryWorkflow
 from acquire_research_papers.discovery.crossref import CrossrefClient
+from acquire_research_papers.discovery.providers import QueryApiProvider
 from acquire_research_papers.http import NetworkTransient, RateLimited, SafeHttpClient
 from acquire_research_papers.mineru import (
     DpapiMineruTokenProvider,
@@ -112,7 +111,8 @@ class Application:
     repository_root: Path
     registry: Registry
     resolver: Resolver
-    corpus_workflow: CorpusWorkflow | None = None
+    corpus_discovery: CorpusDiscoveryWorkflow | None = None
+    corpus_acquisition: Any | None = None
     research_workflow: ResearchWorkflow | None = None
     mineru_cache: MineruCache | None = None
     manual_handoff: ManualHandoffWorkflow | None = None
@@ -124,7 +124,8 @@ class Application:
         app_root: Path,
         repository_root: Path,
         adapter: SourceAdapter | None = None,
-        corpus_workflow: CorpusWorkflow | None = None,
+        corpus_discovery: CorpusDiscoveryWorkflow | None = None,
+        corpus_acquisition: Any | None = None,
         research_workflow: ResearchWorkflow | None = None,
         mineru_cache: MineruCache | None = None,
         manual_handoff: ManualHandoffWorkflow | None = None,
@@ -141,7 +142,8 @@ class Application:
             repository_root=repository_root.resolve(),
             registry=Registry(paths.registry),
             resolver=Resolver(router),
-            corpus_workflow=corpus_workflow,
+            corpus_discovery=corpus_discovery,
+            corpus_acquisition=corpus_acquisition,
             research_workflow=research_workflow,
             mineru_cache=mineru_cache,
             manual_handoff=manual_handoff,
@@ -195,17 +197,18 @@ class Application:
             resolver=Resolver(
                 AdapterRouter.with_defaults([acl, ijcai, ieee, acm, sciencedirect])
             ),
-            corpus_workflow=None,
+            corpus_discovery=CorpusDiscoveryWorkflow(
+                discoverer=DiscoveryCoordinator(
+                    [QueryApiProvider("crossref", crossref.corpus_searcher)]
+                ).discover,
+            ),
+            corpus_acquisition=None,
             research_workflow=ResearchWorkflow(
                 discoverer=ResearchDiscoverer([crossref.corpus_searcher]),
                 mineru_cache=mineru_cache,
             ),
             mineru_cache=mineru_cache,
             manual_handoff=manual_handoff,
-        )
-        application.corpus_workflow = CorpusWorkflow(
-            discoverer=CorpusDiscoverer([crossref.corpus_searcher]),
-            acquirer=application.acquire_candidate,
         )
         return application
 
@@ -528,24 +531,25 @@ def run_cli(
             _emit({"paper_id": args.paper_id, "status": app.registry.status(args.paper_id).value})
             return 0
         if args.command == "discover" and args.discover_mode == "corpus":
-            if app.corpus_workflow is None:
+            if app.corpus_discovery is None:
                 raise AmbiguousInput("corpus discovery is not configured")
             destination = ensure_outside_repository(args.output, app.repository_root)
-            result = app.corpus_workflow.run(load_corpus_spec(args.spec), destination)
+            result = app.corpus_discovery.run(load_corpus_spec(args.spec), destination)
             _emit(
                 {
                     "status": result.status,
                     "candidates": str(result.candidates_path),
+                    "selected": str(result.selected_path),
                     "pending_review": str(result.pending_review_path),
+                    "discovery_errors": str(result.diagnostics_path),
+                    "selection_manifest": str(result.selection_manifest_path),
                     "manifest": str(result.manifest_path),
-                    "acquisition_manifest": str(result.acquisition_path),
-                    "manual_download": str(result.manual_download_path),
                     "accepted": result.accepted,
                     "pending": result.pending,
                     "rejected": result.rejected,
-                    "delivered": result.delivered,
-                    "deferred": result.deferred,
+                    "not_selected": result.not_selected,
                     "shortfall": result.shortfall,
+                    "quota_shortfalls": list(result.quota_shortfalls),
                 }
             )
             return 0
