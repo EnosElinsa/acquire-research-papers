@@ -14,14 +14,16 @@ class SemanticScholarClient:
         *,
         client: SafeHttpClient,
         endpoint: str = "https://api.semanticscholar.org/recommendations/v1/papers",
+        search_endpoint: str = "https://api.semanticscholar.org/graph/v1/paper/search",
         api_key: str | None = None,
     ) -> None:
         self.client = client
         self.endpoint = endpoint
+        self.search_endpoint = search_endpoint
         self.api_key = api_key
 
     @staticmethod
-    def _candidate(item: dict[str, Any]) -> CandidateMetadata:
+    def _candidate(item: dict[str, Any], query_url: str = "") -> CandidateMetadata:
         external_ids = item.get("externalIds") or {}
         authors = tuple(
             str(author.get("name") or "").strip()
@@ -55,6 +57,7 @@ class SemanticScholarClient:
             provenance={
                 "source": "semantic-scholar",
                 "record_url": str(item.get("url") or ""),
+                **({"query_url": query_url} if query_url else {}),
             },
         )
 
@@ -77,3 +80,20 @@ class SemanticScholarClient:
         }
         response = self.client.post_json(url, payload, headers=headers)
         return tuple(self._candidate(item) for item in response.json().get("recommendedPapers") or [])
+
+    def corpus_searcher(self, query: str, rows: int) -> tuple[CandidateMetadata, ...]:
+        fields = (
+            "paperId,title,abstract,venue,year,publicationDate,publicationTypes,"
+            "authors,externalIds,url,citationCount"
+        )
+        parameters = {
+            "query": query,
+            "limit": max(1, min(rows, 100)),
+            "fields": fields,
+        }
+        query_url = f"{self.search_endpoint}?{urlencode(parameters)}"
+        headers = {"x-api-key": self.api_key} if self.api_key else None
+        payload = self.client.get(query_url, headers=headers).json()
+        return tuple(
+            self._candidate(item, query_url) for item in payload.get("data") or ()
+        )

@@ -3,9 +3,10 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import sys
 import webbrowser
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -41,11 +42,17 @@ from acquire_research_papers.acquisition.router import AdapterRouter
 from acquire_research_papers.artifacts import InvalidPdfError, sha256_file
 from acquire_research_papers.bibliography import BibMissing, MetadataMismatch
 from acquire_research_papers.delivery import DeliveryResult, GenericDelivery
-from acquire_research_papers.discovery.contracts import CandidateMetadata
+from acquire_research_papers.discovery.contracts import CandidateMetadata, DiscoveryProvider
 from acquire_research_papers.discovery.coordinator import DiscoveryCoordinator
 from acquire_research_papers.discovery.corpus import CorpusDiscoveryWorkflow
 from acquire_research_papers.discovery.crossref import CrossrefClient
+from acquire_research_papers.discovery.openalex import OpenAlexClient
+from acquire_research_papers.discovery.official import (
+    AclAnthologyDiscoveryProvider,
+    IjcaiDiscoveryProvider,
+)
 from acquire_research_papers.discovery.providers import QueryApiProvider
+from acquire_research_papers.discovery.semantic_scholar import SemanticScholarClient
 from acquire_research_papers.http import NetworkTransient, RateLimited, SafeHttpClient
 from acquire_research_papers.mineru import (
     DpapiMineruTokenProvider,
@@ -106,6 +113,38 @@ def _resolve_script_root(repository_root: Path, package_root: Path) -> Path:
         if all((candidate / name).is_file() for name in _RUNTIME_SCRIPT_NAMES):
             return candidate.resolve()
     raise RuntimeError("acquire-research-papers runtime scripts are missing")
+
+
+def _production_discovery_providers(
+    *,
+    crossref: CrossrefClient,
+    acl_client: SafeHttpClient,
+    ijcai_client: SafeHttpClient,
+    environment: Mapping[str, str] | None = None,
+) -> list[DiscoveryProvider]:
+    providers: list[DiscoveryProvider] = [
+        QueryApiProvider("crossref", crossref.corpus_searcher),
+        AclAnthologyDiscoveryProvider(client=acl_client),
+        IjcaiDiscoveryProvider(client=ijcai_client),
+    ]
+    configured = os.environ if environment is None else environment
+    openalex_key = configured.get("OPENALEX_API_KEY", "").strip()
+    if openalex_key:
+        openalex = OpenAlexClient(
+            client=SafeHttpClient(allowed_hosts={"api.openalex.org"}),
+            api_key=openalex_key,
+        )
+        providers.append(QueryApiProvider("openalex", openalex.corpus_searcher))
+    semantic_key = configured.get("SEMANTIC_SCHOLAR_API_KEY", "").strip()
+    if semantic_key:
+        semantic = SemanticScholarClient(
+            client=SafeHttpClient(allowed_hosts={"api.semanticscholar.org"}),
+            api_key=semantic_key,
+        )
+        providers.append(
+            QueryApiProvider("semantic-scholar", semantic.corpus_searcher)
+        )
+    return providers
 
 
 @dataclass
@@ -178,6 +217,11 @@ class Application:
         crossref = CrossrefClient(
             client=SafeHttpClient(allowed_hosts={"api.crossref.org"}),
         )
+        discovery_providers = _production_discovery_providers(
+            crossref=crossref,
+            acl_client=acl.client,
+            ijcai_client=ijcai.client,
+        )
         mineru_runner = MineruCliRunner(
             token_provider=DpapiMineruTokenProvider(
                 script=script_root / "read-mineru-token.ps1",
@@ -204,9 +248,7 @@ class Application:
                 AdapterRouter.with_defaults([acl, ijcai, ieee, acm, sciencedirect])
             ),
             corpus_discovery=CorpusDiscoveryWorkflow(
-                discoverer=DiscoveryCoordinator(
-                    [QueryApiProvider("crossref", crossref.corpus_searcher)]
-                ).discover,
+                discoverer=DiscoveryCoordinator(discovery_providers).discover,
             ),
             corpus_acquisition=None,
             research_workflow=ResearchWorkflow(

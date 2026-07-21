@@ -87,3 +87,32 @@ def test_semantic_scholar_posts_positive_and_negative_seeds_without_logging_key(
     )
     assert candidates[0].doi == "10.1234/s2.1"
     assert candidates[0].provenance["source"] == "semantic-scholar"
+
+
+def test_semantic_scholar_search_uses_header_key_and_candidate_query(fixture_server) -> None:
+    recommended = json.loads(
+        (FIXTURES / "semantic-scholar.json").read_text(encoding="utf-8")
+    )["recommendedPapers"]
+
+    def handler(request):
+        assert request.headers["x-api-key"] == "synthetic-key"
+        assert request.args["query"] == "evolutionary language models"
+        assert request.args["limit"] == "25"
+        assert "paperId" in request.args["fields"]
+        return Response(json.dumps({"data": recommended}), content_type="application/json")
+
+    fixture_server.server.expect_request("/graph/search").respond_with_handler(handler)
+    client = SemanticScholarClient(
+        client=SafeHttpClient(allowed_hosts={fixture_server.host}),
+        endpoint=fixture_server.url("/recommendations"),
+        search_endpoint=fixture_server.url("/graph/search"),
+        api_key="synthetic-key",
+    )
+
+    candidates = client.corpus_searcher("evolutionary language models", 25)
+
+    assert candidates[0].doi == "10.1234/s2.1"
+    assert "synthetic-key" not in candidates[0].provenance["query_url"]
+    assert candidates[0].provenance["query_url"].startswith(
+        fixture_server.url("/graph/search")
+    )
