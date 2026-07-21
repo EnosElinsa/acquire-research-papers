@@ -3,9 +3,11 @@ from __future__ import annotations
 import csv
 import io
 import json
+import math
 import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
+from datetime import date
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlsplit
@@ -66,6 +68,7 @@ class CorpusPlan:
     not_selected: tuple[CandidateMetadata, ...]
     decisions: tuple[ScreeningDecision, ...]
     shortfall: int
+    quota_shortfalls: tuple[str, ...] = ()
 
 
 class CorpusPlanner:
@@ -76,7 +79,11 @@ class CorpusPlanner:
     def _rank(self, candidate: CandidateMetadata) -> tuple[int, int, float, str]:
         priority = self.spec.get("scope", {}).get("years", {}).get("priority", [])
         year_rank = priority.index(candidate.year) if candidate.year in priority else len(priority)
-        return (year_rank, -candidate.year, -candidate.relevance_score, candidate.key)
+        try:
+            publication_rank = -date.fromisoformat(candidate.publication_date or "").toordinal()
+        except ValueError:
+            publication_rank = -candidate.year * 366
+        return (year_rank, publication_rank, -candidate.relevance_score, candidate.key)
 
     @staticmethod
     def _matches_group(candidate: CandidateMetadata, group: dict[str, Any]) -> bool:
@@ -85,6 +92,35 @@ class CorpusPlanner:
         return (not venues or candidate.venue.casefold() in venues) and (
             not years or candidate.year in years
         )
+
+    def _group_count(
+        self,
+        selected: list[CandidateMetadata],
+        group: dict[str, Any],
+    ) -> int:
+        return sum(self._matches_group(candidate, group) for candidate in selected)
+
+    def _can_add(
+        self,
+        selected: list[CandidateMetadata],
+        candidate: CandidateMetadata,
+    ) -> bool:
+        for group in self.spec.get("quotas", {}).get("groups", []):
+            group_maximum = group.get("maximum")
+            if group_maximum is None or not self._matches_group(candidate, group):
+                continue
+            if self._group_count(selected, group) >= int(group_maximum):
+                return False
+        return True
+
+    @staticmethod
+    def _is_recent(candidate: CandidateMetadata, start: date) -> bool:
+        if not candidate.publication_date:
+            return False
+        try:
+            return date.fromisoformat(candidate.publication_date) >= start
+        except ValueError:
+            return False
 
     def select(self, candidates: Iterable[CandidateMetadata]) -> CorpusPlan:
         decisions = tuple(self.gate.decide(candidate) for candidate in candidates)
@@ -113,37 +149,72 @@ class CorpusPlanner:
         preferred = int(target.get("preferred", target.get("maximum", len(auto_pool))))
         maximum = int(target.get("maximum", max(preferred, len(auto_pool))))
         goal = min(preferred, maximum)
+        planned_total = min(goal, len(auto_pool))
 
         selected: list[CandidateMetadata] = []
         selected_keys: set[str] = set()
-        for group in self.spec.get("quotas", {}).get("groups", []):
+        groups = self.spec.get("quotas", {}).get("groups", [])
+
+        def add(candidate: CandidateMetadata) -> bool:
+            if (
+                candidate.key in selected_keys
+                or len(selected) >= maximum
+                or not self._can_add(selected, candidate)
+            ):
+                return False
+            selected.append(candidate)
+            selected_keys.add(candidate.key)
+            return True
+
+        for group in groups:
             required = int(group.get("minimum", 0))
-            eligible = [
-                candidate
-                for candidate in auto_pool
-                if candidate.key not in selected_keys and self._matches_group(candidate, group)
-            ]
-            for candidate in eligible[:required]:
-                if len(selected) >= maximum:
+            for candidate in auto_pool:
+                if self._group_count(selected, group) >= required:
                     break
-                selected.append(candidate)
-                selected_keys.add(candidate.key)
+                if self._matches_group(candidate, group):
+                    add(candidate)
+
+        recent_window = self.spec.get("quotas", {}).get("recent_window")
+        recent_start: date | None = None
+        recent_ratio = 0.0
+        if recent_window:
+            recent_start = date.fromisoformat(str(recent_window["from"]))
+            recent_ratio = float(recent_window["minimum_ratio"])
+            required_recent = math.ceil(planned_total * recent_ratio)
+            for candidate in auto_pool:
+                if sum(self._is_recent(item, recent_start) for item in selected) >= required_recent:
+                    break
+                if self._is_recent(candidate, recent_start):
+                    add(candidate)
 
         for candidate in auto_pool:
             if len(selected) >= goal:
                 break
-            if candidate.key not in selected_keys:
-                selected.append(candidate)
-                selected_keys.add(candidate.key)
+            add(candidate)
         selected.sort(key=self._rank)
         overflow = tuple(candidate for candidate in auto_pool if candidate.key not in selected_keys)
+
+        quota_shortfalls: list[str] = []
+        for group in groups:
+            missing = max(0, int(group.get("minimum", 0)) - self._group_count(selected, group))
+            if missing:
+                quota_shortfalls.append(f"group:{group.get('name', '')}:{missing}")
+        if recent_start is not None:
+            required_recent = math.ceil(len(selected) * recent_ratio)
+            actual_recent = sum(self._is_recent(item, recent_start) for item in selected)
+            if actual_recent < required_recent:
+                quota_shortfalls.append(f"recent:{required_recent - actual_recent}")
+        global_shortfall = max(0, minimum - len(selected))
+        if global_shortfall:
+            quota_shortfalls.append(f"global:{global_shortfall}")
         return CorpusPlan(
             auto_accepted=tuple(selected),
             pending_review=pending,
             rejected=rejected,
             not_selected=overflow,
             decisions=decisions,
-            shortfall=max(0, minimum - len(selected)),
+            shortfall=global_shortfall,
+            quota_shortfalls=tuple(quota_shortfalls),
         )
 
 

@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 from acquire_research_papers.discovery.corpus import (
     CandidateMetadata,
     CorpusPlanner,
@@ -83,3 +85,84 @@ def test_quality_shortfall_never_lowers_threshold() -> None:
     assert [item.key for item in plan.auto_accepted] == ["one"]
     assert [item.key for item in plan.pending_review] == ["borderline"]
     assert plan.shortfall == 1
+
+
+def test_group_maximum_is_never_exceeded() -> None:
+    spec = {
+        "target": {"minimum": 2, "preferred": 3, "maximum": 3},
+        "quotas": {
+            "groups": [
+                {
+                    "name": "conference",
+                    "minimum": 1,
+                    "maximum": 1,
+                    "venues": ["Conf"],
+                }
+            ]
+        },
+    }
+    plan = CorpusPlanner(spec).select(
+        [
+            candidate("c1", 2026, 0.99, venue="Conf"),
+            candidate("c2", 2026, 0.98, venue="Conf"),
+            candidate("j1", 2026, 0.90, venue="Journal"),
+        ]
+    )
+
+    assert [item.key for item in plan.auto_accepted] == ["c1", "j1"]
+    assert plan.quota_shortfalls == ()
+
+
+def test_recent_window_ratio_uses_publication_date() -> None:
+    spec = {
+        "target": {"minimum": 2, "preferred": 2, "maximum": 3},
+        "quotas": {
+            "recent_window": {"from": "2025-07-18", "minimum_ratio": 0.5}
+        },
+    }
+    old = replace(candidate("old", 2026, 0.99), publication_date="2025-01-01")
+    recent = replace(candidate("recent", 2025, 0.86), publication_date="2025-08-01")
+
+    plan = CorpusPlanner(spec).select([old, recent])
+
+    assert {item.key for item in plan.auto_accepted} == {"old", "recent"}
+    assert plan.quota_shortfalls == ()
+
+
+def test_named_quota_shortfall_does_not_lower_screening_threshold() -> None:
+    spec = {
+        "target": {"minimum": 2, "preferred": 2, "maximum": 2},
+        "quotas": {
+            "groups": [
+                {"name": "journals", "minimum": 2, "venues": ["Journal"]}
+            ]
+        },
+    }
+
+    plan = CorpusPlanner(spec).select(
+        [
+            candidate("journal", 2026, 0.90, venue="Journal"),
+            candidate("border", 2026, 0.70, venue="Journal"),
+        ]
+    )
+
+    assert [item.key for item in plan.auto_accepted] == ["journal"]
+    assert [item.key for item in plan.pending_review] == ["border"]
+    assert plan.quota_shortfalls == ("group:journals:1", "global:1")
+
+
+def test_recent_window_shortfall_is_named() -> None:
+    spec = {
+        "target": {"minimum": 2, "preferred": 2, "maximum": 2},
+        "quotas": {
+            "recent_window": {"from": "2025-07-18", "minimum_ratio": 0.5}
+        },
+    }
+    candidates = [
+        replace(candidate("old-1", 2026, 0.99), publication_date="2025-01-01"),
+        replace(candidate("old-2", 2026, 0.98), publication_date="2025-02-01"),
+    ]
+
+    plan = CorpusPlanner(spec).select(candidates)
+
+    assert plan.quota_shortfalls == ("recent:1",)
