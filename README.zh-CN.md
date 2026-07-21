@@ -104,6 +104,8 @@ uv run --project $skill arp export-md --pdf .\paper.pdf --output C:\Research\mar
 & "$skill\scripts\setup-ieee-institution.ps1"
 ```
 
+机构档案还需要配置登录 CARSI 后进入 IEEE 的准确资源 URL。默认不会自动同意属性发布；只有在 `fetch` 或 `acquire corpus` 中显式传入 `--accept-ieee-attribute-release` 才会点击配置的接受控件。拒绝控件永远不会被点击，且 persistent browser context 未返回 `ieeexplore.ieee.org` 前不会请求 PDF。
+
 仅在需要 Markdown 提取时单独配置 MinerU：
 
 ```powershell
@@ -116,7 +118,7 @@ uv run --project $skill arp export-md --pdf .\paper.pdf --output C:\Research\mar
 & "$skill\scripts\setup-elsevier-api-key.ps1"
 ```
 
-配置程序会询问 CARSI 中的准确机构选项、身份认证主机名以及登录表单的可访问名称；仓库不提供任何学校默认值。凭据输入不会回显，密文通过 DPAPI 与当前 Windows 用户绑定。ScienceDirect 人工接管流程不保存任何机构密码。工具也不假设 API key 拥有 Article Retrieval 全文权限；遇到 403 时转入人工浏览器下载，不会改用网站自动化。
+配置程序会询问 CARSI 中的准确机构选项、身份认证主机名、登录表单的可访问名称、资源入口，以及可选的属性发布页和接受/拒绝控件名称；仓库不提供任何学校默认值。凭据输入不会回显，密文通过 DPAPI 与当前 Windows 用户绑定。ScienceDirect 人工接管流程不保存任何机构密码。工具也不假设 API key 拥有 Article Retrieval 全文权限；遇到 403 时转入人工浏览器下载，不会改用网站自动化。
 
 配置前请阅读 [`references/credentials-and-cache.md`](references/credentials-and-cache.md) 和 [`SECURITY.md`](SECURITY.md)。
 

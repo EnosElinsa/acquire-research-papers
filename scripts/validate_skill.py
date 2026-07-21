@@ -25,6 +25,7 @@ REQUIRED_FILES = {
     "references/credentials-and-cache.md",
     "scripts/setup-secrets.ps1",
     "scripts/setup-ieee-institution.ps1",
+    "scripts/update-ieee-institution-route.ps1",
     "scripts/setup-mineru-token.ps1",
     "scripts/read-institution-profile.ps1",
     "scripts/read-browser-credential.ps1",

@@ -82,3 +82,17 @@ def test_numbered_delivery_requires_number_and_extension_tokens(tmp_path: Path) 
 
     with pytest.raises(SpecValidationError, match="delivery.naming_template"):
         load_corpus_spec(path)
+
+
+def test_numbered_delivery_accepts_number_and_extension_tokens(tmp_path: Path) -> None:
+    path = tmp_path / "numbered-layout.yaml"
+    path.write_text(
+        "mode: corpus\nname: numbered-layout\ntarget:\n  minimum: 1\n  maximum: 2\n"
+        "delivery:\n  profile: numbered\n"
+        "  naming_template: '2026.7.18 {publisher}/{number}.{ext}'\n",
+        encoding="utf-8",
+    )
+
+    spec = load_corpus_spec(path)
+
+    assert spec["delivery"]["profile"] == "numbered"

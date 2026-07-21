@@ -1,0 +1,15 @@
+[
+  {
+    "paperId": "s2-paper-1",
+    "externalIds": {"DOI": "10.1234/s2.1"},
+    "title": "Semantic Scholar Candidate",
+    "abstract": "A batch lookup abstract.",
+    "venue": "Test Conference",
+    "year": 2026,
+    "publicationDate": "2026-02-01",
+    "publicationTypes": ["JournalArticle"],
+    "authors": [{"name": "Grace Hopper"}],
+    "url": "https://www.semanticscholar.org/paper/s2-paper-1"
+  },
+  null
+]

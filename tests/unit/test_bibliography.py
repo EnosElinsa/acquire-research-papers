@@ -101,6 +101,31 @@ def test_proceedings_prefix_and_official_venue_suffix_are_equivalent() -> None:
     verify_bibliography(metadata, parse_bibtex(raw))
 
 
+def test_author_identity_accepts_native_aliases_and_compound_surnames() -> None:
+    metadata = PaperMetadata(
+        title="Multilingual Author Identity",
+        authors=(
+            "Hu Zhang (张虎)",
+            "Daniel Zhang-Li",
+            "Anna Karen Gárate-Escamilla",
+        ),
+        year=2026,
+        venue="Proceedings of the Test Conference",
+        doi="10.1000/multilingual-authors",
+        publisher="Test Publisher",
+        landing_url="https://publisher.example/multilingual-authors",
+    )
+    raw = (
+        "@inproceedings{k,title={Multilingual Author Identity},"
+        "author={Zhang, Hu and Zhang-Li, Daniel and "
+        "G{\\'a}rate-Escamilla, Anna Karen},year={2026},"
+        "booktitle={Proceedings of the Test Conference},"
+        "doi={10.1000/multilingual-authors}}"
+    )
+
+    verify_bibliography(metadata, parse_bibtex(raw))
+
+
 def test_first_author_scope_accepts_complete_publisher_author_list() -> None:
     metadata = PaperMetadata(
         title="Farmers' cooperatives and smallholder farmers' access to credit: Evidence from China",

@@ -15,11 +15,13 @@ class SemanticScholarClient:
         client: SafeHttpClient,
         endpoint: str = "https://api.semanticscholar.org/recommendations/v1/papers",
         search_endpoint: str = "https://api.semanticscholar.org/graph/v1/paper/search",
+        batch_endpoint: str = "https://api.semanticscholar.org/graph/v1/paper/batch",
         api_key: str | None = None,
     ) -> None:
         self.client = client
         self.endpoint = endpoint
         self.search_endpoint = search_endpoint
+        self.batch_endpoint = batch_endpoint
         self.api_key = api_key
 
     @staticmethod
@@ -96,4 +98,26 @@ class SemanticScholarClient:
         payload = self.client.get(query_url, headers=headers).json()
         return tuple(
             self._candidate(item, query_url) for item in payload.get("data") or ()
+        )
+
+    def lookup_dois(self, dois: list[str]) -> tuple[CandidateMetadata, ...]:
+        if not dois:
+            return ()
+        fields = (
+            "paperId,title,abstract,venue,year,publicationDate,publicationTypes,"
+            "authors,externalIds,url,citationCount"
+        )
+        url = f"{self.batch_endpoint}?{urlencode({'fields': fields})}"
+        headers = {"x-api-key": self.api_key} if self.api_key else None
+        payload = self.client.post_json(
+            url,
+            {"ids": [f"DOI:{normalize_doi(doi)}" for doi in dois]},
+            headers=headers,
+        ).json()
+        if not isinstance(payload, list):
+            return ()
+        return tuple(
+            self._candidate(item)
+            for item in payload
+            if isinstance(item, dict) and item.get("paperId")
         )

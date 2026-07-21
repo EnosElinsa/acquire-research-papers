@@ -219,6 +219,10 @@ def _normalized(value: str) -> str:
     return " ".join(re.findall(r"\w+", value.casefold()))
 
 
+def _contains_term(text: str, term: str) -> bool:
+    return bool(term and f" {term} " in f" {text} ")
+
+
 class CorpusDiscoverer:
     """Conservative lexical gating over one or more candidate-only clients."""
 
@@ -249,9 +253,9 @@ class CorpusDiscoverer:
 
         haystack = _normalized(f"{candidate.title} {candidate.abstract}")
         title = _normalized(candidate.title)
-        topic_title = any(term and term in title for term in include_terms)
-        topic_body = any(term and term in haystack for term in include_terms)
-        excluded_topic = any(term and term in haystack for term in exclude_terms)
+        topic_title = any(_contains_term(title, term) for term in include_terms)
+        topic_body = any(_contains_term(haystack, term) for term in include_terms)
+        excluded_topic = any(_contains_term(haystack, term) for term in exclude_terms)
         if not include_terms:
             score = max(candidate.relevance_score, 0.85)
         elif topic_title:

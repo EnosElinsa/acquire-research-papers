@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from acquire_research_papers.acquisition.adapters.acl import AclAnthologyAdapter
 from acquire_research_papers.acquisition.adapters.ieee import IeeeBridgeError
 from acquire_research_papers.acquisition.base import AcquiredPair, SourceAdapter, SourceDocument
@@ -177,6 +179,49 @@ def test_fetch_cli_classifies_institution_profile_mismatch_as_access_required(
     payload = json.loads(capsys.readouterr().out)
     assert exit_code == 69
     assert payload["status"] == "error"
+    assert payload["error_code"] == "access_required"
+
+
+@pytest.mark.parametrize(
+    "phase",
+    [
+        "attribute-release-controls",
+        "attribute-release-required",
+        "institutional-return",
+    ],
+)
+def test_fetch_cli_classifies_institutional_return_phases_as_access_required(
+    tmp_path,
+    capsys,
+    phase,
+) -> None:
+    class InstitutionalReturnAdapter(SourceAdapter):
+        name = "institutional-return"
+        production_hosts = frozenset({"ieeexplore.ieee.org"})
+
+        def resolve(self, value):
+            raise IeeeBridgeError(phase, "institutional user action is required")
+
+        def acquire(self, document):
+            raise AssertionError("unreachable")
+
+    application = Application.for_test(
+        app_root=tmp_path / "app",
+        repository_root=tmp_path / "repository",
+        adapter=InstitutionalReturnAdapter(),
+    )
+    exit_code = run_cli(
+        [
+            "fetch",
+            "--input",
+            "https://ieeexplore.ieee.org/document/3",
+            "--output",
+            str(tmp_path / "out"),
+        ],
+        application=application,
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 69
     assert payload["error_code"] == "access_required"
 
 

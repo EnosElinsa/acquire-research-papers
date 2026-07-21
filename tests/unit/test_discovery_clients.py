@@ -116,3 +116,32 @@ def test_semantic_scholar_search_uses_header_key_and_candidate_query(fixture_ser
     assert candidates[0].provenance["query_url"].startswith(
         fixture_server.url("/graph/search")
     )
+
+
+def test_semantic_scholar_batches_doi_lookup_without_requiring_a_key(
+    fixture_server,
+) -> None:
+    expected = json.loads(
+        (FIXTURES / "semantic-scholar-batch.json").read_text(encoding="utf-8")
+    )
+
+    def handler(request):
+        assert "x-api-key" not in request.headers
+        assert request.get_json() == {
+            "ids": ["DOI:10.1234/s2.1", "DOI:10.1234/missing"]
+        }
+        assert "abstract" in request.args["fields"]
+        return Response(json.dumps(expected), content_type="application/json")
+
+    fixture_server.server.expect_request("/graph/batch", method="POST").respond_with_handler(
+        handler
+    )
+    client = SemanticScholarClient(
+        client=SafeHttpClient(allowed_hosts={fixture_server.host}),
+        batch_endpoint=fixture_server.url("/graph/batch"),
+    )
+
+    candidates = client.lookup_dois(["10.1234/s2.1", "10.1234/missing"])
+
+    assert [candidate.doi for candidate in candidates] == ["10.1234/s2.1"]
+    assert candidates[0].abstract == "A batch lookup abstract."

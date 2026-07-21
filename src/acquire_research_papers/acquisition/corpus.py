@@ -5,7 +5,7 @@ import io
 import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import quote, urlsplit
 
@@ -163,12 +163,57 @@ def _write_csv(path: Path, fieldnames: list[str], rows: list[dict[str, Any]]) ->
     atomic_write_bytes(path, buffer.getvalue().encode("utf-8-sig"))
 
 
+def _provenance_urls(row: Mapping[str, Any]) -> dict[str, str]:
+    path_value = row.get("provenance")
+    if row.get("state") != "delivered" or not path_value:
+        return {}
+    try:
+        payload = json.loads(Path(str(path_value)).read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    return {
+        field: str(payload.get(field) or "")
+        for field in (
+            "official_landing_url",
+            "official_pdf_url",
+            "official_bibtex_url",
+        )
+    }
+
+
+def _paper_manifest_row(
+    record: SelectionRecord,
+    acquisition_row: Mapping[str, Any],
+) -> dict[str, Any]:
+    relative_pdf = PurePosixPath(record.relative_pdf)
+    urls = _provenance_urls(acquisition_row)
+    return {
+        "folder": relative_pdf.parent.as_posix(),
+        "number": relative_pdf.stem,
+        "title": record.title,
+        "year": record.year,
+        "venue": record.venue,
+        "doi": record.doi or "",
+        "official_landing_url": urls.get("official_landing_url")
+        or _official_url(record),
+        "official_pdf_url": urls.get("official_pdf_url", ""),
+        "official_bibtex_url": urls.get("official_bibtex_url", ""),
+        "keywords": "; ".join(record.keywords),
+        "state": acquisition_row["state"],
+        "pdf": record.relative_pdf,
+        "bibtex": record.relative_bibtex,
+    }
+
+
 @dataclass(frozen=True)
 class AcquisitionRunResult:
     status: str
     acquisition_path: Path
     manual_download_path: Path
     retryable_path: Path
+    paper_manifest_path: Path
     manifest_path: Path
     total: int
     delivered: int
@@ -255,6 +300,29 @@ class CorpusAcquisitionWorkflow:
             [*identity_fields, "reason", "message"],
             [{**row, "reason": row["error_code"]} for row in retryable_rows],
         )
+        paper_manifest_path = destination / "paper-manifest.csv"
+        _write_csv(
+            paper_manifest_path,
+            [
+                "folder",
+                "number",
+                "title",
+                "year",
+                "venue",
+                "doi",
+                "official_landing_url",
+                "official_pdf_url",
+                "official_bibtex_url",
+                "keywords",
+                "state",
+                "pdf",
+                "bibtex",
+            ],
+            [
+                _paper_manifest_row(record, row)
+                for record, row in zip(selection.records, rows, strict=True)
+            ],
+        )
 
         counts = {
             state: sum(row["state"] == state for row in rows)
@@ -274,6 +342,7 @@ class CorpusAcquisitionWorkflow:
             "acquisition_manifest": acquisition_path.name,
             "manual_download": manual_path.name,
             "retryable_downloads": retryable_path.name,
+            "paper_manifest": paper_manifest_path.name,
         }
         atomic_write_bytes(
             manifest_path,
@@ -288,6 +357,7 @@ class CorpusAcquisitionWorkflow:
             acquisition_path=acquisition_path,
             manual_download_path=manual_path,
             retryable_path=retryable_path,
+            paper_manifest_path=paper_manifest_path,
             manifest_path=manifest_path,
             total=len(rows),
             delivered=counts["delivered"],

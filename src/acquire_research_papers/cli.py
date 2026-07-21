@@ -42,7 +42,11 @@ from acquire_research_papers.acquisition.router import AdapterRouter
 from acquire_research_papers.artifacts import InvalidPdfError, sha256_file
 from acquire_research_papers.bibliography import BibMissing, MetadataMismatch
 from acquire_research_papers.delivery import DeliveryResult, GenericDelivery
-from acquire_research_papers.discovery.contracts import CandidateMetadata, DiscoveryProvider
+from acquire_research_papers.discovery.contracts import (
+    CandidateMetadata,
+    DiscoveryEnricher,
+    DiscoveryProvider,
+)
 from acquire_research_papers.discovery.coordinator import DiscoveryCoordinator
 from acquire_research_papers.discovery.corpus import CorpusDiscoveryWorkflow
 from acquire_research_papers.discovery.crossref import CrossrefClient
@@ -51,7 +55,10 @@ from acquire_research_papers.discovery.official import (
     AclAnthologyDiscoveryProvider,
     IjcaiDiscoveryProvider,
 )
-from acquire_research_papers.discovery.providers import QueryApiProvider
+from acquire_research_papers.discovery.providers import (
+    DoiBatchEnrichmentProvider,
+    QueryApiProvider,
+)
 from acquire_research_papers.discovery.semantic_scholar import SemanticScholarClient
 from acquire_research_papers.http import NetworkTransient, RateLimited, SafeHttpClient
 from acquire_research_papers.mineru import (
@@ -99,6 +106,9 @@ _IEEE_ACCESS_PHASES = frozenset(
         "institution-username",
         "institution-password",
         "institution-login",
+        "attribute-release-controls",
+        "attribute-release-required",
+        "institutional-return",
         "download-after-auth",
     }
 )
@@ -145,6 +155,18 @@ def _production_discovery_providers(
             QueryApiProvider("semantic-scholar", semantic.corpus_searcher)
         )
     return providers
+
+
+def _production_discovery_enrichers(
+    *,
+    environment: Mapping[str, str] | None = None,
+) -> list[DiscoveryEnricher]:
+    configured = os.environ if environment is None else environment
+    semantic = SemanticScholarClient(
+        client=SafeHttpClient(allowed_hosts={"api.semanticscholar.org"}),
+        api_key=configured.get("SEMANTIC_SCHOLAR_API_KEY", "").strip() or None,
+    )
+    return [DoiBatchEnrichmentProvider("semantic-scholar", semantic.lookup_dois)]
 
 
 @dataclass
@@ -196,7 +218,11 @@ class Application:
         return application
 
     @classmethod
-    def default(cls) -> Application:
+    def default(
+        cls,
+        *,
+        accept_ieee_attribute_release: bool = False,
+    ) -> Application:
         paths = AppPaths.default()
         paths.create_directories()
         repository_root = Path(__file__).resolve().parents[2]
@@ -212,6 +238,7 @@ class Application:
                 dependency_root=paths.dependencies,
                 work_root=paths.runs,
                 secret_path=paths.secrets / "secrets.clixml",
+                accept_attribute_release=accept_ieee_attribute_release,
             )
         )
         crossref = CrossrefClient(
@@ -222,6 +249,7 @@ class Application:
             acl_client=acl.client,
             ijcai_client=ijcai.client,
         )
+        discovery_enrichers = _production_discovery_enrichers()
         mineru_runner = MineruCliRunner(
             token_provider=DpapiMineruTokenProvider(
                 script=script_root / "read-mineru-token.ps1",
@@ -248,7 +276,10 @@ class Application:
                 AdapterRouter.with_defaults([acl, ijcai, ieee, acm, sciencedirect])
             ),
             corpus_discovery=CorpusDiscoveryWorkflow(
-                discoverer=DiscoveryCoordinator(discovery_providers).discover,
+                discoverer=DiscoveryCoordinator(
+                    discovery_providers,
+                    enrichers=discovery_enrichers,
+                ).discover,
             ),
             corpus_acquisition=None,
             research_workflow=ResearchWorkflow(
@@ -495,7 +526,7 @@ class Application:
         )
 
     def acquire_candidate(self, candidate: CandidateMetadata, output: Path) -> dict[str, Any]:
-        reference = candidate.doi or candidate.official_url
+        reference = candidate.official_url or candidate.doi
         if not reference:
             return {
                 "status": "deferred",
@@ -531,7 +562,7 @@ class Application:
         }
 
     def acquire_selected(self, record: SelectionRecord, output: Path) -> dict[str, Any]:
-        reference = record.doi or record.official_url
+        reference = record.official_url or record.doi
         if not reference:
             return {
                 "error_code": "contract_error",
@@ -585,6 +616,11 @@ def build_parser() -> argparse.ArgumentParser:
     fetch = subparsers.add_parser("fetch", help="fetch an official PDF and BibTeX pair")
     fetch.add_argument("--input", required=True)
     fetch.add_argument("--output", type=Path, required=True)
+    fetch.add_argument(
+        "--accept-ieee-attribute-release",
+        action="store_true",
+        help="explicitly authorize the configured institutional attribute-release accept control",
+    )
 
     manual_fetch = subparsers.add_parser(
         "manual-fetch",
@@ -629,6 +665,11 @@ def build_parser() -> argparse.ArgumentParser:
     acquire_corpus = acquire_modes.add_parser("corpus", help="acquire selected paper pairs")
     acquire_corpus.add_argument("--selection", type=Path, required=True)
     acquire_corpus.add_argument("--output", type=Path, required=True)
+    acquire_corpus.add_argument(
+        "--accept-ieee-attribute-release",
+        action="store_true",
+        help="explicitly authorize the configured institutional attribute-release accept control",
+    )
     return parser
 
 
@@ -646,7 +687,11 @@ def run_cli(
     if args.version:
         _emit({"name": "acquire-research-papers", "version": __version__})
         return 0
-    app = application or Application.default()
+    app = application or Application.default(
+        accept_ieee_attribute_release=bool(
+            getattr(args, "accept_ieee_attribute_release", False)
+        )
+    )
     try:
         if args.command == "fetch":
             result = app.fetch(args.input, args.output)
@@ -782,6 +827,7 @@ def run_cli(
                     "acquisition_manifest": str(result.acquisition_path),
                     "manual_download": str(result.manual_download_path),
                     "retryable_downloads": str(result.retryable_path),
+                    "paper_manifest": str(result.paper_manifest_path),
                     "manifest": str(result.manifest_path),
                     "total": result.total,
                     "delivered": result.delivered,

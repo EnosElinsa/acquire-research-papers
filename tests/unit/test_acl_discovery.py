@@ -108,3 +108,37 @@ def test_acl_capabilities_are_scoped_without_core_venue_logic() -> None:
     assert {"title", "abstract", "authors", "venue"}.issubset(
         capabilities.evidence_fields
     )
+
+
+def test_acl_provider_uses_requested_year_specific_venue(fixture_server) -> None:
+    fixture_server.serve_text(
+        "/events/acl-2025/",
+        (FIXTURES / "event-current.html").read_text(encoding="utf-8"),
+    )
+    year_specific = DiscoveryRequest.from_spec(
+        {
+            "name": "acl",
+            "target": {"minimum": 1, "preferred": 1, "maximum": 10},
+            "scope": {
+                "venues": [
+                    {
+                        "name": "Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)",
+                        "aliases": ["ACL"],
+                    }
+                ],
+                "years": {"include": [2025]},
+                "publication_types": {"include": ["proceedings-article"]},
+                "topics": {"include": ["multi-agent"]},
+            },
+        }
+    )
+    provider = AclAnthologyDiscoveryProvider(
+        client=fixture_server.client,
+        event_template=fixture_server.url("/events/acl-{year}/"),
+        production_hosts={fixture_server.host},
+    )
+
+    batch = provider.discover(year_specific)
+
+    assert len(batch.candidates) == 1
+    assert batch.candidates[0].venue == year_specific.venues[0].name

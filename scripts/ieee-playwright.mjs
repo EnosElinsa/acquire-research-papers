@@ -9,8 +9,10 @@ const execFileAsync = promisify(execFile);
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const CARSI_DISCOVERY_URL = "https://ds.carsi.edu.cn/login/index.html";
 const IEEE_HOST = "ieeexplore.ieee.org";
+const CARSI_HOST = "ds.carsi.edu.cn";
 const CITATION_URL = `https://${IEEE_HOST}/rest/search/citation/format`;
 const DNS_HOST = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;
+const CONTROL_NAME = /^[A-Za-z0-9_-]+$/;
 
 export const SELECTORS = Object.freeze({
   documentTitle: "h1.document-title",
@@ -47,6 +49,7 @@ export function normalizeInstitutionProfile(payload = {}) {
     "usernameLabel",
     "passwordLabel",
     "loginButtonName",
+    "resourceAccessUrl",
   ];
   const profile = {};
   for (const name of required) {
@@ -58,13 +61,50 @@ export function normalizeInstitutionProfile(payload = {}) {
   if (profile.credentialHost.endsWith(".") || !DNS_HOST.test(profile.credentialHost)) {
     throw new IeeeFlowError("credential-read", "Institution credential host must be one exact DNS hostname.");
   }
-  profile.consentTitle = String(payload.consentTitle ?? "").trim();
-  profile.consentButtonName = String(payload.consentButtonName ?? "").trim();
-  if (Boolean(profile.consentTitle) !== Boolean(profile.consentButtonName)) {
+  let resourceAccess;
+  try {
+    resourceAccess = new URL(profile.resourceAccessUrl);
+  } catch {
+    throw new IeeeFlowError("credential-read", "Institution resource access URL must be a valid HTTPS URL.");
+  }
+  if (
+    resourceAccess.protocol !== "https:"
+    || resourceAccess.hostname.toLowerCase() !== CARSI_HOST
+    || resourceAccess.username
+    || resourceAccess.password
+    || resourceAccess.hash
+  ) {
     throw new IeeeFlowError(
       "credential-read",
-      "Institution consent title and button name must both be configured or both be empty.",
+      `Institution resource access URL must use the exact ${CARSI_HOST} HTTPS host without credentials or a fragment.`,
     );
+  }
+  profile.resourceAccessUrl = resourceAccess.href;
+  profile.attributeReleaseTitle = String(payload.attributeReleaseTitle ?? "").trim();
+  profile.attributeReleaseAcceptControlName = String(
+    payload.attributeReleaseAcceptControlName ?? "",
+  ).trim();
+  profile.attributeReleaseRejectControlName = String(
+    payload.attributeReleaseRejectControlName ?? "",
+  ).trim();
+  const attributeReleaseFields = [
+    profile.attributeReleaseTitle,
+    profile.attributeReleaseAcceptControlName,
+    profile.attributeReleaseRejectControlName,
+  ];
+  if (attributeReleaseFields.some(Boolean) && !attributeReleaseFields.every(Boolean)) {
+    throw new IeeeFlowError(
+      "credential-read",
+      "Institution attribute-release title, accept control, and reject control must all be configured or all be empty.",
+    );
+  }
+  for (const controlName of attributeReleaseFields.slice(1)) {
+    if (controlName && !CONTROL_NAME.test(controlName)) {
+      throw new IeeeFlowError(
+        "credential-read",
+        "Institution attribute-release control names may contain only letters, digits, underscores, and hyphens.",
+      );
+    }
   }
   return profile;
 }
@@ -564,7 +604,7 @@ async function openCarsiInstitutionLogin(page, timeoutMs, institutionProfile) {
   await carsiLogin.click();
   if (typeof page.waitForURL === "function") {
     try {
-      await page.waitForURL((url) => url.hostname.toLowerCase() !== "ds.carsi.edu.cn", {
+      await page.waitForURL((url) => url.hostname.toLowerCase() !== CARSI_HOST, {
         timeout: timeoutMs,
       });
     } catch {
@@ -581,13 +621,14 @@ async function authenticateThroughCarsi({
   institutionProfile,
   secretPath,
   timeoutMs,
+  acceptAttributeRelease,
 }) {
   let authHost = "";
   for (let attempt = 0; attempt < 2; attempt += 1) {
     authHost = await openCarsiInstitutionLogin(page, timeoutMs, institutionProfile);
     if (authHost !== "chromewebdata") break;
   }
-  if (authHost === "ds.carsi.edu.cn") return;
+  if (authHost === CARSI_HOST) return;
   if (!isApprovedCredentialHost(authHost, institutionProfile)) {
     throw new IeeeFlowError(
       "unexpected-auth-host",
@@ -596,10 +637,44 @@ async function authenticateThroughCarsi({
     );
   }
 
+  const usernameCandidate = page.getByLabel(institutionProfile.usernameLabel, { exact: true });
+  if (await usernameCandidate.count() === 0) {
+    if (typeof usernameCandidate.waitFor === "function") {
+      try {
+        await usernameCandidate.waitFor({
+          state: "visible",
+          timeout: Math.min(timeoutMs, 10_000),
+        });
+      } catch {
+        // An existing IdP session may redirect without ever rendering the form.
+      }
+    }
+    if (await usernameCandidate.count() === 0 && typeof page.waitForURL === "function") {
+      try {
+        await page.waitForURL((url) => url.hostname.toLowerCase() !== institutionProfile.credentialHost, {
+          timeout: Math.min(timeoutMs, 15_000),
+        });
+      } catch {
+        // The exact hostname check below reports an incomplete session redirect.
+      }
+    }
+    await waitForDocument(page, timeoutMs);
+    if (!isApprovedCredentialHost(hostnameOf(page.url(), "authentication-result"), institutionProfile)) {
+      return;
+    }
+    if (await usernameCandidate.count() === 0) {
+      throw new IeeeFlowError(
+        "authentication-not-complete",
+        "The institutional page exposed neither the configured login form nor a completed session return.",
+        { requiresUserAction: true },
+      );
+    }
+  }
+
   const credential = await credentialReader(authHost, { secretPath, institutionProfile });
   try {
     const username = await uniqueLocator(
-      page.getByLabel(institutionProfile.usernameLabel, { exact: true }),
+      usernameCandidate,
       "institution-username",
       `${institutionProfile.organization} username field`,
     );
@@ -630,38 +705,116 @@ async function authenticateThroughCarsi({
     credential.username = null;
     credential.password = null;
   }
-  if (
-    institutionProfile.consentTitle
-    && isApprovedCredentialHost(
-      hostnameOf(page.url(), "authentication-result"),
-      institutionProfile,
-    )
-  ) {
-    const title = await page.title();
-    const consent = page.getByRole("button", {
-      name: institutionProfile.consentButtonName,
-      exact: true,
-    });
-    const consentCount = await consent.count();
-    if (title === institutionProfile.consentTitle && consentCount === 1) {
-      await consent.click();
-      if (typeof page.waitForURL === "function") {
-        try {
-          await page.waitForURL((url) => url.hostname.toLowerCase() !== institutionProfile.credentialHost, {
-            timeout: Math.min(timeoutMs, 30_000),
-          });
-        } catch {
-          // The bounded hostname check below reports a rejected attribute release.
-        }
-      }
-      await waitForDocument(page, timeoutMs);
-    }
-  }
   if (isApprovedCredentialHost(hostnameOf(page.url(), "authentication-result"), institutionProfile)) {
+    const handledRelease = await handleConfiguredAttributeRelease({
+      page,
+      institutionProfile,
+      acceptAttributeRelease,
+      timeoutMs,
+    });
+    if (
+      handledRelease
+      && !isApprovedCredentialHost(
+        hostnameOf(page.url(), "authentication-result"),
+        institutionProfile,
+      )
+    ) {
+      return;
+    }
     throw new IeeeFlowError(
       "authentication-not-complete",
       "Institutional login did not complete; CAPTCHA, OTP, or corrected credentials may be required.",
       { requiresUserAction: true },
+    );
+  }
+}
+
+async function handleConfiguredAttributeRelease({
+  page,
+  institutionProfile,
+  acceptAttributeRelease,
+  timeoutMs,
+}) {
+  if (!institutionProfile.attributeReleaseTitle) return false;
+  if (!isApprovedCredentialHost(hostnameOf(page.url(), "attribute-release"), institutionProfile)) {
+    return false;
+  }
+  const title = typeof page.title === "function" ? await page.title() : "";
+  if (title !== institutionProfile.attributeReleaseTitle) return false;
+
+  const accept = page.locator(
+    `button[name="${institutionProfile.attributeReleaseAcceptControlName}"]`,
+  );
+  const reject = page.locator(
+    `button[name="${institutionProfile.attributeReleaseRejectControlName}"]`,
+  );
+  const [acceptCount, rejectCount] = await Promise.all([accept.count(), reject.count()]);
+  if (acceptCount !== 1 || rejectCount !== 1) {
+    throw new IeeeFlowError(
+      "attribute-release-controls",
+      "The configured attribute-release page did not expose exactly one accept and one reject control.",
+      { requiresUserAction: true },
+    );
+  }
+  if (acceptAttributeRelease !== true) {
+    if (typeof page.waitForTimeout === "function") {
+      await page.waitForTimeout(Math.min(timeoutMs, 30_000));
+    }
+    throw new IeeeFlowError(
+      "attribute-release-required",
+      "Institutional attribute release requires visible user action or explicit --accept-ieee-attribute-release authorization.",
+      { requiresUserAction: true },
+    );
+  }
+
+  await accept.click();
+  if (typeof page.waitForURL === "function") {
+    try {
+      await page.waitForURL(
+        (url) => url.hostname.toLowerCase() !== institutionProfile.credentialHost,
+        { timeout: Math.min(timeoutMs, 30_000) },
+      );
+    } catch {
+      // The exact hostname check below rejects an incomplete release return.
+    }
+  }
+  await waitForDocument(page, timeoutMs);
+  if (isApprovedCredentialHost(hostnameOf(page.url(), "attribute-release"), institutionProfile)) {
+    throw new IeeeFlowError(
+      "attribute-release-required",
+      "The configured accept control did not return from the institutional attribute-release page.",
+      { requiresUserAction: true },
+    );
+  }
+  return true;
+}
+
+async function authorizeIeeeResource({
+  page,
+  institutionProfile,
+  acceptAttributeRelease,
+  timeoutMs,
+}) {
+  await page.goto(institutionProfile.resourceAccessUrl, {
+    waitUntil: "domcontentloaded",
+    timeout: timeoutMs,
+  });
+  await waitForDocument(page, timeoutMs);
+  if (hostnameOf(page.url(), "institutional-return") === IEEE_HOST) return;
+
+  await handleConfiguredAttributeRelease({
+    page,
+    institutionProfile,
+    acceptAttributeRelease,
+    timeoutMs,
+  });
+
+  const returnHost = hostnameOf(page.url(), "institutional-return");
+  if (returnHost !== IEEE_HOST) {
+    throw new IeeeFlowError(
+      "institutional-return",
+      `The configured CARSI resource did not return to the exact ${IEEE_HOST} host.`,
+      { hostname: returnHost, requiresUserAction: true },
     );
   }
 }
@@ -728,6 +881,13 @@ export async function retrieveIeeePaper(options) {
       institutionProfile,
       secretPath,
       timeoutMs,
+      acceptAttributeRelease: options.acceptAttributeRelease === true,
+    });
+    await authorizeIeeeResource({
+      page: options.page,
+      institutionProfile,
+      acceptAttributeRelease: options.acceptAttributeRelease === true,
+      timeoutMs,
     });
     downloaded = await tryFetchPdf({
       page: options.page,
@@ -784,7 +944,7 @@ export async function runAutomatedRetrieval(options) {
   const browserContext = await options.chromium.launchPersistentContext(profileDir, {
     channel: "chrome",
     headless: options.headless === true,
-    args: ["--window-position=-32000,-32000", "--window-size=1280,900"],
+    args: ["--window-size=1280,900"],
     acceptDownloads: true,
     downloadsPath: workDir,
   });
@@ -829,6 +989,7 @@ async function main() {
     ...options,
     chromium,
     timeoutMs: options.timeoutMs ? Number(options.timeoutMs) : undefined,
+    acceptAttributeRelease: String(options.acceptAttributeRelease ?? "").toLowerCase() === "true",
   });
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }

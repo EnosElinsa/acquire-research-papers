@@ -66,10 +66,9 @@ def load_corpus_spec(path: Path) -> dict[str, Any]:
             )
     delivery = spec["delivery"]
     template = str(delivery.get("naming_template", ""))
-    if delivery.get("profile") == "numbered" and not {
-        "{number}",
-        "{ext}",
-    }.issubset(template):
+    if delivery.get("profile") == "numbered" and not all(
+        token in template for token in ("{number}", "{ext}")
+    ):
         raise SpecValidationError(
             "delivery.naming_template: numbered profile requires {number} and {ext}"
         )

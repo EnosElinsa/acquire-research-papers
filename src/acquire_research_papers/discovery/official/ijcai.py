@@ -33,7 +33,17 @@ _VENUE_ALIASES = frozenset(
         "International Joint Conferences on Artificial Intelligence",
     }
 )
-_MAIN_TYPES = frozenset({"main", "full", "regular", "research article", "research-article"})
+_MAIN_TYPES = frozenset(
+    {
+        "main",
+        "full",
+        "regular",
+        "research article",
+        "research-article",
+        "proceedings article",
+        "proceedings-article",
+    }
+)
 
 
 def _normalized(value: str) -> str:
@@ -66,6 +76,53 @@ def _publication_date(soup: BeautifulSoup, year: int) -> str | None:
         return date(*parts).isoformat()
     except ValueError:
         return None
+
+
+def _abstract(soup: BeautifulSoup) -> str:
+    labelled = soup.select_one("section#abstract, #abstract")
+    if labelled is not None:
+        return labelled.get_text(" ", strip=True)
+    blocks = [
+        node
+        for node in soup.select("div.proceedings-detail > div.row > div.col-md-12")
+        if node.select_one(".keywords") is None and node.get_text(" ", strip=True)
+    ]
+    if len(blocks) != 1:
+        return ""
+    return blocks[0].get_text(" ", strip=True)
+
+
+def _keywords(soup: BeautifulSoup) -> tuple[str, ...]:
+    metadata = _meta_values(soup, "keywords")
+    if len(metadata) == 1:
+        return _split_values(metadata[0])
+    return tuple(
+        node.get_text(" ", strip=True)
+        for node in soup.select("div.proceedings-detail .keywords .topic")
+        if node.get_text(" ", strip=True)
+    )
+
+
+def _content_soup(html: str) -> BeautifulSoup:
+    # IJCAI abstracts occasionally contain raw mathematical comparisons such as
+    # ``N<Nr``.  html.parser otherwise treats the variable after ``<`` as a tag
+    # and truncates the evidence text (and may nest the keyword block inside it).
+    escaped_comparisons = re.sub(r"<(?=[A-Z0-9])", "&lt;", html)
+    return BeautifulSoup(escaped_comparisons, "html.parser")
+
+
+def _requested_venue(request: DiscoveryRequest, year: int) -> str:
+    if len(request.venues) == 1:
+        return request.venues[0].name
+    tokens = (str(year), str(year)[2:])
+    for venue in request.venues:
+        if any(
+            re.search(rf"(?<!\d){re.escape(token)}(?!\d)", value)
+            for token in tokens
+            for value in venue.all_names
+        ):
+            return venue.name
+    return _OFFICIAL_VENUE
 
 
 class IjcaiDiscoveryProvider:
@@ -126,13 +183,21 @@ class IjcaiDiscoveryProvider:
             classes = {str(value).casefold() for value in node.get("class", ())}
             if "paper_wrapper" not in classes:
                 continue
-            anchor = node.find("a", href=True)
-            if anchor is None:
+            detail_anchors = [
+                anchor
+                for anchor in node.find_all("a", href=True)
+                if expected_path.fullmatch(urlsplit(str(anchor.get("href", ""))).path)
+            ]
+            if len(detail_anchors) != 1:
                 continue
+            anchor = detail_anchors[0]
             href = str(anchor.get("href", "")).strip()
-            if not expected_path.fullmatch(urlsplit(href).path):
-                continue
-            title = anchor.get_text(" ", strip=True)
+            title_node = node.select_one(".title")
+            title = (
+                title_node.get_text(" ", strip=True)
+                if title_node is not None
+                else anchor.get_text(" ", strip=True)
+            )
             if title:
                 entries.append((track, title, href))
         return entries
@@ -152,18 +217,17 @@ class IjcaiDiscoveryProvider:
         detail_html: str,
         document,
         index_url: str,
+        venue: str,
     ) -> CandidateMetadata:
         if _normalized(document.metadata.title) != _normalized(title):
             raise PageContractChanged("IJCAI index and detail titles disagree")
         if document.metadata.publication_type != "main" or "main track" not in track.casefold():
             raise PageContractChanged("IJCAI detail is outside the requested main track")
-        soup = BeautifulSoup(detail_html, "html.parser")
-        abstract_node = soup.select_one("section#abstract, #abstract")
-        abstract = abstract_node.get_text(" ", strip=True) if abstract_node else ""
+        soup = _content_soup(detail_html)
+        abstract = _abstract(soup)
         if not abstract:
             raise PageContractChanged("IJCAI page has no abstract")
-        keyword_values = _meta_values(soup, "keywords")
-        keywords = _split_values(keyword_values[0]) if len(keyword_values) == 1 else ()
+        keywords = _keywords(soup)
         publication_date = _publication_date(soup, document.metadata.year)
         evidence = [
             "title",
@@ -182,7 +246,7 @@ class IjcaiDiscoveryProvider:
             key=document.metadata.doi or detail_url,
             title=document.metadata.title,
             year=document.metadata.year,
-            venue=_OFFICIAL_VENUE,
+            venue=venue,
             relevance_score=0.0,
             hard_gates_passed=True,
             evidence_fields=tuple(evidence),
@@ -213,7 +277,36 @@ class IjcaiDiscoveryProvider:
             host = urlsplit(index_url).hostname
             if not host or host.casefold() not in self.production_hosts:
                 raise ValueError("IJCAI index URL is outside the configured host boundary")
-            soup = BeautifulSoup(self.client.get(index_url).text, "html.parser")
+            try:
+                index_html = self.client.get(index_url).text
+            except (RateLimited, NetworkTransient):
+                diagnostics.append(
+                    DiscoveryDiagnostic(
+                        provider_id=_PROVIDER_ID,
+                        phase="proceedings-index",
+                        error_code="network_transient",
+                        message="IJCAI proceedings index is temporarily unavailable",
+                        venue=_OFFICIAL_VENUE,
+                        year=year,
+                        url=index_url,
+                        retryable=True,
+                    )
+                )
+                continue
+            except HttpStatusError:
+                diagnostics.append(
+                    DiscoveryDiagnostic(
+                        provider_id=_PROVIDER_ID,
+                        phase="proceedings-index",
+                        error_code="source_unavailable",
+                        message="IJCAI proceedings index is unavailable for the requested year",
+                        venue=_OFFICIAL_VENUE,
+                        year=year,
+                        url=index_url,
+                    )
+                )
+                continue
+            soup = BeautifulSoup(index_html, "html.parser")
             entries = self._index_entries(soup, year)
             if not entries:
                 diagnostics.append(
@@ -229,6 +322,7 @@ class IjcaiDiscoveryProvider:
                 )
                 continue
             covered.append(f"{_PROVIDER_ID}:{year}:Main Track")
+            requested_venue = _requested_venue(request, year)
             seen_urls: set[str] = set()
             for track, title, href in entries:
                 if "main track" not in track.casefold() or not self._matches_topic(title, request):
@@ -247,6 +341,7 @@ class IjcaiDiscoveryProvider:
                         detail_html=detail_html,
                         document=document,
                         index_url=index_url,
+                        venue=requested_venue,
                     )
                 except (RateLimited, NetworkTransient):
                     diagnostics.append(

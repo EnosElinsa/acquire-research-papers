@@ -7,6 +7,7 @@ from acquire_research_papers.mineru import (
     MineruCliRunner,
     MineruExtractionError,
     MineruRateLimited,
+    _with_no_proxy,
 )
 
 
@@ -19,6 +20,25 @@ def identity_resolver(value: str) -> str:
 
 def write_pdf(path: Path) -> None:
     path.write_bytes(VALID_PDF)
+
+
+def test_no_proxy_preserves_existing_entries_and_adds_both_mineru_hosts() -> None:
+    environment = {
+        "NO_PROXY": "localhost,CDN-MINERU.OPENXLAB.ORG.CN,localhost",
+        "no_proxy": (
+            "127.0.0.1,MINERU.OSS-CN-SHANGHAI.ALIYUNCS.COM,127.0.0.1"
+        ),
+    }
+
+    configured = _with_no_proxy(environment)
+
+    for variable, preserved in (("NO_PROXY", "localhost"), ("no_proxy", "127.0.0.1")):
+        entries = [entry.strip() for entry in configured[variable].split(",")]
+        normalized = [entry.casefold() for entry in entries]
+        assert preserved in entries
+        assert normalized.count("cdn-mineru.openxlab.org.cn") == 1
+        assert normalized.count("mineru.oss-cn-shanghai.aliyuncs.com") == 1
+        assert len(normalized) == len(set(normalized))
 
 
 def test_precision_cli_receives_token_only_in_child_environment(tmp_path: Path) -> None:
@@ -181,8 +201,12 @@ def test_signed_upload_url_query_is_redacted_from_failure(tmp_path: Path) -> Non
     with pytest.raises(MineruExtractionError) as captured:
         runner(pdf, tmp_path / "cache")
     message = str(captured.value)
+    assert "synthetic-token" not in message
     assert "synthetic-key" not in message
     assert "synthetic-signature" not in message
+    assert "OSSAccessKeyId" not in message
+    assert "Signature" not in message
+    assert "Expires=123" not in message
     assert "?[REDACTED]" in message
 
 

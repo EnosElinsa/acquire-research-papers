@@ -100,10 +100,40 @@ function ConvertTo-IeeeInstitutionProfile([object]$Institution) {
     throw "IEEE credential host must be one exact DNS hostname without scheme, port, path, wildcard, or trailing dot."
   }
   $values.CredentialHost = $credentialHost.ToLowerInvariant()
-  $consentTitle = (Get-AcquisitionProfileValue -Profile $Institution -Name "ConsentTitle").Trim()
-  $consentButton = (Get-AcquisitionProfileValue -Profile $Institution -Name "ConsentButtonName").Trim()
-  if ([string]::IsNullOrWhiteSpace($consentTitle) -xor [string]::IsNullOrWhiteSpace($consentButton)) {
-    throw "ConsentTitle and ConsentButtonName must both be provided or both be empty."
+  $resourceAccessUrl = (Get-AcquisitionProfileValue -Profile $Institution -Name "ResourceAccessUrl").Trim()
+  if (-not [string]::IsNullOrWhiteSpace($resourceAccessUrl)) {
+    $resourceUri = $null
+    if (-not [Uri]::TryCreate($resourceAccessUrl, [UriKind]::Absolute, [ref]$resourceUri) -or
+        $resourceUri.Scheme -ne "https" -or
+        $resourceUri.DnsSafeHost -ne "ds.carsi.edu.cn" -or
+        -not $resourceUri.IsDefaultPort -or
+        -not [string]::IsNullOrWhiteSpace($resourceUri.UserInfo) -or
+        -not [string]::IsNullOrWhiteSpace($resourceUri.Fragment)) {
+      throw "IEEE resource access URL must use the exact ds.carsi.edu.cn HTTPS host without credentials, a custom port, or a fragment."
+    }
+    $resourceAccessUrl = $resourceUri.AbsoluteUri
+  }
+  $attributeReleaseTitle = (
+    Get-AcquisitionProfileValue -Profile $Institution -Name "AttributeReleaseTitle"
+  ).Trim()
+  $attributeReleaseAccept = (
+    Get-AcquisitionProfileValue -Profile $Institution -Name "AttributeReleaseAcceptControlName"
+  ).Trim()
+  $attributeReleaseReject = (
+    Get-AcquisitionProfileValue -Profile $Institution -Name "AttributeReleaseRejectControlName"
+  ).Trim()
+  $configuredReleaseFields = @(
+    $attributeReleaseTitle,
+    $attributeReleaseAccept,
+    $attributeReleaseReject
+  ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+  if ($configuredReleaseFields.Count -ne 0 -and $configuredReleaseFields.Count -ne 3) {
+    throw "AttributeReleaseTitle, AttributeReleaseAcceptControlName, and AttributeReleaseRejectControlName must all be provided or all be empty."
+  }
+  foreach ($controlName in @($attributeReleaseAccept, $attributeReleaseReject)) {
+    if (-not [string]::IsNullOrWhiteSpace($controlName) -and $controlName -notmatch '^[A-Za-z0-9_-]+$') {
+      throw "IEEE attribute-release control names may contain only letters, digits, underscores, and hyphens."
+    }
   }
   return [pscustomobject]@{
     Organization = $values.Organization
@@ -115,8 +145,10 @@ function ConvertTo-IeeeInstitutionProfile([object]$Institution) {
     UsernameLabel = $values.UsernameLabel
     PasswordLabel = $values.PasswordLabel
     LoginButtonName = $values.LoginButtonName
-    ConsentTitle = $consentTitle
-    ConsentButtonName = $consentButton
+    ResourceAccessUrl = $resourceAccessUrl
+    AttributeReleaseTitle = $attributeReleaseTitle
+    AttributeReleaseAcceptControlName = $attributeReleaseAccept
+    AttributeReleaseRejectControlName = $attributeReleaseReject
   }
 }
 
@@ -147,6 +179,37 @@ function Set-IeeeInstitutionCredential(
   else {
     $payload.Scopes | Add-Member -NotePropertyName ieee_institution -NotePropertyValue $scope
   }
+  Save-AcquisitionSecretPayload -Payload $payload -Path $Path
+}
+
+function Set-IeeeInstitutionRoute(
+  [string]$ResourceAccessUrl,
+  [string]$AttributeReleaseTitle = "",
+  [string]$AttributeReleaseAcceptControlName = "",
+  [string]$AttributeReleaseRejectControlName = "",
+  [string]$Path = (Get-AcquisitionSecretPath)
+) {
+  $payload = Import-AcquisitionSecrets -Path $Path
+  if ($payload.Scopes.PSObject.Properties.Name -notcontains "ieee_institution") {
+    throw "IEEE institution profile is not configured."
+  }
+  $existing = $payload.Scopes.ieee_institution.Profile
+  $institution = [ordered]@{
+    Organization = $existing.Organization
+    CarsiSchoolPlaceholder = $existing.CarsiSchoolPlaceholder
+    CarsiSearchText = $existing.CarsiSearchText
+    CarsiInstitution = $existing.CarsiInstitution
+    CarsiLoginButtonName = $existing.CarsiLoginButtonName
+    CredentialHost = $existing.CredentialHost
+    UsernameLabel = $existing.UsernameLabel
+    PasswordLabel = $existing.PasswordLabel
+    LoginButtonName = $existing.LoginButtonName
+    ResourceAccessUrl = $ResourceAccessUrl
+    AttributeReleaseTitle = $AttributeReleaseTitle
+    AttributeReleaseAcceptControlName = $AttributeReleaseAcceptControlName
+    AttributeReleaseRejectControlName = $AttributeReleaseRejectControlName
+  }
+  $payload.Scopes.ieee_institution.Profile = ConvertTo-IeeeInstitutionProfile -Institution $institution
   Save-AcquisitionSecretPayload -Payload $payload -Path $Path
 }
 

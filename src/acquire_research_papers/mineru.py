@@ -16,6 +16,8 @@ from acquire_research_papers.artifacts import atomic_write_bytes, sha256_file, v
 
 
 MINERU_CDN_HOST = "cdn-mineru.openxlab.org.cn"
+MINERU_UPLOAD_HOST = "mineru.oss-cn-shanghai.aliyuncs.com"
+MINERU_NO_PROXY_HOSTS = (MINERU_CDN_HOST, MINERU_UPLOAD_HOST)
 
 
 class MineruExtractionError(RuntimeError):
@@ -70,9 +72,18 @@ def _is_exact_upload_transport_failure(value: str) -> bool:
 def _with_no_proxy(environment: dict[str, str]) -> dict[str, str]:
     result = dict(environment)
     for name in ("NO_PROXY", "no_proxy"):
-        entries = [part.strip() for part in result.get(name, "").split(",") if part.strip()]
-        if MINERU_CDN_HOST.casefold() not in {entry.casefold() for entry in entries}:
-            entries.append(MINERU_CDN_HOST)
+        candidates = [
+            part.strip() for part in result.get(name, "").split(",") if part.strip()
+        ]
+        candidates.extend(MINERU_NO_PROXY_HOSTS)
+        entries: list[str] = []
+        seen: set[str] = set()
+        for entry in candidates:
+            key = entry.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            entries.append(entry)
         result[name] = ",".join(entries)
     return result
 

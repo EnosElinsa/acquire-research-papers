@@ -166,3 +166,30 @@ def test_recent_window_shortfall_is_named() -> None:
     plan = CorpusPlanner(spec).select(candidates)
 
     assert plan.quota_shortfalls == ("recent:1",)
+
+
+def test_topic_exclusion_uses_word_boundaries() -> None:
+    from acquire_research_papers.discovery.corpus import CorpusDiscoverer
+
+    spec = {
+        "target": {"minimum": 1, "preferred": 1, "maximum": 2},
+        "scope": {
+            "topics": {
+                "include": ["multi-agent"],
+                "exclude": ["demo"],
+            }
+        },
+    }
+    research = replace(
+        candidate("research", 2026, 0.0),
+        title="Multi-Agent Research",
+        abstract="Experiments demonstrate the method.",
+    )
+    demo = replace(
+        candidate("demo", 2026, 0.0),
+        title="Multi-Agent Demo System",
+        abstract="A conference demo paper.",
+    )
+
+    assert CorpusDiscoverer._screen(research, spec).hard_gates_passed
+    assert not CorpusDiscoverer._screen(demo, spec).hard_gates_passed

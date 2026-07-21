@@ -34,8 +34,25 @@ def _normalized_text(value: str) -> str:
 
 
 def _surname(value: str) -> str:
-    normalized = _normalized_text(value)
+    without_aliases = re.sub(r"\([^()]*\)", " ", value)
+    normalized = _normalized_text(without_aliases)
     return normalized.split()[-1] if normalized else ""
+
+
+def _author_key(value: str) -> str:
+    without_aliases = re.sub(r"\([^()]*\)", " ", value)
+    decomposed = unicodedata.normalize("NFKD", without_aliases).casefold()
+    return "".join(
+        character
+        for character in decomposed
+        if character.isalnum() and not unicodedata.combining(character)
+    )
+
+
+def _author_surname_matches(display_name: str, bibtex_surname: str) -> bool:
+    display_key = _author_key(display_name)
+    surname_key = _author_key(bibtex_surname)
+    return bool(display_key and surname_key and display_key.endswith(surname_key))
 
 
 def _person_surname(person: Any) -> str:
@@ -123,10 +140,15 @@ def verify_bibliography(metadata: PaperMetadata, parsed: ParsedBibliography) -> 
     expected_surnames = tuple(_surname(author) for author in metadata.authors)
     actual_surnames = tuple(parsed.author_surnames)
     if metadata.authors_complete:
-        authors_match = actual_surnames == expected_surnames
+        authors_match = len(actual_surnames) == len(metadata.authors) and all(
+            _author_surname_matches(author, surname)
+            for author, surname in zip(metadata.authors, actual_surnames, strict=True)
+        )
     else:
-        expected_surnames = tuple(_normalized_text(author) for author in metadata.authors)
-        authors_match = actual_surnames[: len(expected_surnames)] == expected_surnames
+        authors_match = len(actual_surnames) >= len(metadata.authors) and all(
+            _author_surname_matches(author, surname)
+            for author, surname in zip(metadata.authors, actual_surnames)
+        )
     if expected_surnames and not authors_match:
         raise MetadataMismatch(
             f"author mismatch: expected {expected_surnames}, got {actual_surnames or 'missing'}"

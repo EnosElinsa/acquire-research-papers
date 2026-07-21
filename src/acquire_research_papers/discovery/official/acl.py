@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlsplit
 
@@ -13,7 +14,12 @@ from acquire_research_papers.discovery.contracts import (
     DiscoveryDiagnostic,
     DiscoveryRequest,
 )
-from acquire_research_papers.http import SafeHttpClient
+from acquire_research_papers.http import (
+    HttpStatusError,
+    NetworkTransient,
+    RateLimited,
+    SafeHttpClient,
+)
 
 
 _PROVIDER_ID = "acl-anthology"
@@ -26,7 +32,17 @@ _VENUE_ALIASES = frozenset(
     }
 )
 _LONG_ID = re.compile(r"^(?:19|20)\d{2}\.acl-long\.[1-9]\d*$", re.IGNORECASE)
-_FULL_TYPES = frozenset({"full", "long", "regular", "research article", "research-article"})
+_FULL_TYPES = frozenset(
+    {
+        "full",
+        "long",
+        "regular",
+        "research article",
+        "research-article",
+        "proceedings article",
+        "proceedings-article",
+    }
+)
 
 
 def _split_values(value: str) -> tuple[str, ...]:
@@ -40,6 +56,20 @@ def _split_values(value: str) -> tuple[str, ...]:
 def _clean_fragments(fragments: list[str], *, preserve_boundaries: bool = False) -> str:
     joined = "".join(fragments) if preserve_boundaries else " ".join(fragments)
     return " ".join(joined.split())
+
+
+def _requested_venue(request: DiscoveryRequest, year: int) -> str:
+    if len(request.venues) == 1:
+        return request.venues[0].name
+    tokens = (str(year), str(year)[2:])
+    for venue in request.venues:
+        if any(
+            re.search(rf"(?<!\d){re.escape(token)}(?!\d)", value)
+            for token in tokens
+            for value in venue.all_names
+        ):
+            return venue.name
+    return _OFFICIAL_VENUE
 
 
 class _AclVolumeParser(HTMLParser):
@@ -287,7 +317,35 @@ class AclAnthologyDiscoveryProvider:
             host = urlsplit(event_url).hostname
             if not host or host.casefold() not in self.production_hosts:
                 raise ValueError("ACL event URL is outside the configured host boundary")
-            html = self.client.get(event_url).text
+            try:
+                html = self.client.get(event_url).text
+            except (RateLimited, NetworkTransient):
+                diagnostics.append(
+                    DiscoveryDiagnostic(
+                        provider_id=_PROVIDER_ID,
+                        phase="event-index",
+                        error_code="network_transient",
+                        message="ACL volume index is temporarily unavailable",
+                        venue=_OFFICIAL_VENUE,
+                        year=year,
+                        url=event_url,
+                        retryable=True,
+                    )
+                )
+                continue
+            except HttpStatusError:
+                diagnostics.append(
+                    DiscoveryDiagnostic(
+                        provider_id=_PROVIDER_ID,
+                        phase="event-index",
+                        error_code="source_unavailable",
+                        message="ACL volume index is unavailable for the requested year",
+                        venue=_OFFICIAL_VENUE,
+                        year=year,
+                        url=event_url,
+                    )
+                )
+                continue
             if "data-anthology-id" in html:
                 soup = BeautifulSoup(html, "html.parser")
                 articles = soup.select("article[data-anthology-id]")
@@ -313,9 +371,10 @@ class AclAnthologyDiscoveryProvider:
                 )
                 continue
             covered.append(f"{_PROVIDER_ID}:{year}")
+            requested_venue = _requested_venue(request, year)
             for candidate in year_candidates:
                 if self._matches_topics(candidate, request):
-                    candidates.append(candidate)
+                    candidates.append(replace(candidate, venue=requested_venue))
         return DiscoveryBatch(
             candidates=tuple(candidates),
             diagnostics=tuple(diagnostics),

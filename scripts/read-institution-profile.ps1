@@ -22,6 +22,8 @@ $profile = $payload.Scopes.ieee_institution.Profile
   usernameLabel = $profile.UsernameLabel
   passwordLabel = $profile.PasswordLabel
   loginButtonName = $profile.LoginButtonName
-  consentTitle = $profile.ConsentTitle
-  consentButtonName = $profile.ConsentButtonName
+  resourceAccessUrl = $profile.ResourceAccessUrl
+  attributeReleaseTitle = $profile.AttributeReleaseTitle
+  attributeReleaseAcceptControlName = $profile.AttributeReleaseAcceptControlName
+  attributeReleaseRejectControlName = $profile.AttributeReleaseRejectControlName
 } | ConvertTo-Json -Compress

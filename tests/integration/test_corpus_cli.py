@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 from acquire_research_papers.cli import (
     Application,
+    _production_discovery_enrichers,
     _production_discovery_providers,
     run_cli,
 )
@@ -207,4 +208,12 @@ def test_production_provider_registry_fails_closed_without_optional_keys() -> No
         "crossref",
         "acl-anthology",
         "ijcai-proceedings",
+    ]
+
+
+def test_production_registry_uses_keyless_doi_enrichment() -> None:
+    enrichers = _production_discovery_enrichers(environment={})
+
+    assert [enricher.capabilities().provider_id for enricher in enrichers] == [
+        "semantic-scholar"
     ]

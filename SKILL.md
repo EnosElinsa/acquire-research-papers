@@ -37,6 +37,8 @@ Use output only when the JSON status is `delivered`. A title that is not uniquel
 For subscribed IEEE content, use only the institution profile configured by the current user through `scripts/setup-ieee-institution.ps1`. The repository provides no institution name, identity-provider host, form label, or credential default.
 If the profile is absent or the page contract does not match it, classify the paper as `access_required`, add it to the corpus manual-download list, and continue; never guess an institution or selector.
 
+After CARSI login, always navigate to the profile's exact `ResourceAccessUrl` before retrying IEEE. If the configured attribute-release page appears, require exactly one configured accept control and one configured reject control. Never click reject. Click accept only when the command includes `--accept-ieee-attribute-release`; otherwise keep the headful page visible and report `access_required`. A PDF request is forbidden until the same browser context has returned to the exact `ieeexplore.ieee.org` host.
+
 ### ScienceDirect manual handoff
 
 Configure the DPAPI-protected Elsevier API key once in an interactive terminal:
@@ -100,6 +102,7 @@ uv run --project $skill arp export-md --pdf <paper.pdf> --output <directory>
 
 - Never print, log, summarize, or commit credentials, API keys, tokens, cookies, browser storage, or decrypted values.
 - Release an IEEE credential only when the current hostname exactly equals the credential host in the current user's institution profile; stop on any other host, CAPTCHA, OTP, or incomplete login.
+- Never treat a successful CARSI/IdP login as an IEEE session. Visit the configured resource gateway and require an exact IEEE return before requesting the PDF.
 - Never automate ScienceDirect pages, submit its organization login, attach to the user's normal Chrome, read a Chrome profile, or export Cookie/session data. User authorization does not relax this boundary.
 - Never use Crossref, OpenAlex, Semantic Scholar, a mirror, or generated BibTeX as the final citation artifact.
 - Never bypass publisher/institution access controls, publish partial MinerU output, or overwrite a delivery without identity and hash validation.

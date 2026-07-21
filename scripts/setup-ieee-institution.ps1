@@ -23,8 +23,10 @@ $credentialHost = Read-Host "Exact institutional IdP hostname (no scheme or path
 $usernameLabel = Read-Host "Username field label"
 $passwordLabel = Read-Host "Password field label"
 $loginButtonName = Read-Host "Institution login button name"
-$consentTitle = Read-Host "Optional attribute-release page title"
-$consentButtonName = Read-Host "Optional attribute-release accept button name"
+$resourceAccessUrl = Read-Host "CARSI post-login IEEE resource access URL"
+$attributeReleaseTitle = Read-Host "Optional exact attribute-release page title"
+$attributeReleaseAcceptControlName = Read-Host "Optional exact attribute-release accept control name"
+$attributeReleaseRejectControlName = Read-Host "Optional exact attribute-release reject control name"
 $usernameSecure = Read-Host "Institution username" -AsSecureString
 $password = Read-Host "Institution password" -AsSecureString
 $username = $null
@@ -42,8 +44,10 @@ try {
     UsernameLabel = $usernameLabel
     PasswordLabel = $passwordLabel
     LoginButtonName = $loginButtonName
-    ConsentTitle = $consentTitle
-    ConsentButtonName = $consentButtonName
+    ResourceAccessUrl = $resourceAccessUrl
+    AttributeReleaseTitle = $attributeReleaseTitle
+    AttributeReleaseAcceptControlName = $attributeReleaseAcceptControlName
+    AttributeReleaseRejectControlName = $attributeReleaseRejectControlName
   }
   Set-IeeeInstitutionCredential -Institution $institution -Credential $credential -Path $Path
   [ordered]@{ status = "stored"; scope = "ieee_institution"; path = $Path } |

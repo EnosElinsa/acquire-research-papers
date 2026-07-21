@@ -8,6 +8,7 @@ from acquire_research_papers.discovery.contracts import (
     CandidateMetadata,
     DiscoveryBatch,
     DiscoveryDiagnostic,
+    DiscoveryEnricher,
     DiscoveryProvider,
     DiscoveryRequest,
 )
@@ -82,7 +83,12 @@ def merge_candidates(
         )
     if previous.doi and current.doi and normalize_doi(previous.doi) != normalize_doi(current.doi):
         raise CandidateConflict("conflicting DOI")
-    if previous.year and current.year and previous.year != current.year:
+    same_doi = bool(
+        previous.doi
+        and current.doi
+        and normalize_doi(previous.doi) == normalize_doi(current.doi)
+    )
+    if previous.year and current.year and previous.year != current.year and not same_doi:
         raise CandidateConflict("conflicting year")
 
     field_provenance: dict[str, tuple[str, ...]] = {}
@@ -121,8 +127,14 @@ def merge_candidates(
 
 
 class DiscoveryCoordinator:
-    def __init__(self, providers: Iterable[DiscoveryProvider]) -> None:
+    def __init__(
+        self,
+        providers: Iterable[DiscoveryProvider],
+        *,
+        enrichers: Iterable[DiscoveryEnricher] = (),
+    ) -> None:
         self.providers = tuple(providers)
+        self.enrichers = tuple(enrichers)
 
     def discover(self, request: DiscoveryRequest) -> DiscoveryBatch:
         merged: dict[str, CandidateMetadata] = {}
@@ -164,6 +176,46 @@ class DiscoveryCoordinator:
                         "discover",
                         "provider_error",
                         "provider failed during discovery",
+                    )
+                )
+                continue
+            diagnostics.extend(batch.diagnostics)
+            covered.extend(batch.covered_slices)
+            for candidate in batch.candidates:
+                identity = candidate_identity(candidate)
+                try:
+                    merged[identity] = merge_candidates(merged.get(identity), candidate)
+                except CandidateConflict:
+                    diagnostics.append(
+                        DiscoveryDiagnostic(
+                            capability.provider_id,
+                            "merge",
+                            "identity_conflict",
+                            "candidate identity fields conflict",
+                        )
+                    )
+        for enricher in self.enrichers:
+            capability = enricher.capabilities()
+            try:
+                batch = enricher.enrich(tuple(merged.values()), request)
+            except (RateLimited, NetworkTransient):
+                diagnostics.append(
+                    DiscoveryDiagnostic(
+                        capability.provider_id,
+                        "enrich",
+                        "network_transient",
+                        "metadata enrichment is temporarily unavailable",
+                        retryable=True,
+                    )
+                )
+                continue
+            except (HttpStatusError, RuntimeError, ValueError):
+                diagnostics.append(
+                    DiscoveryDiagnostic(
+                        capability.provider_id,
+                        "enrich",
+                        "provider_error",
+                        "metadata enrichment failed",
                     )
                 )
                 continue

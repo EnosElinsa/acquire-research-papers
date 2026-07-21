@@ -102,6 +102,8 @@ Configure your own IEEE institution profile and credential from an interactive P
 & "$skill\scripts\setup-ieee-institution.ps1"
 ```
 
+The profile includes the exact post-login CARSI IEEE resource URL. Attribute release is never accepted by default; pass `--accept-ieee-attribute-release` to `fetch` or `acquire corpus` only when you explicitly authorize the configured accept control. The reject control is never clicked, and PDF retrieval starts only after the persistent browser context returns to `ieeexplore.ieee.org`.
+
 Configure MinerU independently only when Markdown extraction is needed:
 
 ```powershell
@@ -114,7 +116,7 @@ Configure the Elsevier API key used only for official metadata resolution:
 & "$skill\scripts\setup-elsevier-api-key.ps1"
 ```
 
-The setup asks for the institution's exact CARSI option, exact identity-provider hostname, and accessible form labels; the repository supplies no school-specific defaults. Credential prompts do not echo values, and DPAPI ties the encrypted payload to the current Windows user. The manual ScienceDirect workflow stores no institution password. An Elsevier Article Retrieval entitlement is not assumed; a 403 falls back to the user-driven browser download rather than website automation.
+The setup asks for the institution's exact CARSI option, exact identity-provider hostname, accessible form labels, resource gateway, and optional exact attribute-release controls; the repository supplies no school-specific defaults. Credential prompts do not echo values, and DPAPI ties the encrypted payload to the current Windows user. The manual ScienceDirect workflow stores no institution password. An Elsevier Article Retrieval entitlement is not assumed; a 403 falls back to the user-driven browser download rather than website automation.
 
 See [`references/credentials-and-cache.md`](references/credentials-and-cache.md) and [`SECURITY.md`](SECURITY.md).
 

@@ -5,9 +5,11 @@ import json
 from pathlib import Path
 
 from acquire_research_papers.acquisition.corpus import CorpusAcquisitionWorkflow
+from acquire_research_papers.acquisition.base import AcquiredPair, SourceAdapter, SourceDocument
 from acquire_research_papers.artifacts import sha256_file
 from acquire_research_papers.cli import Application, run_cli
 from acquire_research_papers.discovery.contracts import CandidateMetadata, VenueScope
+from acquire_research_papers.models import PaperMetadata
 from acquire_research_papers.selection import SelectionStore, build_selection_records
 
 
@@ -80,6 +82,56 @@ def delivered_outcome(record, output: Path) -> dict[str, str]:
     }
 
 
+def test_selected_acquisition_prefers_the_frozen_official_url(tmp_path: Path) -> None:
+    selection = make_selection(tmp_path / "selection")
+
+    class RecordingAdapter(SourceAdapter):
+        name = "recording"
+        production_hosts = frozenset({"publisher.example"})
+
+        def __init__(self) -> None:
+            self.references: list[str] = []
+
+        def resolve(self, value: str) -> SourceDocument:
+            self.references.append(value)
+            return SourceDocument(
+                metadata=PaperMetadata(
+                    title="Blocked Paper",
+                    authors=("Ada Lovelace",),
+                    year=2026,
+                    venue="Invented Venue",
+                    doi="10.1000/blocked",
+                    publisher="Invented Society",
+                    landing_url=value,
+                ),
+                pdf_url="https://publisher.example/blocked.pdf",
+                bibtex_url="https://publisher.example/blocked.bib",
+                allowed_hosts=frozenset({"publisher.example"}),
+            )
+
+        def acquire(self, document: SourceDocument) -> AcquiredPair:
+            return AcquiredPair(
+                document=document,
+                pdf_bytes=b"%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF\n",
+                bibtex_text=(
+                    "@article{k,title={Blocked Paper},author={Lovelace, Ada},"
+                    "year={2026},journal={Invented Venue},doi={10.1000/blocked}}"
+                ),
+            )
+
+    adapter = RecordingAdapter()
+    application = Application.for_test(
+        app_root=tmp_path / "app",
+        repository_root=tmp_path / "repository",
+        adapter=adapter,
+    )
+
+    result = application.acquire_selected(selection.records[0], tmp_path / "delivery")
+
+    assert result["status"] == "delivered"
+    assert adapter.references == [selection.records[0].official_url]
+
+
 def test_acquire_corpus_separates_delivered_and_manual_states(
     tmp_path: Path,
     capsys,
@@ -125,6 +177,7 @@ def test_acquire_corpus_separates_delivered_and_manual_states(
     assert payload["delivered"] == 1
     assert payload["manual_required"] == 1
     assert payload["retryable"] == 0
+    assert payload["paper_manifest"] == str(output / "paper-manifest.csv")
     ledger = [
         json.loads(line)
         for line in Path(payload["acquisition_manifest"])
@@ -140,6 +193,27 @@ def test_acquire_corpus_separates_delivered_and_manual_states(
         encoding="utf-8-sig", newline=""
     ) as handle:
         assert list(csv.DictReader(handle)) == []
+    with (output / "paper-manifest.csv").open(
+        encoding="utf-8-sig", newline=""
+    ) as handle:
+        paper_manifest = list(csv.DictReader(handle))
+    assert paper_manifest[0] == {
+        "folder": "Invented Society IV",
+        "number": "1",
+        "title": "Blocked Paper",
+        "year": "2026",
+        "venue": "Invented Venue",
+        "doi": "10.1000/blocked",
+        "official_landing_url": "https://publisher.example/blocked",
+        "official_pdf_url": "",
+        "official_bibtex_url": "",
+        "keywords": "",
+        "state": "manual_required",
+        "pdf": "Invented Society IV/1.pdf",
+        "bibtex": "Invented Society IV/1.bib",
+    }
+    assert paper_manifest[1]["state"] == "delivered"
+    assert paper_manifest[1]["pdf"] == "Invented Society IV/2.pdf"
     assert selection.selected_path.read_bytes() == selected_before
 
 

@@ -11,8 +11,10 @@ param(
   [Parameter(Mandatory)][string]$UsernameLabel,
   [Parameter(Mandatory)][string]$PasswordLabel,
   [Parameter(Mandatory)][string]$LoginButtonName,
-  [string]$ConsentTitle = "",
-  [string]$ConsentButtonName = "",
+  [Parameter(Mandatory)][string]$ResourceAccessUrl,
+  [string]$AttributeReleaseTitle = "",
+  [string]$AttributeReleaseAcceptControlName = "",
+  [string]$AttributeReleaseRejectControlName = "",
   [switch]$Force
 )
 
@@ -82,8 +84,10 @@ $institution = [ordered]@{
   UsernameLabel = $UsernameLabel
   PasswordLabel = $PasswordLabel
   LoginButtonName = $LoginButtonName
-  ConsentTitle = $ConsentTitle
-  ConsentButtonName = $ConsentButtonName
+  ResourceAccessUrl = $ResourceAccessUrl
+  AttributeReleaseTitle = $AttributeReleaseTitle
+  AttributeReleaseAcceptControlName = $AttributeReleaseAcceptControlName
+  AttributeReleaseRejectControlName = $AttributeReleaseRejectControlName
 }
 Set-IeeeInstitutionCredential `
   -Institution $institution `

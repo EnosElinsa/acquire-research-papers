@@ -163,3 +163,12 @@ class DiscoveryProvider(Protocol):
 
     def discover(self, request: DiscoveryRequest) -> DiscoveryBatch: ...
 
+
+class DiscoveryEnricher(Protocol):
+    def capabilities(self) -> DiscoveryCapabilities: ...
+
+    def enrich(
+        self,
+        candidates: tuple[CandidateMetadata, ...],
+        request: DiscoveryRequest,
+    ) -> DiscoveryBatch: ...

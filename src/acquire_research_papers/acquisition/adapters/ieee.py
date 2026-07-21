@@ -60,6 +60,7 @@ class IeeeBridge:
         node_path: str | None = None,
         installer: Path | None = None,
         timeout_seconds: int = 180,
+        accept_attribute_release: bool = False,
     ) -> None:
         self.script = script.resolve()
         self.profile_root = profile_root.resolve()
@@ -69,9 +70,10 @@ class IeeeBridge:
         self.node_path = node_path or shutil.which("node") or "node"
         self.installer = (installer or self.script.parent / "install-playwright.ps1").resolve()
         self.timeout_seconds = timeout_seconds
+        self.accept_attribute_release = accept_attribute_release
 
     def command(self, reference: str, *, run_dir: Path) -> list[str]:
-        return [
+        command = [
             self.node_path,
             str(self.script),
             "--reference",
@@ -87,6 +89,9 @@ class IeeeBridge:
             "--timeout-ms",
             str(self.timeout_seconds * 1000),
         ]
+        if self.accept_attribute_release:
+            command.extend(["--accept-attribute-release", "true"])
+        return command
 
     def _dependency_ready(self) -> bool:
         package_path = self.dependency_root / "node_modules" / "playwright-core" / "package.json"

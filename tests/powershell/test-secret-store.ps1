@@ -21,6 +21,7 @@ $storePath = Join-Path $root "scripts\secret-store.ps1"
 $bridgePath = Join-Path $root "scripts\read-browser-credential.ps1"
 $profileBridgePath = Join-Path $root "scripts\read-institution-profile.ps1"
 $ieeeSetupPath = Join-Path $root "scripts\setup-ieee-institution.ps1"
+$ieeeRouteUpdatePath = Join-Path $root "scripts\update-ieee-institution-route.ps1"
 $mineruSetupPath = Join-Path $root "scripts\setup-mineru-token.ps1"
 $elsevierBridgePath = Join-Path $root "scripts\read-elsevier-api-key.ps1"
 $elsevierSetupPath = Join-Path $root "scripts\setup-elsevier-api-key.ps1"
@@ -31,6 +32,7 @@ foreach ($required in @(
   $bridgePath,
   $profileBridgePath,
   $ieeeSetupPath,
+  $ieeeRouteUpdatePath,
   $mineruSetupPath,
   $elsevierBridgePath,
   $elsevierSetupPath,
@@ -63,8 +65,10 @@ try {
     UsernameLabel = "Account"
     PasswordLabel = "Passcode"
     LoginButtonName = "Sign in"
-    ConsentTitle = "Release information"
-    ConsentButtonName = "Accept"
+    ResourceAccessUrl = "https://ds.carsi.edu.cn/resource/gotoResource.php?id=resource:example-ieee"
+    AttributeReleaseTitle = "Release information"
+    AttributeReleaseAcceptControlName = "_eventId_proceed"
+    AttributeReleaseRejectControlName = "_eventId_AttributeReleaseRejected"
   }
 
   $elsevierOnlyPath = Join-Path $tempRoot "elsevier-only\secrets.clixml"
@@ -94,6 +98,7 @@ try {
   Assert-Equal $payload.SchemaVersion 1 "schema version"
   Assert-Equal $payload.Scopes.ieee_institution.Profile.Organization "Example University" "IEEE organization"
   Assert-Equal $payload.Scopes.ieee_institution.Profile.CredentialHost "login.example.edu" "IEEE credential host"
+  Assert-Equal $payload.Scopes.ieee_institution.Profile.ResourceAccessUrl $institution.ResourceAccessUrl "IEEE resource access URL"
   Assert-Equal $payload.Scopes.ieee_institution.Credential.UserName "synthetic-user" "username"
   Assert-Equal (ConvertFrom-AcquisitionSecureString $payload.Scopes.mineru.Token) "synthetic-token" "token"
 
@@ -118,6 +123,9 @@ try {
   Assert-Equal $profileJson.organization "Example University" "profile organization"
   Assert-Equal $profileJson.credentialHost "login.example.edu" "profile credential host"
   Assert-Equal $profileJson.usernameLabel "Account" "profile username label"
+  Assert-Equal $profileJson.resourceAccessUrl $institution.ResourceAccessUrl "profile resource access URL"
+  Assert-Equal $profileJson.attributeReleaseAcceptControlName "_eventId_proceed" "profile exact accept control"
+  Assert-Equal $profileJson.attributeReleaseRejectControlName "_eventId_AttributeReleaseRejected" "profile exact reject control"
   Assert-True ($profileJson.PSObject.Properties.Name -notcontains "username") "profile bridge must not release username"
   Assert-True ($profileJson.PSObject.Properties.Name -notcontains "password") "profile bridge must not release password"
   foreach ($rejectedHost in @(
@@ -153,8 +161,10 @@ try {
     -UsernameLabel $institution.UsernameLabel `
     -PasswordLabel $institution.PasswordLabel `
     -LoginButtonName $institution.LoginButtonName `
-    -ConsentTitle $institution.ConsentTitle `
-    -ConsentButtonName $institution.ConsentButtonName `
+    -ResourceAccessUrl $institution.ResourceAccessUrl `
+    -AttributeReleaseTitle $institution.AttributeReleaseTitle `
+    -AttributeReleaseAcceptControlName $institution.AttributeReleaseAcceptControlName `
+    -AttributeReleaseRejectControlName $institution.AttributeReleaseRejectControlName `
     -Force | ConvertFrom-Json
   Assert-Equal $migration.status "migrated" "migration status"
   $migrated = Import-AcquisitionSecrets -Path $migratedPath
@@ -184,8 +194,10 @@ try {
     -UsernameLabel $institution.UsernameLabel `
     -PasswordLabel $institution.PasswordLabel `
     -LoginButtonName $institution.LoginButtonName `
-    -ConsentTitle $institution.ConsentTitle `
-    -ConsentButtonName $institution.ConsentButtonName `
+    -ResourceAccessUrl $institution.ResourceAccessUrl `
+    -AttributeReleaseTitle $institution.AttributeReleaseTitle `
+    -AttributeReleaseAcceptControlName $institution.AttributeReleaseAcceptControlName `
+    -AttributeReleaseRejectControlName $institution.AttributeReleaseRejectControlName `
     -Force | Out-Null
   $migratedScoped = Import-AcquisitionSecrets -Path $migratedScopedPath
   Assert-Equal $migratedScoped.Scopes.ieee_institution.Profile.Organization "Scoped Example University" "migrated scoped organization"
@@ -213,8 +225,10 @@ try {
     "Username field label" = "Account"
     "Password field label" = "Passcode"
     "Institution login button name" = "Sign in"
-    "Optional attribute-release page title" = ""
-    "Optional attribute-release accept button name" = ""
+    "CARSI post-login IEEE resource access URL" = "https://ds.carsi.edu.cn/resource/gotoResource.php?id=resource:setup-ieee"
+    "Optional exact attribute-release page title" = ""
+    "Optional exact attribute-release accept control name" = ""
+    "Optional exact attribute-release reject control name" = ""
   }
   function global:Read-Host {
     param([string]$Prompt, [switch]$AsSecureString)
@@ -234,6 +248,18 @@ try {
   $setupPayload = Import-AcquisitionSecrets -Path $setupPath
   Assert-Equal $setupPayload.Scopes.ieee_institution.Profile.Organization "Setup Example University" "interactive IEEE setup"
   Assert-Equal $setupPayload.Scopes.ieee_institution.Profile.CredentialHost "setup.example.edu" "interactive host setup"
+  Assert-Equal $setupPayload.Scopes.ieee_institution.Profile.ResourceAccessUrl "https://ds.carsi.edu.cn/resource/gotoResource.php?id=resource:setup-ieee" "interactive resource route setup"
+
+  $routeUpdate = & $ieeeRouteUpdatePath `
+    -Path $setupPath `
+    -ResourceAccessUrl "https://ds.carsi.edu.cn/resource/gotoResource.php?id=resource:updated-ieee" `
+    -AttributeReleaseTitle "Information release" `
+    -AttributeReleaseAcceptControlName "_eventId_proceed" `
+    -AttributeReleaseRejectControlName "_eventId_reject" | ConvertFrom-Json
+  Assert-Equal $routeUpdate.status "updated" "route update status"
+  $updatedSetupPayload = Import-AcquisitionSecrets -Path $setupPath
+  Assert-Equal $updatedSetupPayload.Scopes.ieee_institution.Profile.ResourceAccessUrl "https://ds.carsi.edu.cn/resource/gotoResource.php?id=resource:updated-ieee" "updated resource route"
+  Assert-Equal $updatedSetupPayload.Scopes.ieee_institution.Credential.UserName "setup-user" "route update preserves DPAPI credential"
   & $mineruSetupPath -Path $setupPath -Force | Out-Null
   Assert-Equal (ConvertFrom-AcquisitionSecureString (Import-AcquisitionSecrets -Path $setupPath).Scopes.mineru.Token) "setup-token" "interactive MinerU setup"
   Remove-Item Function:\global:Read-Host -ErrorAction SilentlyContinue
