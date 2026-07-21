@@ -81,7 +81,8 @@ uv run --project $skill arp discover corpus `
   --spec .\corpus.yaml --output C:\Research\corpus-discovery
 uv run --project $skill arp acquire corpus `
   --selection C:\Research\corpus-discovery\selection-manifest.json `
-  --output C:\Research\corpus
+  --output C:\Research\corpus `
+  --defer-host publisher.example
 uv run --project $skill arp discover research --brief .\brief.yaml --output C:\Research\review
 uv run --project $skill arp export-md --pdf .\paper.pdf --output C:\Research\markdown
 ```
@@ -89,6 +90,8 @@ uv run --project $skill arp export-md --pdf .\paper.pdf --output C:\Research\mar
 Discovery writes `candidates.jsonl`, `selected-papers.jsonl`, `pending-review.csv`, `discovery-errors.jsonl`, and a hash-protected `selection-manifest.json`; it performs no publisher download. Acquisition consumes only that frozen selection and never adds or removes papers. It writes verified pairs, `acquisition-manifest.jsonl`, `manual-download.csv`, `retryable-downloads.csv`, and `delivery-manifest.json`.
 
 Acquisition does not stop when one selected paper needs user access. It finishes the remaining selections and writes the inaccessible item to `manual-download.csv` with its frozen selection ID, DOI, official URL, publisher host, reason, and reserved target paths. Complete it with `manual-fetch --selection <manifest> --key <selection-id>` so the local files are verified against the frozen identity before delivery.
+
+Repeat `--defer-host <exact-hostname>` to prevent selected publisher hosts from being contacted in a run. Existing hash-verified deliveries are reused; other matching records remain in the frozen selection and are written to the manual queue.
 
 Delivery directories must remain outside this repository. Runtime state is stored under `%LOCALAPPDATA%\Codex`.
 

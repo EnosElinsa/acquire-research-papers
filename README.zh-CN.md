@@ -83,7 +83,8 @@ uv run --project $skill arp discover corpus `
   --spec .\corpus.yaml --output C:\Research\corpus-discovery
 uv run --project $skill arp acquire corpus `
   --selection C:\Research\corpus-discovery\selection-manifest.json `
-  --output C:\Research\corpus
+  --output C:\Research\corpus `
+  --defer-host publisher.example
 uv run --project $skill arp discover research --brief .\brief.yaml --output C:\Research\review
 uv run --project $skill arp export-md --pdf .\paper.pdf --output C:\Research\markdown
 ```
@@ -91,6 +92,8 @@ uv run --project $skill arp export-md --pdf .\paper.pdf --output C:\Research\mar
 发现阶段只写入 `candidates.jsonl`、`selected-papers.jsonl`、`pending-review.csv`、`discovery-errors.jsonl` 和带哈希保护的 `selection-manifest.json`，不会下载出版社文件。下载阶段只消费这份冻结清单，不会增删论文；它输出核验后的 PDF/BibTeX、`acquisition-manifest.jsonl`、`manual-download.csv`、`retryable-downloads.csv` 和 `delivery-manifest.json`。
 
 单篇论文需要用户访问时，整批下载不会中断。工具会继续处理其余选择，并在 `manual-download.csv` 中记录 selection ID、DOI、官方链接、出版社主机、原因和预留目标路径。之后使用 `manual-fetch --selection <manifest> --key <selection-id>`，系统会依据冻结身份核验本地 PDF/BibTeX，再填入预留位置。
+
+需要在某次运行中禁止访问指定发布方时，可以重复传入 `--defer-host <准确主机名>`。已有且通过哈希核验的交付仍会复用；其他匹配记录不会从冻结清单中删除，而会写入人工下载队列。
 
 交付目录必须位于本仓库之外。运行状态统一保存在 `%LOCALAPPDATA%\Codex`。
 

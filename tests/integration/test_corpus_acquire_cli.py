@@ -13,7 +13,11 @@ from acquire_research_papers.models import PaperMetadata
 from acquire_research_papers.selection import SelectionStore, build_selection_records
 
 
-def make_selection(root: Path) -> SelectionStore:
+def make_selection(
+    root: Path,
+    *,
+    publisher_host: str = "publisher.example",
+) -> SelectionStore:
     candidates = (
         CandidateMetadata(
             "blocked",
@@ -24,7 +28,7 @@ def make_selection(root: Path) -> SelectionStore:
             True,
             ("title", "abstract"),
             doi="10.1000/blocked",
-            official_url="https://publisher.example/blocked",
+            official_url=f"https://{publisher_host}/blocked",
             abstract="Relevant abstract",
         ),
         CandidateMetadata(
@@ -36,7 +40,7 @@ def make_selection(root: Path) -> SelectionStore:
             True,
             ("title", "abstract"),
             doi="10.1000/available",
-            official_url="https://publisher.example/available",
+            official_url=f"https://{publisher_host}/available",
             abstract="Relevant abstract",
         ),
     )
@@ -215,6 +219,129 @@ def test_acquire_corpus_separates_delivered_and_manual_states(
     assert paper_manifest[1]["state"] == "delivered"
     assert paper_manifest[1]["pdf"] == "Invented Society IV/2.pdf"
     assert selection.selected_path.read_bytes() == selected_before
+
+
+def test_acquire_corpus_defers_exact_hosts_without_calling_acquirer(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    selection = make_selection(tmp_path / "selection")
+    calls: list[str] = []
+
+    def acquirer(record, output: Path):
+        calls.append(record.key)
+        return delivered_outcome(record, output)
+
+    application = Application.for_test(
+        app_root=tmp_path / "app",
+        repository_root=tmp_path / "repository",
+        corpus_acquisition=CorpusAcquisitionWorkflow(acquirer=acquirer),
+    )
+    output = tmp_path / "delivery"
+
+    exit_code = run_cli(
+        [
+            "acquire",
+            "corpus",
+            "--selection",
+            str(selection.manifest_path),
+            "--output",
+            str(output),
+            "--defer-host",
+            "PUBLISHER.EXAMPLE",
+        ],
+        application=application,
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert calls == []
+    assert payload["manual_required"] == 2
+    assert payload["delivered"] == 0
+    ledger = [
+        json.loads(line)
+        for line in Path(payload["acquisition_manifest"])
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert {row["error_code"] for row in ledger} == {"access_required"}
+    assert {row["message"] for row in ledger} == {
+        "publisher host deferred for this run: publisher.example"
+    }
+
+
+def test_acquire_corpus_rejects_non_hostname_defer_values(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    selection = make_selection(tmp_path / "selection")
+    application = Application.for_test(
+        app_root=tmp_path / "app",
+        repository_root=tmp_path / "repository",
+        corpus_acquisition=CorpusAcquisitionWorkflow(acquirer=lambda *_: {}),
+    )
+
+    exit_code = run_cli(
+        [
+            "acquire",
+            "corpus",
+            "--selection",
+            str(selection.manifest_path),
+            "--output",
+            str(tmp_path / "delivery"),
+            "--defer-host",
+            "https://publisher.example/path?Signature=synthetic-secret",
+        ],
+        application=application,
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 64
+    assert payload["error_code"] == "invalid_input"
+    assert "exact hostname" in payload["message"]
+    assert "Signature" not in payload["message"]
+    assert "synthetic-secret" not in payload["message"]
+
+
+def test_defer_host_does_not_match_a_subdomain(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    selection = make_selection(
+        tmp_path / "selection",
+        publisher_host="papers.example.com",
+    )
+    calls: list[str] = []
+
+    def acquirer(record, output: Path):
+        calls.append(record.key)
+        return delivered_outcome(record, output)
+
+    application = Application.for_test(
+        app_root=tmp_path / "app",
+        repository_root=tmp_path / "repository",
+        corpus_acquisition=CorpusAcquisitionWorkflow(acquirer=acquirer),
+    )
+
+    exit_code = run_cli(
+        [
+            "acquire",
+            "corpus",
+            "--selection",
+            str(selection.manifest_path),
+            "--output",
+            str(tmp_path / "delivery"),
+            "--defer-host",
+            "example.com",
+        ],
+        application=application,
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert calls == ["blocked", "available"]
+    assert payload["delivered"] == 2
+    assert payload["manual_required"] == 0
 
 
 def test_acquire_corpus_reuses_only_hash_verified_delivery(

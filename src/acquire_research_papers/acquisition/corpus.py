@@ -3,7 +3,8 @@ from __future__ import annotations
 import csv
 import io
 import json
-from collections.abc import Callable, Mapping
+import re
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -17,6 +18,7 @@ _MANUAL_CODES = frozenset(
     {"access_required", "manual_publisher_download", "unsupported_adapter"}
 )
 _RETRYABLE_CODES = frozenset({"network_transient", "rate_limited"})
+_HOST_LABEL = re.compile(r"(?!-)[a-z0-9-]{1,63}(?<!-)\Z", re.IGNORECASE)
 
 
 def normalized_state(outcome: Mapping[str, Any]) -> str:
@@ -47,6 +49,34 @@ def _publisher_host(record: SelectionRecord) -> str:
         return urlsplit(_official_url(record)).hostname or record.publisher
     except ValueError:
         return record.publisher
+
+
+def _normalize_exact_hosts(values: Iterable[str]) -> frozenset[str]:
+    normalized: set[str] = set()
+    for value in values:
+        candidate = str(value).strip().rstrip(".")
+        try:
+            ascii_host = candidate.encode("idna").decode("ascii").casefold()
+        except UnicodeError as exc:
+            raise ValueError("deferred publisher must be an exact hostname") from exc
+        labels = ascii_host.split(".")
+        if (
+            not ascii_host
+            or len(ascii_host) > 253
+            or len(labels) < 2
+            or any(not _HOST_LABEL.fullmatch(label) for label in labels)
+        ):
+            raise ValueError("deferred publisher must be an exact hostname")
+        normalized.add(ascii_host)
+    return frozenset(normalized)
+
+
+def _normalized_record_host(record: SelectionRecord) -> str:
+    host = _publisher_host(record).strip().rstrip(".")
+    try:
+        return host.encode("idna").decode("ascii").casefold()
+    except UnicodeError:
+        return host.casefold()
 
 
 def _expected_paths(record: SelectionRecord, root: Path) -> dict[str, Path]:
@@ -237,7 +267,10 @@ class CorpusAcquisitionWorkflow:
         self,
         selection_manifest: Path,
         output: Path,
+        *,
+        deferred_hosts: Iterable[str] = (),
     ) -> AcquisitionRunResult:
+        deferred = _normalize_exact_hosts(deferred_hosts)
         selection = SelectionStore.load(selection_manifest)
         selected_snapshot = selection.selected_path.read_bytes()
         destination = output.resolve()
@@ -251,13 +284,20 @@ class CorpusAcquisitionWorkflow:
             if _verified_previous(record, prior, destination):
                 rows.append(dict(prior))
                 continue
-            try:
-                outcome = self.acquirer(record, destination)
-            except Exception:
+            publisher_host = _normalized_record_host(record)
+            if publisher_host in deferred:
                 outcome = {
-                    "error_code": "contract_error",
-                    "message": "acquirer failed for the selected paper",
+                    "error_code": "access_required",
+                    "message": f"publisher host deferred for this run: {publisher_host}",
                 }
+            else:
+                try:
+                    outcome = self.acquirer(record, destination)
+                except Exception:
+                    outcome = {
+                        "error_code": "contract_error",
+                        "message": "acquirer failed for the selected paper",
+                    }
             if normalized_state(outcome) == "delivered":
                 row = _delivered_row(record, outcome, destination)
                 if row is None:

@@ -48,6 +48,7 @@ def test_skill_documents_two_stage_corpus_contract() -> None:
     assert "arp acquire corpus" in text
     assert "selected-papers.jsonl" in text
     assert "manual-download.csv" in text
+    assert "--defer-host" in text
     assert "Auto-acquire only high-confidence matches" not in text
 
 

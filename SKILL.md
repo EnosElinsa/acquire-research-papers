@@ -61,13 +61,16 @@ The command opens only the canonical article page. The user completes organizati
 ```powershell
 uv run --project $skill arp discover corpus --spec <job.yaml> --output <discovery-run>
 uv run --project $skill arp acquire corpus `
-  --selection <discovery-run\selection-manifest.json> --output <delivery-root>
+  --selection <discovery-run\selection-manifest.json> --output <delivery-root> `
+  --defer-host <publisher.example>
 uv run --project $skill arp discover research --brief <brief.yaml> --output <directory>
 ```
 
 Discovery writes `candidates.jsonl`, `selected-papers.jsonl`, `pending-review.csv`, `discovery-errors.jsonl`, and `selection-manifest.json`. It writes no PDF, BibTeX, acquisition ledger, or manual-download queue. The selection manifest hashes both the normalized specification and selected list; edit neither file before acquisition.
 
 Acquisition verifies that frozen hash, processes only `selected-papers.jsonl`, and never changes the selection. It writes verified pairs, `acquisition-manifest.jsonl`, `manual-download.csv`, `retryable-downloads.csv`, and `delivery-manifest.json`. A known access or paper-level failure does not stop unrelated selections.
+
+Use repeatable `--defer-host <exact-hostname>` options when a publisher must not be contacted during the current run. Matching is exact and case-insensitive: already hash-verified deliveries remain delivered, while undelivered records for those hosts enter `manual-download.csv` as `access_required`. Never remove deferred records from the frozen selection.
 
 For a queued manual item, use the selection ID rather than copying editable CSV metadata:
 

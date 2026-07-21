@@ -54,7 +54,8 @@ Acquire the frozen selection explicitly:
 
 ```powershell
 uv run --project $skill arp acquire corpus `
-  --selection <discovery-run\selection-manifest.json> --output <delivery-root>
+  --selection <discovery-run\selection-manifest.json> --output <delivery-root> `
+  --defer-host <publisher.example>
 ```
 
 The acquisition phase verifies the selected-list hash before any publisher request. It routes every frozen record through the same publisher adapters used by `fetch`; it cannot discover extra papers or change semantic decisions. Delivery is complete only when both files pass:
@@ -63,6 +64,8 @@ The acquisition phase verifies the selected-list hash before any publisher reque
 - official raw BibTeX parse and metadata comparison.
 
 Reserved numbering and relative paths are assigned when selection is frozen, so automatic and manual acquisition target the same slots. Reuse the global registry and artifact hashes for interrupted-run recovery. A rerun skips a delivered item only when all three recorded paths and PDF, BibTeX, and provenance hashes still match.
+
+`--defer-host` is a repeatable, run-scoped control for temporarily disabling publisher contact without changing the selection. It accepts exact hostnames only and compares them case-insensitively. A matching item with no verified prior delivery becomes `manual_required` with `access_required`; a verified prior delivery is still reused. This is publisher-neutral and must not be implemented as a venue-specific selection filter.
 
 Acquisition writes one durable state per selected paper to `acquisition-manifest.jsonl`:
 

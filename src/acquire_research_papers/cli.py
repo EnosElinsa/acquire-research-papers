@@ -670,6 +670,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="explicitly authorize the configured institutional attribute-release accept control",
     )
+    acquire_corpus.add_argument(
+        "--defer-host",
+        action="append",
+        default=[],
+        help="defer an exact publisher hostname to the manual-download queue (repeatable)",
+    )
     return parser
 
 
@@ -818,7 +824,11 @@ def run_cli(
                 raise AmbiguousInput("corpus acquisition is not configured")
             destination = ensure_outside_repository(args.output, app.repository_root)
             try:
-                result = app.corpus_acquisition.run(args.selection, destination)
+                result = app.corpus_acquisition.run(
+                    args.selection,
+                    destination,
+                    deferred_hosts=args.defer_host,
+                )
             except ValueError as exc:
                 raise AmbiguousInput(str(exc)) from exc
             _emit(
