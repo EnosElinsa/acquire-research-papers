@@ -42,6 +42,15 @@ def test_skill_routes_all_three_modes_and_explicit_markdown_policy() -> None:
     assert len(text.splitlines()) < 500
 
 
+def test_skill_documents_two_stage_corpus_contract() -> None:
+    text = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+    assert "arp discover corpus" in text
+    assert "arp acquire corpus" in text
+    assert "selected-papers.jsonl" in text
+    assert "manual-download.csv" in text
+    assert "Auto-acquire only high-confidence matches" not in text
+
+
 def test_progressive_disclosure_references_exist() -> None:
     required = {
         "corpus-mode.md",

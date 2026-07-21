@@ -16,7 +16,8 @@
 | --- | --- | --- |
 | `fetch` | DOI、出版社链接或明确论文清单 | 已核验的 PDF 与原始 BibTeX |
 | `manual-fetch` | 需要用户在授权浏览器中完成下载 | 自动接管本地文件、核验并交付 |
-| `discover corpus` | 指定期刊/会议、主题、年份和数量 | 高置信度论文及待确认清单 |
+| `discover corpus` | 指定期刊/会议、主题、年份和数量 | 候选账本与冻结的高置信度选择清单 |
+| `acquire corpus` | 已冻结的论文选择清单 | 已核验论文对及分开的人工、重试队列 |
 | `discover research` | gap、相似工作、claim 引用或 Related Work | 证据表、对比、gap 与审核记录 |
 
 PDF 转 Markdown 是可选步骤。研究模式可以临时调用 MinerU 分析候选全文，但只在用户明确要求时才导出 Markdown。
@@ -75,15 +76,21 @@ uv run --project $skill arp manual-fetch --input <DOI> `
   --pdf .\paper.pdf --bibtex .\citation.bib --output C:\Research\papers
 ```
 
-论文集、文献调研和可选 Markdown 导出：
+论文集发现、论文集下载、文献调研和可选 Markdown 导出：
 
 ```powershell
-uv run --project $skill arp discover corpus --spec .\corpus.yaml --output C:\Research\corpus
+uv run --project $skill arp discover corpus `
+  --spec .\corpus.yaml --output C:\Research\corpus-discovery
+uv run --project $skill arp acquire corpus `
+  --selection C:\Research\corpus-discovery\selection-manifest.json `
+  --output C:\Research\corpus
 uv run --project $skill arp discover research --brief .\brief.yaml --output C:\Research\review
 uv run --project $skill arp export-md --pdf .\paper.pdf --output C:\Research\markdown
 ```
 
-论文集任务遇到无权限论文时不会中断。工具会继续获取其余论文，并把需要人工处理的项目写入 `manual-download.csv`，其中包含 DOI、官方链接、出版社主机和具体原因。如果候选只有 DOI，清单会使用规范的 `https://doi.org/<DOI>` 解析链接。
+发现阶段只写入 `candidates.jsonl`、`selected-papers.jsonl`、`pending-review.csv`、`discovery-errors.jsonl` 和带哈希保护的 `selection-manifest.json`，不会下载出版社文件。下载阶段只消费这份冻结清单，不会增删论文；它输出核验后的 PDF/BibTeX、`acquisition-manifest.jsonl`、`manual-download.csv`、`retryable-downloads.csv` 和 `delivery-manifest.json`。
+
+单篇论文需要用户访问时，整批下载不会中断。工具会继续处理其余选择，并在 `manual-download.csv` 中记录 selection ID、DOI、官方链接、出版社主机、原因和预留目标路径。之后使用 `manual-fetch --selection <manifest> --key <selection-id>`，系统会依据冻结身份核验本地 PDF/BibTeX，再填入预留位置。
 
 交付目录必须位于本仓库之外。运行状态统一保存在 `%LOCALAPPDATA%\Codex`。
 

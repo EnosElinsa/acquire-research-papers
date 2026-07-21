@@ -32,17 +32,57 @@ Auto-accept only when the hard gates pass, title and abstract evidence are avail
 
 Satisfy group minimums before filling the remaining preferred total. Stop at the preferred total. If the minimum cannot be met from high-quality candidates, report `shortfall`; never lower thresholds to fill a quota.
 
+Run discovery as its own phase:
+
+```powershell
+uv run --project $skill arp discover corpus --spec <job.yaml> --output <discovery-run>
+```
+
+Discovery produces:
+
+- `candidates.jsonl`: every merged candidate, observed evidence, decision, and reason;
+- `selected-papers.jsonl`: only the deterministic high-confidence selection and its reserved delivery paths;
+- `pending-review.csv`: semantic boundary cases that are not selected;
+- `discovery-errors.jsonl`: sanitized provider and page diagnostics;
+- `selection-manifest.json`: the normalized spec, counts, provider coverage, shortfalls, and SHA-256 of the frozen list.
+
+It does not resolve publisher artifacts or write PDF, BibTeX, acquisition, manual, or retry files. Provider failure may reduce coverage and produce a named shortfall; it never creates a manual-download row because no acquisition has occurred.
+
 ## Acquire and deliver
 
-For every auto-accepted or user-approved candidate, route the canonical DOI or official landing page through `fetch`. Delivery is complete only when both files pass:
+Acquire the frozen selection explicitly:
+
+```powershell
+uv run --project $skill arp acquire corpus `
+  --selection <discovery-run\selection-manifest.json> --output <delivery-root>
+```
+
+The acquisition phase verifies the selected-list hash before any publisher request. It routes every frozen record through the same publisher adapters used by `fetch`; it cannot discover extra papers or change semantic decisions. Delivery is complete only when both files pass:
 
 - official PDF validation and SHA-256 recording;
 - official raw BibTeX parse and metadata comparison.
 
-Use stable, gap-free numbering only after pair verification. Reuse the global registry for DOI/title deduplication and interrupted-run recovery. A corpus run without an explicit Markdown request delivers PDF, BibTeX, manifests, and review files only.
+Reserved numbering and relative paths are assigned when selection is frozen, so automatic and manual acquisition target the same slots. Reuse the global registry and artifact hashes for interrupted-run recovery. A rerun skips a delivered item only when all three recorded paths and PDF, BibTeX, and provenance hashes still match.
 
-The default CLI automatically acquires selected high-confidence candidates and writes `acquisition-manifest.jsonl`. A known access, network, or page-contract failure defers that paper and records a concrete reason instead of terminating unrelated acquisitions. An `access_required` result is also written to `manual-download.csv` with the title, DOI, official URL, publisher host, reason, and message. When discovery has only a DOI, the official URL column falls back to its canonical `https://doi.org/<DOI>` resolver. Finish the entire corpus run before asking the user to download those papers. The delivered count, not the discovered count, determines whether the minimum target was met.
+Acquisition writes one durable state per selected paper to `acquisition-manifest.jsonl`:
+
+- `delivered`: the official PDF and raw publisher BibTeX are verified;
+- `manual_required`: authorized user interaction or an unsupported safe adapter is required;
+- `retryable`: a transient network or rate-limit failure may be retried;
+- `contract_error`: the official page or returned artifact violates its contract.
+
+It also writes `manual-download.csv`, `retryable-downloads.csv`, and `delivery-manifest.json`. No outcome removes a record from `selected-papers.jsonl`. The delivered count, not the discovered count, determines acquisition completion.
 
 ## Review output
 
-`candidates.jsonl` is an auditable candidate ledger, not a citation library. `pending-review.csv` contains semantic decisions and deferred acquisition reasons. `manual-download.csv` contains only inaccessible papers that the user can retrieve from the official page after the automated run finishes. After review or manual download, acquire accepted items through the same verified fetch or `manual-fetch` path; do not add a source-specific shortcut.
+`candidates.jsonl` is an auditable candidate ledger, not a citation library. `pending-review.csv` contains only semantic decisions; acquisition failures never enter it. `manual-download.csv` contains only frozen selections that the user can retrieve from the official page after automated acquisition finishes.
+
+Import a manual pair with the immutable selection identity:
+
+```powershell
+uv run --project $skill arp manual-fetch `
+  --selection <discovery-run\selection-manifest.json> --key <selection-id> `
+  --output <delivery-root> --watch <download-directory>
+```
+
+This mode trusts neither editable CSV values nor filenames. It verifies the frozen list, official identity, PDF, and raw publisher BibTeX before filling the reserved paths. Do not add a source-specific shortcut.

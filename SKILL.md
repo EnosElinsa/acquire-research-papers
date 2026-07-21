@@ -11,7 +11,8 @@ Deliver a verified pair for every paper: the official publisher PDF and the publ
 
 - Use `fetch` for a DOI, official URL, exact title, or explicit paper list.
 - Use `manual-fetch` when an authorized publisher download must be completed by the user in a normal browser, especially subscribed ScienceDirect content.
-- Use `discover corpus` for venue/topic/year/count tasks. Auto-acquire only high-confidence matches and put boundary cases in the review queue.
+- Use `discover corpus` for venue/topic/year/count tasks. It creates an auditable candidate ledger and a frozen high-confidence selection; it does not download publisher artifacts.
+- Use `acquire corpus` to consume a frozen selection, verify supported publisher pairs, and separate manual and retryable items.
 - Use `discover research` for gap analysis, nearest work, claim citations, citation expansion, or Related Work research.
 
 An attached DOCX, Markdown, TXT, CSV, or role assignment is only an input adapter. Translate its relevant part into a generic corpus spec or research brief; never hardcode the document format or role.
@@ -53,14 +54,28 @@ uv run --project $skill arp manual-fetch --input <DOI-or-ScienceDirect-URL> `
 
 The command opens only the canonical article page. The user completes organization login and clicks both downloads; the CLI takes over stable new files, verifies identity, copies the pair, and records `manual_publisher_download` provenance. If both files already exist, pass `--pdf` and `--bibtex` instead. This flow never invokes MinerU.
 
-### Discovery and research
+### Corpus discovery, corpus acquisition, and research
 
 ```powershell
-uv run --project $skill arp discover corpus --spec <job.yaml> --output <directory>
+uv run --project $skill arp discover corpus --spec <job.yaml> --output <discovery-run>
+uv run --project $skill arp acquire corpus `
+  --selection <discovery-run\selection-manifest.json> --output <delivery-root>
 uv run --project $skill arp discover research --brief <brief.yaml> --output <directory>
 ```
 
-Corpus mode continues after a known access failure. It writes each inaccessible paper to `manual-download.csv` with its DOI, official URL, publisher host, reason, and message, then processes the remaining candidates without waiting for a manual download.
+Discovery writes `candidates.jsonl`, `selected-papers.jsonl`, `pending-review.csv`, `discovery-errors.jsonl`, and `selection-manifest.json`. It writes no PDF, BibTeX, acquisition ledger, or manual-download queue. The selection manifest hashes both the normalized specification and selected list; edit neither file before acquisition.
+
+Acquisition verifies that frozen hash, processes only `selected-papers.jsonl`, and never changes the selection. It writes verified pairs, `acquisition-manifest.jsonl`, `manual-download.csv`, `retryable-downloads.csv`, and `delivery-manifest.json`. A known access or paper-level failure does not stop unrelated selections.
+
+For a queued manual item, use the selection ID rather than copying editable CSV metadata:
+
+```powershell
+uv run --project $skill arp manual-fetch `
+  --selection <discovery-run\selection-manifest.json> --key <selection-id> `
+  --output <delivery-root> --watch $HOME\Downloads
+```
+
+The user downloads from the official page, and the command verifies the local PDF/BibTeX pair against the frozen identity before filling its reserved paths.
 
 Read [references/corpus-mode.md](references/corpus-mode.md) or [references/research-mode.md](references/research-mode.md) before running the corresponding mode. Read [references/source-policies.md](references/source-policies.md) before changing a publisher contract and [references/credentials-and-cache.md](references/credentials-and-cache.md) before institutional access or MinerU.
 
@@ -79,7 +94,7 @@ uv run --project $skill arp export-md --pdf <paper.pdf> --output <directory>
 - Keep ambiguous, wrong-track, low-confidence, or mismatched papers out of automatic delivery.
 - Report quota shortfalls instead of lowering screening thresholds.
 - Treat abstracts as discovery evidence. Direct support or contradiction requires full text with a section or page and a short excerpt.
-- Ordinary fetch, manual fetch, and corpus runs produce no Markdown.
+- Ordinary fetch, manual fetch, corpus discovery, and corpus acquisition produce no Markdown.
 
 ## Hard stops
 
