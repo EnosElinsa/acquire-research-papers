@@ -47,6 +47,11 @@ class IjcaiProceedingsAdapter:
         return re.sub(r"[^a-z0-9]+", "-", normalized).strip("-")
 
     def resolve(self, landing_url: str) -> SourceDocument:
+        if not self.supports(landing_url):
+            raise NotOfficial("IJCAI landing URL is outside www.ijcai.org")
+        return self.parse(landing_url, self.client.get(landing_url).text)
+
+    def parse(self, landing_url: str, html: str) -> SourceDocument:
         parsed_landing = urlsplit(landing_url)
         if not self.supports(landing_url) or not parsed_landing.hostname:
             raise NotOfficial("IJCAI landing URL is outside www.ijcai.org")
@@ -54,7 +59,7 @@ class IjcaiProceedingsAdapter:
         if not match:
             raise PageContractChanged("IJCAI landing path is not a proceedings paper")
         year, number = match.groups()
-        soup = BeautifulSoup(self.client.get(landing_url).text, "html.parser")
+        soup = BeautifulSoup(html, "html.parser")
 
         def values(name: str) -> list[str]:
             return [
