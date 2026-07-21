@@ -5,7 +5,7 @@ from urllib.parse import urlencode
 
 from bs4 import BeautifulSoup
 
-from acquire_research_papers.discovery.corpus import CandidateMetadata, CandidatePage
+from acquire_research_papers.discovery.contracts import CandidateMetadata, CandidatePage
 from acquire_research_papers.http import SafeHttpClient
 from acquire_research_papers.models import normalize_doi
 

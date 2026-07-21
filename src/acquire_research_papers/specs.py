@@ -58,6 +58,21 @@ def load_corpus_spec(path: Path) -> dict[str, Any]:
             "profile": "generic",
         },
     )
+    for index, group in enumerate(spec["quotas"].get("groups", [])):
+        group_maximum = group.get("maximum")
+        if group_maximum is not None and group_maximum < group["minimum"]:
+            raise SpecValidationError(
+                f"quotas.groups.{index}.maximum: must be greater than or equal to minimum"
+            )
+    delivery = spec["delivery"]
+    template = str(delivery.get("naming_template", ""))
+    if delivery.get("profile") == "numbered" and not {
+        "{number}",
+        "{ext}",
+    }.issubset(template):
+        raise SpecValidationError(
+            "delivery.naming_template: numbered profile requires {number} and {ext}"
+        )
     return spec
 
 

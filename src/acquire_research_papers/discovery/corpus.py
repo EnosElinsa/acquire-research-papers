@@ -5,36 +5,16 @@ import io
 import json
 import re
 from collections.abc import Callable, Iterable
-from dataclasses import asdict, dataclass, field, replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlsplit
 
 from acquire_research_papers.artifacts import atomic_write_bytes
+from acquire_research_papers.discovery.contracts import CandidateMetadata, CandidatePage
 from acquire_research_papers.models import PaperStatus
 
-
-@dataclass(frozen=True)
-class CandidateMetadata:
-    key: str
-    title: str
-    year: int
-    venue: str
-    relevance_score: float
-    hard_gates_passed: bool
-    evidence_fields: tuple[str, ...]
-    doi: str | None = None
-    official_url: str | None = None
-    authors: tuple[str, ...] = ()
-    abstract: str = ""
-    publication_type: str | None = None
-    publication_date: str | None = None
-    citation_count: int = 0
-    related_ids: tuple[str, ...] = ()
-    provenance: dict[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+__all__ = ["CandidateMetadata", "CandidatePage"]
 
 
 def _manual_download_url(candidate: CandidateMetadata) -> str:
@@ -43,12 +23,6 @@ def _manual_download_url(candidate: CandidateMetadata) -> str:
     if candidate.doi:
         return f"https://doi.org/{quote(candidate.doi, safe='/().;:-_')}"
     return ""
-
-
-@dataclass(frozen=True)
-class CandidatePage:
-    candidates: tuple[CandidateMetadata, ...]
-    next_cursor: str | None = None
 
 
 @dataclass(frozen=True)

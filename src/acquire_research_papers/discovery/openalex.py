@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 from urllib.parse import urlencode
 
-from acquire_research_papers.discovery.corpus import CandidateMetadata, CandidatePage
+from acquire_research_papers.discovery.contracts import CandidateMetadata, CandidatePage
 from acquire_research_papers.http import HttpStatusError, RateLimited, SafeHttpClient
 from acquire_research_papers.models import normalize_doi
 

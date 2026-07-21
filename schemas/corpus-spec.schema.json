@@ -33,6 +33,8 @@
               "name": {"type": "string", "minLength": 1},
               "aliases": {"type": "array", "items": {"type": "string"}},
               "kind": {"type": "string"},
+              "short_name": {"type": "string"},
+              "publisher": {"type": "string"},
               "issn": {"type": "array", "items": {"type": "string"}},
               "isbn": {"type": "array", "items": {"type": "string"}}
             }

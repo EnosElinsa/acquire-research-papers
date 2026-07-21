@@ -44,3 +44,41 @@ def test_unknown_spec_fields_are_rejected(tmp_path: Path) -> None:
     )
     with pytest.raises(SpecValidationError, match="secret"):
         load_corpus_spec(path)
+
+
+def test_corpus_spec_accepts_generic_layout_metadata(tmp_path: Path) -> None:
+    path = tmp_path / "layout.yaml"
+    path.write_text(
+        "mode: corpus\nname: layout\ntarget:\n  minimum: 1\n  maximum: 2\n"
+        "scope:\n  venues:\n    - name: Invented Proceedings\n"
+        "      short_name: IP\n      publisher: Invented Society\n",
+        encoding="utf-8",
+    )
+
+    spec = load_corpus_spec(path)
+
+    assert spec["scope"]["venues"][0]["short_name"] == "IP"
+
+
+def test_corpus_spec_rejects_group_maximum_below_minimum(tmp_path: Path) -> None:
+    path = tmp_path / "bad-group.yaml"
+    path.write_text(
+        "mode: corpus\nname: bad-group\ntarget:\n  minimum: 1\n  maximum: 2\n"
+        "quotas:\n  groups:\n    - name: journals\n      minimum: 2\n      maximum: 1\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SpecValidationError, match="quotas.groups.0.maximum"):
+        load_corpus_spec(path)
+
+
+def test_numbered_delivery_requires_number_and_extension_tokens(tmp_path: Path) -> None:
+    path = tmp_path / "bad-layout.yaml"
+    path.write_text(
+        "mode: corpus\nname: bad-layout\ntarget:\n  minimum: 1\n  maximum: 2\n"
+        "delivery:\n  profile: numbered\n  naming_template: papers/fixed.pdf\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SpecValidationError, match="delivery.naming_template"):
+        load_corpus_spec(path)
