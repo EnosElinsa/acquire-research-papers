@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from acquire_research_papers.discovery.contracts import (
     CandidateMetadata,
+    CoverageSlice,
     DiscoveryBatch,
     DiscoveryCapabilities,
     DiscoveryRequest,
@@ -135,6 +136,28 @@ def test_coordinator_slices_provider_by_capability() -> None:
     assert [venue.name for venue in provider.received.venues] == ["Venue B"]
     assert provider.received.years == (2025,)
     assert provider.received.year_priority == (2025,)
+
+
+def test_coordinator_preserves_structured_coverage() -> None:
+    coverage = CoverageSlice(
+        provider_id="venue-b",
+        venue="Venue B",
+        year=2025,
+        state="partial",
+        pages_fetched=2,
+        records_fetched=10,
+        next_cursor="next",
+    )
+    provider = FakeProvider(
+        "venue-b",
+        DiscoveryBatch(coverage=(coverage,)),
+        venue_aliases=frozenset({"VB"}),
+        supported_years=frozenset({2025}),
+    )
+
+    batch = DiscoveryCoordinator([provider]).discover(request())
+
+    assert batch.coverage == (coverage,)
 
 
 def test_coordinator_reports_identity_conflict_without_overwriting() -> None:

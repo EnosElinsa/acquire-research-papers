@@ -117,6 +117,8 @@ class CandidateMetadata:
 class CandidatePage:
     candidates: tuple[CandidateMetadata, ...]
     next_cursor: str | None = None
+    total_results: int | None = None
+    query_url: str = ""
 
 
 @dataclass(frozen=True)

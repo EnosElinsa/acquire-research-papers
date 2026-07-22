@@ -1,6 +1,7 @@
 {
   "status": "ok",
   "message": {
+    "total-results": 1,
     "next-cursor": "next-cursor-token",
     "items": [
       {
@@ -14,6 +15,8 @@
         "URL": "https://doi.org/10.1234/crossref.1",
         "resource": {"primary": {"URL": "https://publisher.example/article/1"}},
         "abstract": "<jats:p>A relevant abstract.</jats:p>",
+        "ISSN": ["1234-5678"],
+        "subject": ["Evolutionary computation", "Resource allocation"],
         "score": 87.0
       }
     ]

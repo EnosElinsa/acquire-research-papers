@@ -6,6 +6,7 @@ from dataclasses import replace
 
 from acquire_research_papers.discovery.contracts import (
     CandidateMetadata,
+    CoverageSlice,
     DiscoveryBatch,
     DiscoveryDiagnostic,
     DiscoveryEnricher,
@@ -140,6 +141,7 @@ class DiscoveryCoordinator:
         merged: dict[str, CandidateMetadata] = {}
         diagnostics: list[DiscoveryDiagnostic] = []
         covered: list[str] = []
+        coverage: list[CoverageSlice] = []
         for provider in self.providers:
             capability = provider.capabilities()
             supported_venues = tuple(
@@ -181,6 +183,7 @@ class DiscoveryCoordinator:
                 continue
             diagnostics.extend(batch.diagnostics)
             covered.extend(batch.covered_slices)
+            coverage.extend(batch.coverage)
             for candidate in batch.candidates:
                 identity = candidate_identity(candidate)
                 try:
@@ -221,6 +224,7 @@ class DiscoveryCoordinator:
                 continue
             diagnostics.extend(batch.diagnostics)
             covered.extend(batch.covered_slices)
+            coverage.extend(batch.coverage)
             for candidate in batch.candidates:
                 identity = candidate_identity(candidate)
                 try:
@@ -238,4 +242,5 @@ class DiscoveryCoordinator:
             candidates=tuple(merged.values()),
             diagnostics=tuple(diagnostics),
             covered_slices=tuple(dict.fromkeys(covered)),
+            coverage=tuple(coverage),
         )
