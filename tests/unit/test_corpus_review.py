@@ -258,6 +258,34 @@ def test_missing_review_and_quota_constraints_have_named_shortfalls(tmp_path: Pa
     assert "recent:1" in result.quota_shortfalls
 
 
+def test_unreviewed_overflow_does_not_block_a_satisfied_selection(tmp_path: Path) -> None:
+    run = create_run(
+        tmp_path / "run",
+        (
+            candidate("conference", "Conference"),
+            candidate("journal", "Journal"),
+            candidate("ready-overflow", "Journal", year=2024),
+            candidate("metadata-overflow", "Journal", year=2024, abstract=""),
+        ),
+        corpus_spec(minimum=2, preferred=2),
+    )
+    evidence = packets(run)
+    decisions = write_decisions(
+        tmp_path / "decisions.jsonl",
+        [
+            decision(evidence["doi:10.1000/conference"]),
+            decision(evidence["doi:10.1000/journal"]),
+        ],
+    )
+
+    result = CorpusReviewWorkflow().run(run, decisions)
+
+    assert result.status == "frozen"
+    assert result.selected == 2
+    assert result.pending == 2
+    assert result.shortfall_classes == ()
+
+
 def test_review_import_is_idempotent_but_rejects_conflicting_rewrite(tmp_path: Path) -> None:
     run = create_run(
         tmp_path / "run",

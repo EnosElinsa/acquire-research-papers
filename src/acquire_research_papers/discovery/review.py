@@ -305,10 +305,14 @@ class CorpusReviewWorkflow:
         shortfall_classes: list[str] = []
         if int(discovery_manifest.get("coverage_incomplete", 0)):
             shortfall_classes.append("coverage")
-        if metadata_pending:
-            shortfall_classes.append("evidence")
-        if ready_pending:
-            shortfall_classes.append("review")
+        unresolved_candidates_may_fill_shortfall = bool(
+            plan.shortfall or plan.quota_shortfalls
+        )
+        if unresolved_candidates_may_fill_shortfall:
+            if metadata_pending:
+                shortfall_classes.append("evidence")
+            if ready_pending:
+                shortfall_classes.append("review")
         if plan.quota_shortfalls:
             shortfall_classes.append("quota")
         status = "shortfall" if shortfall_classes else "frozen"
