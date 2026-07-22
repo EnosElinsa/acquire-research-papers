@@ -134,16 +134,18 @@ class CorpusPlanner:
                 return False
         return True
 
-    def _joint_quota_seed(
+    def _solve_quota_selection(
         self,
         candidates: list[CandidateMetadata],
         groups: list[dict[str, Any]],
-        goal: int,
-    ) -> tuple[CandidateMetadata, ...]:
-        """Find a ranked feasible seed for overlapping group constraints."""
+        target_size: int,
+    ) -> tuple[CandidateMetadata, ...] | None:
+        """Solve exact cardinality and overlapping quotas by signature DP."""
+        if target_size < 0 or target_size > len(candidates):
+            return None
+        if not groups:
+            return tuple(candidates[:target_size])
         minimums = tuple(int(group.get("minimum", 0)) for group in groups)
-        if not groups or not any(minimums) or goal <= 0:
-            return ()
         maximums = tuple(
             int(group["maximum"]) if group.get("maximum") is not None else None
             for group in groups
@@ -157,11 +159,7 @@ class CorpusPlanner:
             signature = tuple(
                 self._matches_group(candidate, group) for group in groups
             )
-            if any(
-                matches and minimum > 0
-                for matches, minimum in zip(signature, minimums, strict=True)
-            ):
-                buckets.setdefault(signature, []).append(candidate)
+            buckets.setdefault(signature, []).append(candidate)
         signatures = tuple(
             sorted(
                 buckets,
@@ -169,93 +167,97 @@ class CorpusPlanner:
             )
         )
         capacities = tuple(
-            min(len(buckets[signature]), goal) for signature in signatures
+            min(len(buckets[signature]), target_size) for signature in signatures
         )
-        initial_counts = tuple(0 for _ in groups)
-        initial_used = tuple(0 for _ in signatures)
-        failed: set[tuple[tuple[int, ...], tuple[int, ...]]] = set()
+        rank_position = {id(candidate): index for index, candidate in enumerate(candidates)}
+        prefix_costs: tuple[tuple[int, ...], ...] = tuple(
+            tuple(
+                [0]
+                + [
+                    sum(
+                        rank_position[id(candidate)] + 1
+                        for candidate in buckets[signature][:quantity]
+                    )
+                    for quantity in range(1, capacity + 1)
+                ]
+            )
+            for signature, capacity in zip(signatures, capacities, strict=True)
+        )
+        remaining_total = [0] * (len(signatures) + 1)
+        remaining_by_group = [
+            [0 for _ in groups] for _ in range(len(signatures) + 1)
+        ]
+        for index in range(len(signatures) - 1, -1, -1):
+            remaining_total[index] = remaining_total[index + 1] + capacities[index]
+            remaining_by_group[index] = remaining_by_group[index + 1].copy()
+            for group_index, matches in enumerate(signatures[index]):
+                if matches:
+                    remaining_by_group[index][group_index] += capacities[index]
 
-        def can_add_signature(
-            signature: tuple[bool, ...],
-            counts: tuple[int, ...],
-        ) -> bool:
-            return all(
-                not matches or maximum is None or count < maximum
+        state_type = tuple[int, tuple[int, ...]]
+        states: dict[state_type, tuple[int, tuple[int, ...]]] = {
+            (0, tuple(0 for _ in groups)): (0, ())
+        }
+        for index, signature in enumerate(signatures):
+            next_states: dict[state_type, tuple[int, tuple[int, ...]]] = {}
+            for (selected_total, counts), (cost, used) in states.items():
+                max_quantity = min(
+                    capacities[index],
+                    target_size - selected_total,
+                )
                 for matches, maximum, count in zip(
                     signature,
                     maximums,
                     counts,
                     strict=True,
-                )
-            )
-
-        def search(
-            counts: tuple[int, ...],
-            used: tuple[int, ...],
-        ) -> tuple[int, ...] | None:
-            deficits = tuple(
-                max(0, minimum - count)
-                for minimum, count in zip(minimums, counts, strict=True)
-            )
-            if not any(deficits):
-                return used
-            state = (counts, used)
-            if state in failed:
-                return None
-            selected_total = sum(used)
-            if selected_total >= goal or selected_total + max(deficits) > goal:
-                failed.add(state)
-                return None
-
-            options_by_group: list[tuple[int, list[int]]] = []
-            for group_index, deficit in enumerate(deficits):
-                if not deficit:
-                    continue
-                options = [
-                    index
-                    for index, signature in enumerate(signatures)
-                    if signature[group_index]
-                    and used[index] < capacities[index]
-                    and can_add_signature(signature, counts)
-                ]
-                available = sum(capacities[index] - used[index] for index in options)
-                if available < deficit:
-                    failed.add(state)
-                    return None
-                options_by_group.append((available, options))
-            _, branch_options = min(options_by_group, key=lambda item: len(item[1]))
-
-            def branch_rank(index: int):
-                signature = signatures[index]
-                contribution = sum(
-                    bool(deficit and matches)
-                    for deficit, matches in zip(deficits, signature, strict=True)
-                )
-                candidate = buckets[signature][used[index]]
-                return (-contribution, self._rank(candidate))
-
-            for signature_index in sorted(branch_options, key=branch_rank):
-                signature = signatures[signature_index]
-                next_counts = tuple(
-                    min(bound, count + int(matches))
-                    for bound, count, matches in zip(
-                        bounds,
-                        counts,
-                        signature,
-                        strict=True,
+                ):
+                    if matches and maximum is not None:
+                        max_quantity = min(max_quantity, maximum - count)
+                for quantity in range(max_quantity + 1):
+                    total = selected_total + quantity
+                    if total + remaining_total[index + 1] < target_size:
+                        continue
+                    next_counts = tuple(
+                        min(bound, count + quantity * int(matches))
+                        for bound, count, matches in zip(
+                            bounds,
+                            counts,
+                            signature,
+                            strict=True,
+                        )
                     )
-                )
-                next_used = list(used)
-                next_used[signature_index] += 1
-                result = search(next_counts, tuple(next_used))
-                if result is not None:
-                    return result
-            failed.add(state)
-            return None
+                    if any(
+                        count + remaining_by_group[index + 1][group_index]
+                        < minimum
+                        for group_index, (count, minimum) in enumerate(
+                            zip(next_counts, minimums, strict=True)
+                        )
+                    ):
+                        continue
+                    state = (total, next_counts)
+                    value = (
+                        cost + prefix_costs[index][quantity],
+                        (*used, quantity),
+                    )
+                    previous = next_states.get(state)
+                    if previous is None or value < previous:
+                        next_states[state] = value
+            states = next_states
+            if not states:
+                return None
 
-        solution = search(initial_counts, initial_used)
-        if solution is None:
-            return ()
+        feasible = [
+            value
+            for (selected_total, counts), value in states.items()
+            if selected_total == target_size
+            and all(
+                count >= minimum
+                for count, minimum in zip(counts, minimums, strict=True)
+            )
+        ]
+        if not feasible:
+            return None
+        _, solution = min(feasible)
         selected = [
             candidate
             for signature, count in zip(signatures, solution, strict=True)
@@ -319,26 +321,55 @@ class CorpusPlanner:
         recent_window = self.spec.get("quotas", {}).get("recent_window")
         recent_start: date | None = None
         recent_ratio = 0.0
-        quota_groups = list(groups)
         if recent_window:
             recent_start = date.fromisoformat(str(recent_window["from"]))
             recent_ratio = float(recent_window["minimum_ratio"])
-            required_recent = math.ceil(planned_total * recent_ratio)
-            quota_groups.append(
-                {
-                    "name": "__recent__",
-                    "minimum": required_recent,
-                    "_recent_from": recent_start.isoformat(),
-                }
+
+        solved: tuple[CandidateMetadata, ...] | None = None
+        smallest_target = min(minimum, planned_total)
+        for target_size in range(planned_total, smallest_target - 1, -1):
+            quota_groups = list(groups)
+            if recent_start is not None:
+                quota_groups.append(
+                    {
+                        "name": "__recent__",
+                        "minimum": math.ceil(target_size * recent_ratio),
+                        "_recent_from": recent_start.isoformat(),
+                    }
+                )
+            solved = self._solve_quota_selection(
+                auto_pool,
+                quota_groups,
+                target_size,
             )
-
-        for candidate in self._joint_quota_seed(auto_pool, quota_groups, goal):
-            add(candidate)
-
-        for candidate in auto_pool:
-            if len(selected) >= goal:
+            if solved is not None:
                 break
-            add(candidate)
+
+        if solved is not None:
+            for candidate in solved:
+                add(candidate)
+        else:
+            for group in groups:
+                required = int(group.get("minimum", 0))
+                for candidate in auto_pool:
+                    if self._group_count(selected, group) >= required:
+                        break
+                    if self._matches_group(candidate, group):
+                        add(candidate)
+            if recent_start is not None:
+                required_recent = math.ceil(planned_total * recent_ratio)
+                for candidate in auto_pool:
+                    if (
+                        sum(self._is_recent(item, recent_start) for item in selected)
+                        >= required_recent
+                    ):
+                        break
+                    if self._is_recent(candidate, recent_start):
+                        add(candidate)
+            for candidate in auto_pool:
+                if len(selected) >= goal:
+                    break
+                add(candidate)
         selected.sort(key=self._rank)
         overflow = tuple(candidate for candidate in auto_pool if candidate.key not in selected_keys)
 

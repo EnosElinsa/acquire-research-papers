@@ -279,6 +279,90 @@ def test_joint_quota_solver_handles_cross_cutting_minima() -> None:
     assert plan.quota_shortfalls == ()
 
 
+def test_joint_quota_solver_keeps_the_quota_seed_extendable_to_target() -> None:
+    spec = {
+        "target": {"minimum": 2, "preferred": 2, "maximum": 2},
+        "quotas": {
+            "groups": [
+                {"name": "venue-x", "minimum": 1, "maximum": 1, "venues": ["X"]},
+                {
+                    "name": "special",
+                    "minimum": 0,
+                    "maximum": 1,
+                    "publication_types": ["special"],
+                },
+            ]
+        },
+    }
+    candidates = [
+        replace(
+            candidate("bad-overlap", 2026, 0.99, venue="X"),
+            publication_type="special",
+        ),
+        replace(
+            candidate("extendable-x", 2026, 0.98, venue="X"),
+            publication_type="normal",
+        ),
+        replace(
+            candidate("special-filler", 2026, 0.97, venue="Y"),
+            publication_type="special",
+        ),
+    ]
+
+    plan = CorpusPlanner(spec).select(candidates)
+
+    assert {item.key for item in plan.auto_accepted} == {
+        "extendable-x",
+        "special-filler",
+    }
+    assert plan.quota_shortfalls == ()
+
+
+def test_recent_ratio_is_recomputed_for_the_largest_feasible_size() -> None:
+    spec = {
+        "target": {"minimum": 2, "preferred": 3, "maximum": 3},
+        "scope": {"years": {"priority": [2024, 2026]}},
+        "quotas": {
+            "groups": [
+                {"name": "at-most-two", "minimum": 0, "maximum": 2, "venues": ["Test"]}
+            ],
+            "recent_window": {"from": "2025-07-18", "minimum_ratio": 0.5},
+        },
+    }
+    candidates = [
+        replace(candidate("old-1", 2024, 0.99), publication_date="2025-01-01"),
+        replace(candidate("old-2", 2024, 0.98), publication_date="2025-02-01"),
+        replace(candidate("recent", 2026, 0.97), publication_date="2025-08-01"),
+    ]
+
+    plan = CorpusPlanner(spec).select(candidates)
+
+    assert len(plan.auto_accepted) == 2
+    assert "recent" in {item.key for item in plan.auto_accepted}
+    assert plan.quota_shortfalls == ()
+
+
+def test_joint_quota_solver_scales_past_python_recursion_depth() -> None:
+    target = 1_100
+    spec = {
+        "target": {"minimum": target, "preferred": target, "maximum": target},
+        "quotas": {
+            "groups": [
+                {"name": "all", "minimum": target, "venues": ["Test"]}
+            ]
+        },
+    }
+    candidates = [
+        candidate(f"paper-{index:04d}", 2026, 0.99)
+        for index in range(target)
+    ]
+
+    plan = CorpusPlanner(spec).select(candidates)
+
+    assert len(plan.auto_accepted) == target
+    assert plan.quota_shortfalls == ()
+
+
 def test_recent_window_ratio_uses_publication_date() -> None:
     spec = {
         "target": {"minimum": 2, "preferred": 2, "maximum": 3},
