@@ -107,7 +107,7 @@ uv run --project $skill arp export-md --pdf .\paper.pdf --output C:\Research\mar
 & "$skill\scripts\setup-ieee-institution.ps1"
 ```
 
-机构档案还需要配置登录 CARSI 后进入 IEEE 的准确资源 URL。默认不会自动同意属性发布；只有在 `fetch` 或 `acquire corpus` 中显式传入 `--accept-ieee-attribute-release` 才会点击配置的接受控件。拒绝控件永远不会被点击，且 persistent browser context 未返回 `ieeexplore.ieee.org` 前不会请求 PDF。
+机构档案还需要配置登录 CARSI 后进入 IEEE 的准确资源 URL。配置的接受/继续控件默认自动点击；如需人工完成，可在 `fetch` 或 `acquire corpus` 中传入 `--no-accept-ieee-attribute-release`。拒绝控件永远不会被点击，且 persistent browser context 未返回 `ieeexplore.ieee.org` 前不会请求 PDF。
 
 仅在需要 Markdown 提取时单独配置 MinerU：
 

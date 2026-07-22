@@ -60,7 +60,7 @@ class IeeeBridge:
         node_path: str | None = None,
         installer: Path | None = None,
         timeout_seconds: int = 180,
-        accept_attribute_release: bool = False,
+        accept_attribute_release: bool = True,
     ) -> None:
         self.script = script.resolve()
         self.profile_root = profile_root.resolve()
@@ -89,8 +89,9 @@ class IeeeBridge:
             "--timeout-ms",
             str(self.timeout_seconds * 1000),
         ]
-        if self.accept_attribute_release:
-            command.extend(["--accept-attribute-release", "true"])
+        command.extend(
+            ["--accept-attribute-release", str(self.accept_attribute_release).lower()]
+        )
         return command
 
     def _dependency_ready(self) -> bool:

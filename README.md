@@ -105,7 +105,7 @@ Configure your own IEEE institution profile and credential from an interactive P
 & "$skill\scripts\setup-ieee-institution.ps1"
 ```
 
-The profile includes the exact post-login CARSI IEEE resource URL. Attribute release is never accepted by default; pass `--accept-ieee-attribute-release` to `fetch` or `acquire corpus` only when you explicitly authorize the configured accept control. The reject control is never clicked, and PDF retrieval starts only after the persistent browser context returns to `ieeexplore.ieee.org`.
+The profile includes the exact post-login CARSI IEEE resource URL. A configured accept/continue control is used automatically by default; pass `--no-accept-ieee-attribute-release` to `fetch` or `acquire corpus` when you want to complete that page manually. The reject control is never clicked, and PDF retrieval starts only after the persistent browser context returns to `ieeexplore.ieee.org`.
 
 Configure MinerU independently only when Markdown extraction is needed:
 

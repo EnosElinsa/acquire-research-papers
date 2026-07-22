@@ -7,6 +7,7 @@ param(
   [Parameter(Mandatory)][string]$CarsiSearchText,
   [Parameter(Mandatory)][string]$CarsiInstitution,
   [Parameter(Mandatory)][string]$CarsiLoginButtonName,
+  [Parameter(Mandatory)][string]$CarsiEntityId,
   [Parameter(Mandatory)][string]$CredentialHost,
   [Parameter(Mandatory)][string]$UsernameLabel,
   [Parameter(Mandatory)][string]$PasswordLabel,
@@ -80,6 +81,7 @@ $institution = [ordered]@{
   CarsiSearchText = $CarsiSearchText
   CarsiInstitution = $CarsiInstitution
   CarsiLoginButtonName = $CarsiLoginButtonName
+  CarsiEntityId = $CarsiEntityId
   CredentialHost = $CredentialHost
   UsernameLabel = $UsernameLabel
   PasswordLabel = $PasswordLabel

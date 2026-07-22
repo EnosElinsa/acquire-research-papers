@@ -100,6 +100,15 @@ function ConvertTo-IeeeInstitutionProfile([object]$Institution) {
     throw "IEEE credential host must be one exact DNS hostname without scheme, port, path, wildcard, or trailing dot."
   }
   $values.CredentialHost = $credentialHost.ToLowerInvariant()
+  $carsiEntityId = (Get-AcquisitionProfileValue -Profile $Institution -Name "CarsiEntityId").Trim()
+  $entityUri = $null
+  if (-not [Uri]::TryCreate($carsiEntityId, [UriKind]::Absolute, [ref]$entityUri) -or
+      $entityUri.Scheme -ne "https" -or
+      -not $entityUri.IsDefaultPort -or
+      -not [string]::IsNullOrWhiteSpace($entityUri.UserInfo) -or
+      -not [string]::IsNullOrWhiteSpace($entityUri.Fragment)) {
+    throw "CARSI entity ID must be an HTTPS URL without credentials, a custom port, or a fragment."
+  }
   $resourceAccessUrl = (Get-AcquisitionProfileValue -Profile $Institution -Name "ResourceAccessUrl").Trim()
   if (-not [string]::IsNullOrWhiteSpace($resourceAccessUrl)) {
     $resourceUri = $null
@@ -122,13 +131,9 @@ function ConvertTo-IeeeInstitutionProfile([object]$Institution) {
   $attributeReleaseReject = (
     Get-AcquisitionProfileValue -Profile $Institution -Name "AttributeReleaseRejectControlName"
   ).Trim()
-  $configuredReleaseFields = @(
-    $attributeReleaseTitle,
-    $attributeReleaseAccept,
-    $attributeReleaseReject
-  ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
-  if ($configuredReleaseFields.Count -ne 0 -and $configuredReleaseFields.Count -ne 3) {
-    throw "AttributeReleaseTitle, AttributeReleaseAcceptControlName, and AttributeReleaseRejectControlName must all be provided or all be empty."
+  if ([string]::IsNullOrWhiteSpace($attributeReleaseAccept) -and
+      -not [string]::IsNullOrWhiteSpace($attributeReleaseReject)) {
+    throw "An attribute-release reject control requires an accept or continue control."
   }
   foreach ($controlName in @($attributeReleaseAccept, $attributeReleaseReject)) {
     if (-not [string]::IsNullOrWhiteSpace($controlName) -and $controlName -notmatch '^[A-Za-z0-9_-]+$') {
@@ -141,6 +146,7 @@ function ConvertTo-IeeeInstitutionProfile([object]$Institution) {
     CarsiSearchText = $values.CarsiSearchText
     CarsiInstitution = $values.CarsiInstitution
     CarsiLoginButtonName = $values.CarsiLoginButtonName
+    CarsiEntityId = $entityUri.AbsoluteUri
     CredentialHost = $values.CredentialHost
     UsernameLabel = $values.UsernameLabel
     PasswordLabel = $values.PasswordLabel
@@ -200,6 +206,7 @@ function Set-IeeeInstitutionRoute(
     CarsiSearchText = $existing.CarsiSearchText
     CarsiInstitution = $existing.CarsiInstitution
     CarsiLoginButtonName = $existing.CarsiLoginButtonName
+    CarsiEntityId = $existing.CarsiEntityId
     CredentialHost = $existing.CredentialHost
     UsernameLabel = $existing.UsernameLabel
     PasswordLabel = $existing.PasswordLabel
@@ -210,6 +217,39 @@ function Set-IeeeInstitutionRoute(
     AttributeReleaseRejectControlName = $AttributeReleaseRejectControlName
   }
   $payload.Scopes.ieee_institution.Profile = ConvertTo-IeeeInstitutionProfile -Institution $institution
+  Save-AcquisitionSecretPayload -Payload $payload -Path $Path
+}
+
+function Set-IeeeInstitutionEntityId(
+  [Parameter(Mandatory)][string]$CarsiEntityId,
+  [string]$Path = (Get-AcquisitionSecretPath)
+) {
+  $payload = Import-AcquisitionSecretPayload -Path $Path
+  if ($payload.Scopes.PSObject.Properties.Name -notcontains "ieee_institution") {
+    throw "IEEE institution profile is not configured."
+  }
+  $scope = $payload.Scopes.ieee_institution
+  if ($scope.Credential -isnot [Management.Automation.PSCredential]) {
+    throw "IEEE institution credential scope is invalid."
+  }
+  $existing = $scope.Profile
+  $institution = [ordered]@{
+    Organization = $existing.Organization
+    CarsiSchoolPlaceholder = $existing.CarsiSchoolPlaceholder
+    CarsiSearchText = $existing.CarsiSearchText
+    CarsiInstitution = $existing.CarsiInstitution
+    CarsiLoginButtonName = $existing.CarsiLoginButtonName
+    CarsiEntityId = $CarsiEntityId
+    CredentialHost = $existing.CredentialHost
+    UsernameLabel = $existing.UsernameLabel
+    PasswordLabel = $existing.PasswordLabel
+    LoginButtonName = $existing.LoginButtonName
+    ResourceAccessUrl = $existing.ResourceAccessUrl
+    AttributeReleaseTitle = $existing.AttributeReleaseTitle
+    AttributeReleaseAcceptControlName = $existing.AttributeReleaseAcceptControlName
+    AttributeReleaseRejectControlName = $existing.AttributeReleaseRejectControlName
+  }
+  $scope.Profile = ConvertTo-IeeeInstitutionProfile -Institution $institution
   Save-AcquisitionSecretPayload -Payload $payload -Path $Path
 }
 
@@ -257,7 +297,7 @@ function Set-ElsevierApiKey(
   Save-AcquisitionSecretPayload -Payload $payload -Path $Path
 }
 
-function Import-AcquisitionSecrets([string]$Path = (Get-AcquisitionSecretPath)) {
+function Import-AcquisitionSecretPayload([string]$Path = (Get-AcquisitionSecretPath)) {
   if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
     throw "DPAPI secret file is missing: $Path"
   }
@@ -265,6 +305,11 @@ function Import-AcquisitionSecrets([string]$Path = (Get-AcquisitionSecretPath)) 
   if ($null -eq $payload -or [int]$payload.SchemaVersion -ne 1 -or $null -eq $payload.Scopes) {
     throw "Unsupported acquisition secret schema."
   }
+  return $payload
+}
+
+function Import-AcquisitionSecrets([string]$Path = (Get-AcquisitionSecretPath)) {
+  $payload = Import-AcquisitionSecretPayload -Path $Path
   if ($payload.Scopes.PSObject.Properties.Name -contains "ieee_institution") {
     $scope = $payload.Scopes.ieee_institution
     if ($scope.Credential -isnot [Management.Automation.PSCredential]) {

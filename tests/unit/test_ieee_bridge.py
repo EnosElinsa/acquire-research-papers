@@ -50,41 +50,39 @@ def test_ieee_bridge_uses_dedicated_runtime_paths(tmp_path: Path) -> None:
     assert str(tmp_path / "profiles" / "ieee") in command
     assert str(tmp_path / "deps") in command
     assert "--secret-path" in command
-    assert "--accept-attribute-release" not in command
+    assert command[-2:] == ["--accept-attribute-release", "true"]
 
-    authorized_bridge = IeeeBridge(
+    manual_bridge = IeeeBridge(
         script=tmp_path / "ieee-playwright.mjs",
         profile_root=tmp_path / "profiles" / "ieee",
         dependency_root=tmp_path / "deps",
         work_root=tmp_path / "runs",
         secret_path=tmp_path / "secrets" / "secrets.clixml",
         node_path="node",
-        accept_attribute_release=True,
+        accept_attribute_release=False,
     )
-    authorized_command = authorized_bridge.command(
+    manual_command = manual_bridge.command(
         "https://ieeexplore.ieee.org/document/11014597",
         run_dir=tmp_path / "runs" / "run-2",
     )
-    assert authorized_command[-2:] == ["--accept-attribute-release", "true"]
+    assert manual_command[-2:] == ["--accept-attribute-release", "false"]
 
 
-def test_ieee_attribute_release_requires_an_explicit_cli_flag(tmp_path: Path) -> None:
+def test_ieee_attribute_release_is_automatic_with_an_explicit_opt_out(tmp_path: Path) -> None:
     parser = build_parser()
     ordinary = parser.parse_args(
         ["fetch", "--input", "10.1109/test.1", "--output", str(tmp_path / "ordinary")]
     )
-    authorized = parser.parse_args(
+    manual = parser.parse_args(
         [
             "fetch",
-            "--input",
-            "10.1109/test.1",
-            "--output",
-            str(tmp_path / "authorized"),
-            "--accept-ieee-attribute-release",
+            "--input", "10.1109/test.1",
+            "--output", str(tmp_path / "manual"),
+            "--no-accept-ieee-attribute-release",
         ]
     )
-    assert ordinary.accept_ieee_attribute_release is False
-    assert authorized.accept_ieee_attribute_release is True
+    assert ordinary.accept_ieee_attribute_release is True
+    assert manual.accept_ieee_attribute_release is False
 
 
 class StubBridge:

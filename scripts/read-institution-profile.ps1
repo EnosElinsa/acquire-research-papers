@@ -18,6 +18,7 @@ $profile = $payload.Scopes.ieee_institution.Profile
   carsiSearchText = $profile.CarsiSearchText
   carsiInstitution = $profile.CarsiInstitution
   carsiLoginButtonName = $profile.CarsiLoginButtonName
+  carsiEntityId = $profile.CarsiEntityId
   credentialHost = $profile.CredentialHost
   usernameLabel = $profile.UsernameLabel
   passwordLabel = $profile.PasswordLabel

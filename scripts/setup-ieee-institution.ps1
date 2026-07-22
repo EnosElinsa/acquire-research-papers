@@ -19,6 +19,7 @@ $carsiSchoolPlaceholder = Read-Host "CARSI institution-search placeholder"
 $carsiSearchText = Read-Host "CARSI search text"
 $carsiInstitution = Read-Host "Exact CARSI institution option"
 $carsiLoginButtonName = Read-Host "CARSI login button name"
+$carsiEntityId = Read-Host "Exact CARSI IdP entity ID (HTTPS URL)"
 $credentialHost = Read-Host "Exact institutional IdP hostname (no scheme or path)"
 $usernameLabel = Read-Host "Username field label"
 $passwordLabel = Read-Host "Password field label"
@@ -40,6 +41,7 @@ try {
     CarsiSearchText = $carsiSearchText
     CarsiInstitution = $carsiInstitution
     CarsiLoginButtonName = $carsiLoginButtonName
+    CarsiEntityId = $carsiEntityId
     CredentialHost = $credentialHost
     UsernameLabel = $usernameLabel
     PasswordLabel = $passwordLabel

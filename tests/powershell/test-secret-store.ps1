@@ -21,6 +21,7 @@ $storePath = Join-Path $root "scripts\secret-store.ps1"
 $bridgePath = Join-Path $root "scripts\read-browser-credential.ps1"
 $profileBridgePath = Join-Path $root "scripts\read-institution-profile.ps1"
 $ieeeSetupPath = Join-Path $root "scripts\setup-ieee-institution.ps1"
+$ieeeEntityUpdatePath = Join-Path $root "scripts\update-ieee-institution-entity.ps1"
 $ieeeRouteUpdatePath = Join-Path $root "scripts\update-ieee-institution-route.ps1"
 $mineruSetupPath = Join-Path $root "scripts\setup-mineru-token.ps1"
 $elsevierBridgePath = Join-Path $root "scripts\read-elsevier-api-key.ps1"
@@ -32,6 +33,7 @@ foreach ($required in @(
   $bridgePath,
   $profileBridgePath,
   $ieeeSetupPath,
+  $ieeeEntityUpdatePath,
   $ieeeRouteUpdatePath,
   $mineruSetupPath,
   $elsevierBridgePath,
@@ -61,6 +63,7 @@ try {
     CarsiSearchText = "Example University"
     CarsiInstitution = "Example University (Example)"
     CarsiLoginButtonName = "Continue"
+    CarsiEntityId = "https://login.example.edu/idp/shibboleth"
     CredentialHost = "login.example.edu"
     UsernameLabel = "Account"
     PasswordLabel = "Passcode"
@@ -97,6 +100,7 @@ try {
   $payload = Import-AcquisitionSecrets -Path $secretPath
   Assert-Equal $payload.SchemaVersion 1 "schema version"
   Assert-Equal $payload.Scopes.ieee_institution.Profile.Organization "Example University" "IEEE organization"
+  Assert-Equal $payload.Scopes.ieee_institution.Profile.CarsiEntityId $institution.CarsiEntityId "IEEE CARSI entity ID"
   Assert-Equal $payload.Scopes.ieee_institution.Profile.CredentialHost "login.example.edu" "IEEE credential host"
   Assert-Equal $payload.Scopes.ieee_institution.Profile.ResourceAccessUrl $institution.ResourceAccessUrl "IEEE resource access URL"
   Assert-Equal $payload.Scopes.ieee_institution.Credential.UserName "synthetic-user" "username"
@@ -121,6 +125,7 @@ try {
   Assert-Equal $credentialJson.password "synthetic-password" "bridge password"
   $profileJson = & $profileBridgePath -SecretPath $secretPath | ConvertFrom-Json
   Assert-Equal $profileJson.organization "Example University" "profile organization"
+  Assert-Equal $profileJson.carsiEntityId $institution.CarsiEntityId "profile CARSI entity ID"
   Assert-Equal $profileJson.credentialHost "login.example.edu" "profile credential host"
   Assert-Equal $profileJson.usernameLabel "Account" "profile username label"
   Assert-Equal $profileJson.resourceAccessUrl $institution.ResourceAccessUrl "profile resource access URL"
@@ -128,6 +133,18 @@ try {
   Assert-Equal $profileJson.attributeReleaseRejectControlName "_eventId_AttributeReleaseRejected" "profile exact reject control"
   Assert-True ($profileJson.PSObject.Properties.Name -notcontains "username") "profile bridge must not release username"
   Assert-True ($profileJson.PSObject.Properties.Name -notcontains "password") "profile bridge must not release password"
+
+  $incompletePath = Join-Path $tempRoot "incomplete-entity\secrets.clixml"
+  $incompletePayload = Import-Clixml -LiteralPath $secretPath
+  $incompletePayload.Scopes.ieee_institution.Profile.PSObject.Properties.Remove("CarsiEntityId")
+  Save-AcquisitionSecretPayload -Payload $incompletePayload -Path $incompletePath
+  $entityUpdate = & $ieeeEntityUpdatePath `
+    -Path $incompletePath `
+    -CarsiEntityId "https://login.example.edu/idp/shibboleth" | ConvertFrom-Json
+  Assert-Equal $entityUpdate.status "updated" "entity update status"
+  $upgradedPayload = Import-AcquisitionSecrets -Path $incompletePath
+  Assert-Equal $upgradedPayload.Scopes.ieee_institution.Profile.CarsiEntityId "https://login.example.edu/idp/shibboleth" "incomplete profile entity upgrade"
+  Assert-Equal $upgradedPayload.Scopes.ieee_institution.Credential.UserName "synthetic-user" "entity upgrade preserves credential"
   foreach ($rejectedHost in @(
     "api.elsevier.com.evil.example",
     "www.sciencedirect.com",
@@ -157,6 +174,7 @@ try {
     -CarsiSearchText $institution.CarsiSearchText `
     -CarsiInstitution $institution.CarsiInstitution `
     -CarsiLoginButtonName $institution.CarsiLoginButtonName `
+    -CarsiEntityId $institution.CarsiEntityId `
     -CredentialHost $institution.CredentialHost `
     -UsernameLabel $institution.UsernameLabel `
     -PasswordLabel $institution.PasswordLabel `
@@ -190,6 +208,7 @@ try {
     -CarsiSearchText $institution.CarsiSearchText `
     -CarsiInstitution $institution.CarsiInstitution `
     -CarsiLoginButtonName $institution.CarsiLoginButtonName `
+    -CarsiEntityId $institution.CarsiEntityId `
     -CredentialHost $institution.CredentialHost `
     -UsernameLabel $institution.UsernameLabel `
     -PasswordLabel $institution.PasswordLabel `
@@ -221,6 +240,7 @@ try {
     "CARSI search text" = "Setup Example University"
     "Exact CARSI institution option" = "Setup Example University (Example)"
     "CARSI login button name" = "Continue"
+    "Exact CARSI IdP entity ID (HTTPS URL)" = "https://setup.example.edu/idp/shibboleth"
     "Exact institutional IdP hostname (no scheme or path)" = "setup.example.edu"
     "Username field label" = "Account"
     "Password field label" = "Passcode"
@@ -247,6 +267,7 @@ try {
   & $ieeeSetupPath -Path $setupPath -Force | Out-Null
   $setupPayload = Import-AcquisitionSecrets -Path $setupPath
   Assert-Equal $setupPayload.Scopes.ieee_institution.Profile.Organization "Setup Example University" "interactive IEEE setup"
+  Assert-Equal $setupPayload.Scopes.ieee_institution.Profile.CarsiEntityId "https://setup.example.edu/idp/shibboleth" "interactive CARSI entity ID"
   Assert-Equal $setupPayload.Scopes.ieee_institution.Profile.CredentialHost "setup.example.edu" "interactive host setup"
   Assert-Equal $setupPayload.Scopes.ieee_institution.Profile.ResourceAccessUrl "https://ds.carsi.edu.cn/resource/gotoResource.php?id=resource:setup-ieee" "interactive resource route setup"
 

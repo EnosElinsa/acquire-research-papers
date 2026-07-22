@@ -221,7 +221,7 @@ class Application:
     def default(
         cls,
         *,
-        accept_ieee_attribute_release: bool = False,
+        accept_ieee_attribute_release: bool = True,
     ) -> Application:
         paths = AppPaths.default()
         paths.create_directories()
@@ -618,8 +618,9 @@ def build_parser() -> argparse.ArgumentParser:
     fetch.add_argument("--output", type=Path, required=True)
     fetch.add_argument(
         "--accept-ieee-attribute-release",
-        action="store_true",
-        help="explicitly authorize the configured institutional attribute-release accept control",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="automatically use the configured institutional accept control (enabled by default)",
     )
 
     manual_fetch = subparsers.add_parser(
@@ -667,8 +668,9 @@ def build_parser() -> argparse.ArgumentParser:
     acquire_corpus.add_argument("--output", type=Path, required=True)
     acquire_corpus.add_argument(
         "--accept-ieee-attribute-release",
-        action="store_true",
-        help="explicitly authorize the configured institutional attribute-release accept control",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="automatically use the configured institutional accept control (enabled by default)",
     )
     acquire_corpus.add_argument(
         "--defer-host",
@@ -695,7 +697,7 @@ def run_cli(
         return 0
     app = application or Application.default(
         accept_ieee_attribute_release=bool(
-            getattr(args, "accept_ieee_attribute_release", False)
+            getattr(args, "accept_ieee_attribute_release", True)
         )
     )
     try:
