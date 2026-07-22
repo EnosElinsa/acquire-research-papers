@@ -131,3 +131,23 @@ def test_release_version_is_synchronized_at_0_3_0() -> None:
     )
     assert project["project"]["version"] == "0.3.0"
     assert '__version__ = "0.3.0"' in package_init
+
+
+def test_skill_documents_evidence_review_before_selection_and_acquisition() -> None:
+    skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+    corpus_reference = (ROOT / "references/corpus-mode.md").read_text(encoding="utf-8")
+    public_readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    combined = "\n".join((skill, corpus_reference, public_readme))
+
+    for required in (
+        "evidence-packets.jsonl",
+        "arp review corpus",
+        "review-decisions.jsonl",
+        "title and abstract",
+        "keywords are optional",
+        "full text is not required",
+        "selection-manifest.json",
+    ):
+        assert required in combined
+    assert "Discovery writes `candidates.jsonl`, `selected-papers.jsonl`" not in skill
+    assert "Auto-accept only when" not in corpus_reference

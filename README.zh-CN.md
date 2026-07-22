@@ -16,7 +16,8 @@
 | --- | --- | --- |
 | `fetch` | DOI、出版社链接或明确论文清单 | 已核验的 PDF 与原始 BibTeX |
 | `manual-fetch` | 需要用户在授权浏览器中完成下载 | 自动接管本地文件、核验并交付 |
-| `discover corpus` | 指定期刊/会议、主题、年份和数量 | 候选账本与冻结的高置信度选择清单 |
+| `discover corpus` | 指定期刊/会议、主题、年份和数量 | 覆盖账本与不可变证据包 |
+| `review corpus` | Codex 对发现证据作语义判断 | 经过校验、满足配额的冻结选集 |
 | `acquire corpus` | 已冻结的论文选择清单 | 已核验论文对及分开的人工、重试队列 |
 | `discover research` | gap、相似工作、claim 引用或 Related Work | 证据表、对比、gap 与审核记录 |
 
@@ -81,6 +82,9 @@ uv run --project $skill arp manual-fetch --input <DOI> `
 ```powershell
 uv run --project $skill arp discover corpus `
   --spec .\corpus.yaml --output C:\Research\corpus-discovery
+uv run --project $skill arp review corpus `
+  --run C:\Research\corpus-discovery `
+  --decisions C:\Research\review-decisions.jsonl
 uv run --project $skill arp acquire corpus `
   --selection C:\Research\corpus-discovery\selection-manifest.json `
   --output C:\Research\corpus `
@@ -89,7 +93,7 @@ uv run --project $skill arp discover research --brief .\brief.yaml --output C:\R
 uv run --project $skill arp export-md --pdf .\paper.pdf --output C:\Research\markdown
 ```
 
-发现阶段只写入 `candidates.jsonl`、`selected-papers.jsonl`、`pending-review.csv`、`discovery-errors.jsonl` 和带哈希保护的 `selection-manifest.json`，不会下载出版社文件。下载阶段只消费这份冻结清单，不会增删论文；它输出核验后的 PDF/BibTeX、`acquisition-manifest.jsonl`、`manual-download.csv`、`retryable-downloads.csv` 和 `delivery-manifest.json`。
+发现阶段按期刊/会议和年份完整分页，写入 `coverage.jsonl`、`candidates.jsonl`、`evidence-packets.jsonl`、`pending-metadata.csv` 和 `discovery-manifest.json`，不会下载出版社文件，也不会直接冻结选集。Codex 使用标题和摘要判断相关性，关键词是可选证据，发现阶段不要求正文权限。`review corpus` 用 `review-decisions.jsonl` 与不可变证据哈希完成校验和配额规划，然后写入 `selected-papers.jsonl` 与 `selection-manifest.json`。下载阶段只消费这份冻结清单，不会增删论文；它输出核验后的 PDF/BibTeX、`acquisition-manifest.jsonl`、`manual-download.csv`、`retryable-downloads.csv` 和 `delivery-manifest.json`。
 
 单篇论文需要用户访问时，整批下载不会中断。工具会继续处理其余选择，并在 `manual-download.csv` 中记录 selection ID、DOI、官方链接、出版社主机、原因和预留目标路径。之后使用 `manual-fetch --selection <manifest> --key <selection-id>`，系统会依据冻结身份核验本地 PDF/BibTeX，再填入预留位置。
 

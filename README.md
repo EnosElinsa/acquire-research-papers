@@ -16,7 +16,8 @@ Discovery APIs may propose candidates, but they never replace official artifacts
 | --- | --- | --- |
 | `fetch` | DOI, official URL, or explicit paper list | Verified PDF and raw BibTeX pair |
 | `manual-fetch` | Authorized browser download requiring user interaction | Automatic local takeover, verification, and delivery |
-| `discover corpus` | Venue, topic, year, and count constraints | Candidate ledger plus a frozen high-confidence selection |
+| `discover corpus` | Venue, topic, year, and count constraints | Coverage ledger plus immutable evidence packets |
+| `review corpus` | Codex semantic decisions over discovery evidence | Validated, quota-aware frozen selection |
 | `acquire corpus` | A frozen corpus selection | Verified pairs plus separate manual and retry queues |
 | `discover research` | Gap analysis, similar work, claim evidence, or Related Work | Evidence maps, comparisons, gaps, and review records |
 
@@ -79,6 +80,9 @@ Corpus discovery, corpus acquisition, research, and optional Markdown export:
 ```powershell
 uv run --project $skill arp discover corpus `
   --spec .\corpus.yaml --output C:\Research\corpus-discovery
+uv run --project $skill arp review corpus `
+  --run C:\Research\corpus-discovery `
+  --decisions C:\Research\review-decisions.jsonl
 uv run --project $skill arp acquire corpus `
   --selection C:\Research\corpus-discovery\selection-manifest.json `
   --output C:\Research\corpus `
@@ -87,7 +91,7 @@ uv run --project $skill arp discover research --brief .\brief.yaml --output C:\R
 uv run --project $skill arp export-md --pdf .\paper.pdf --output C:\Research\markdown
 ```
 
-Discovery writes `candidates.jsonl`, `selected-papers.jsonl`, `pending-review.csv`, `discovery-errors.jsonl`, and a hash-protected `selection-manifest.json`; it performs no publisher download. Acquisition consumes only that frozen selection and never adds or removes papers. It writes verified pairs, `acquisition-manifest.jsonl`, `manual-download.csv`, `retryable-downloads.csv`, and `delivery-manifest.json`.
+Discovery paginates venue/year sources and writes `coverage.jsonl`, `candidates.jsonl`, `evidence-packets.jsonl`, `pending-metadata.csv`, and `discovery-manifest.json`; it performs no publisher download and does not freeze a selection. Codex reviews title and abstract evidence, while keywords are optional and full text is not required. `review corpus` validates `review-decisions.jsonl` against immutable evidence hashes, applies quotas, and writes `selected-papers.jsonl` plus `selection-manifest.json`. Acquisition consumes only that frozen selection and never adds or removes papers. It writes verified pairs, `acquisition-manifest.jsonl`, `manual-download.csv`, `retryable-downloads.csv`, and `delivery-manifest.json`.
 
 Acquisition does not stop when one selected paper needs user access. It finishes the remaining selections and writes the inaccessible item to `manual-download.csv` with its frozen selection ID, DOI, official URL, publisher host, reason, and reserved target paths. Complete it with `manual-fetch --selection <manifest> --key <selection-id>` so the local files are verified against the frozen identity before delivery.
 

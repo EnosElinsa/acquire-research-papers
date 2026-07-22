@@ -11,7 +11,8 @@ Deliver a verified pair for every paper: the official publisher PDF and the publ
 
 - Use `fetch` for a DOI, official URL, exact title, or explicit paper list.
 - Use `manual-fetch` when an authorized publisher download must be completed by the user in a normal browser, especially subscribed ScienceDirect content.
-- Use `discover corpus` for venue/topic/year/count tasks. It creates an auditable candidate ledger and a frozen high-confidence selection; it does not download publisher artifacts.
+- Use `discover corpus` for venue/topic/year/count tasks. It enumerates venue/year slices and creates auditable evidence packets; it does not freeze a selection or download publisher artifacts.
+- Use `review corpus` after Codex has reviewed the evidence packets. It validates structured semantic decisions and freezes the quota-aware selection.
 - Use `acquire corpus` to consume a frozen selection, verify supported publisher pairs, and separate manual and retryable items.
 - Use `discover research` for gap analysis, nearest work, claim citations, citation expansion, or Related Work research.
 
@@ -60,13 +61,19 @@ The command opens only the canonical article page. The user completes organizati
 
 ```powershell
 uv run --project $skill arp discover corpus --spec <job.yaml> --output <discovery-run>
+uv run --project $skill arp review corpus `
+  --run <discovery-run> --decisions <review-decisions.jsonl>
 uv run --project $skill arp acquire corpus `
   --selection <discovery-run\selection-manifest.json> --output <delivery-root> `
   --defer-host <publisher.example>
 uv run --project $skill arp discover research --brief <brief.yaml> --output <directory>
 ```
 
-Discovery writes `candidates.jsonl`, `selected-papers.jsonl`, `pending-review.csv`, `discovery-errors.jsonl`, and `selection-manifest.json`. It writes no PDF, BibTeX, acquisition ledger, or manual-download queue. The selection manifest hashes both the normalized specification and selected list; edit neither file before acquisition.
+Discovery writes `request-spec.json`, `coverage.jsonl`, `candidates.jsonl`, `evidence-packets.jsonl`, `pending-metadata.csv`, `discovery-errors.jsonl`, and `discovery-manifest.json`. It writes no selection, PDF, BibTeX, acquisition ledger, or manual-download queue. Resume the same run to retry partial coverage; complete venue/year slices are checkpointed.
+
+Codex must inspect `evidence-packets.jsonl` and create one JSONL decision per review-ready candidate. Judge relevance from title and abstract; keywords are optional supporting evidence. Full text is not required for corpus discovery. A missing abstract remains `pending` until metadata enrichment succeeds. Each decision records `candidate_id`, `evidence_hash`, `decision`, `matched_topics`, `evidence_fields`, `reason`, `reviewer: codex`, and `rule_version`. Do not accept by score or keyword alone.
+
+`review corpus` rejects unknown IDs, duplicate decisions, stale hashes, missing explanations, and acceptance without title/abstract evidence. It writes `reviewed-candidates.jsonl`, `pending-review.csv`, `selected-papers.jsonl`, and `selection-manifest.json`. The selection manifest hashes both the normalized specification and selected list; edit neither file before acquisition.
 
 Acquisition verifies that frozen hash, processes only `selected-papers.jsonl`, and never changes the selection. It writes verified pairs, `acquisition-manifest.jsonl`, `manual-download.csv`, `retryable-downloads.csv`, and `delivery-manifest.json`. A known access or paper-level failure does not stop unrelated selections.
 
@@ -98,7 +105,7 @@ uv run --project $skill arp export-md --pdf <paper.pdf> --output <directory>
 - Verify DOI, title, year, author scope, and venue against official metadata.
 - Keep ambiguous, wrong-track, low-confidence, or mismatched papers out of automatic delivery.
 - Report quota shortfalls instead of lowering screening thresholds.
-- Treat abstracts as discovery evidence. Direct support or contradiction requires full text with a section or page and a short excerpt.
+- Treat title and abstract as corpus relevance evidence; keywords are optional and full text is not required. Direct support or contradiction in research mode requires full text with a section or page and a short excerpt.
 - Ordinary fetch, manual fetch, corpus discovery, and corpus acquisition produce no Markdown.
 
 ## Hard stops

@@ -20,6 +20,7 @@ from acquire_research_papers.discovery.contracts import (
 )
 from acquire_research_papers.discovery.coordinator import DiscoveryCoordinator
 from acquire_research_papers.discovery.corpus import CorpusDiscoveryWorkflow
+from acquire_research_papers.discovery.providers import CrossrefVenueDiscoveryProvider
 
 
 def test_discover_corpus_writes_review_evidence_without_acquiring(
@@ -193,7 +194,7 @@ def test_fake_provider_extends_corpus_without_core_venue_changes(
 
 
 def test_production_provider_registry_fails_closed_without_optional_keys() -> None:
-    crossref = SimpleNamespace(corpus_searcher=lambda *_: ())
+    crossref = SimpleNamespace(search=lambda *_args, **_kwargs: None)
 
     providers = _production_discovery_providers(
         crossref=crossref,
@@ -207,6 +208,7 @@ def test_production_provider_registry_fails_closed_without_optional_keys() -> No
         "acl-anthology",
         "ijcai-proceedings",
     ]
+    assert isinstance(providers[0], CrossrefVenueDiscoveryProvider)
 
 
 def test_production_registry_uses_keyless_doi_enrichment() -> None:

@@ -57,6 +57,7 @@ from acquire_research_papers.discovery.official import (
     IjcaiDiscoveryProvider,
 )
 from acquire_research_papers.discovery.providers import (
+    CrossrefVenueDiscoveryProvider,
     DoiBatchEnrichmentProvider,
     QueryApiProvider,
 )
@@ -134,7 +135,7 @@ def _production_discovery_providers(
     environment: Mapping[str, str] | None = None,
 ) -> list[DiscoveryProvider]:
     providers: list[DiscoveryProvider] = [
-        QueryApiProvider("crossref", crossref.corpus_searcher),
+        CrossrefVenueDiscoveryProvider(crossref.search),
         AclAnthologyDiscoveryProvider(client=acl_client),
         IjcaiDiscoveryProvider(client=ijcai_client),
     ]

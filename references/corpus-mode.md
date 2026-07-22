@@ -16,9 +16,9 @@ Create a `CorpusSpec` conforming to `schemas/corpus-spec.schema.json`. Capture:
 
 Natural language is the usual input. A DOCX, Markdown, TXT, CSV, DOI list, or URL list is only an adapter. If the file contains several people or sections, use a `scope_selector` derived from the user's instruction and preserve the extracted constraints in the run provenance.
 
-## Discover and screen
+## Enumerate, enrich, and prepare evidence
 
-Use Crossref, OpenAlex, and Semantic Scholar only to discover candidates and graph relationships. Preserve the source, query, record ID, and fields actually observed. Do not copy their citation-style output into `citation.bib`.
+Enumerate every requested venue/year slice before topic screening. Use an official proceedings index where supported and a paginated Crossref venue/date stream as the generic source. ISSN identifies journals when supplied; otherwise use the exact container title. OpenAlex and Semantic Scholar may enrich or expand candidates, but they do not establish final citation artifacts. Preserve the source, record ID, observed fields, coverage state, and sanitized request provenance.
 
 Apply hard gates before semantic relevance:
 
@@ -28,9 +28,9 @@ Apply hard gates before semantic relevance:
 4. DOI/version identity;
 5. explicit topic exclusions.
 
-Auto-accept only when the hard gates pass, title and abstract evidence are available, the semantic match is high confidence, and one canonical publisher record is identified. Put boundary cases in `pending-review.csv` with concrete reasons. Reject known wrong tracks even if their titles look relevant.
+The deterministic lexical prefilter is high recall and produces review signals only. It never rejects a hard-gate-passing candidate for lacking an exact phrase. Normalize case, Unicode separators, hyphens, plurals, and common inflections. A candidate without an abstract goes to `pending-metadata.csv`; keywords are optional.
 
-Satisfy group minimums before filling the remaining preferred total. Stop at the preferred total. If the minimum cannot be met from high-quality candidates, report `shortfall`; never lower thresholds to fill a quota.
+Discovery and selection are separate phases. Discovery prepares immutable evidence. Codex then decides semantic relevance from title and abstract; keywords are optional and full text is not required. Selection is frozen only after those decisions pass hash and schema validation.
 
 Run discovery as its own phase:
 
@@ -40,13 +40,34 @@ uv run --project $skill arp discover corpus --spec <job.yaml> --output <discover
 
 Discovery produces:
 
-- `candidates.jsonl`: every merged candidate, observed evidence, decision, and reason;
-- `selected-papers.jsonl`: only the deterministic high-confidence selection and its reserved delivery paths;
-- `pending-review.csv`: semantic boundary cases that are not selected;
+- `request-spec.json`: the normalized request used by this run;
+- `coverage.jsonl`: complete, partial, or failed state for each provider venue/year slice;
+- `candidates.jsonl`: every merged candidate, hard-gate result, metadata state, and prefilter signals;
+- `evidence-packets.jsonl`: immutable review evidence with candidate ID and SHA-256;
+- `pending-metadata.csv`: candidates that still lack title or abstract evidence;
 - `discovery-errors.jsonl`: sanitized provider and page diagnostics;
-- `selection-manifest.json`: the normalized spec, counts, provider coverage, shortfalls, and SHA-256 of the frozen list.
+- `discovery-manifest.json`: request hash, counts, provider coverage, and artifact names.
 
-It does not resolve publisher artifacts or write PDF, BibTeX, acquisition, manual, or retry files. Provider failure may reduce coverage and produce a named shortfall; it never creates a manual-download row because no acquisition has occurred.
+It does not write `selected-papers.jsonl`, resolve publisher artifacts, or write PDF, BibTeX, acquisition, manual, or retry files. Retry the same output directory when coverage is partial; completed slices are checkpointed and candidates are merged by stable identity.
+
+## Review and freeze
+
+Read `evidence-packets.jsonl` and write `review-decisions.jsonl`. Each record must contain:
+
+- `candidate_id` and the unchanged `evidence_hash`;
+- `decision`: `accept`, `reject`, or `pending`;
+- `matched_topics` and `evidence_fields` used by the decision;
+- a concrete `reason`;
+- `reviewer: codex` and a stable `rule_version`.
+
+Use title and abstract for the decision; keywords are optional. Do not require publisher login or full text. Missing abstracts remain pending. Then import decisions:
+
+```powershell
+uv run --project $skill arp review corpus `
+  --run <discovery-run> --decisions <review-decisions.jsonl>
+```
+
+The importer rejects unknown/duplicate IDs, changed hashes, invalid enums, unsupported evidence fields, and acceptance without ready metadata. It applies group and recent-window quotas to accepted candidates, stops at the preferred total, and writes `reviewed-candidates.jsonl`, `pending-review.csv`, `selected-papers.jsonl`, and `selection-manifest.json`. Named shortfall classes distinguish coverage, evidence, review, and quota work. Never lower semantic criteria to fill a quota.
 
 ## Acquire and deliver
 
@@ -78,7 +99,7 @@ It also writes `manual-download.csv`, `retryable-downloads.csv`, and `delivery-m
 
 ## Review output
 
-`candidates.jsonl` is an auditable candidate ledger, not a citation library. `pending-review.csv` contains only semantic decisions; acquisition failures never enter it. `manual-download.csv` contains only frozen selections that the user can retrieve from the official page after automated acquisition finishes.
+`candidates.jsonl` is an auditable candidate ledger, not a citation library. `pending-metadata.csv` contains discovery evidence gaps. `pending-review.csv` contains unresolved semantic decisions after import; acquisition failures never enter it. `manual-download.csv` contains only frozen selections that the user can retrieve from the official page after automated acquisition finishes.
 
 Import a manual pair with the immutable selection identity:
 
