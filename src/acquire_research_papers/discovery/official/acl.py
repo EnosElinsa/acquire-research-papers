@@ -300,6 +300,8 @@ class AclAnthologyDiscoveryProvider:
         covered: list[str] = []
         coverage: list[CoverageSlice] = []
         for year in request.years:
+            if f"{_PROVIDER_ID}:{year}" in request.completed_slices:
+                continue
             event_url = self.event_template.format(year=year)
             host = urlsplit(event_url).hostname
             if not host or host.casefold() not in self.production_hosts:

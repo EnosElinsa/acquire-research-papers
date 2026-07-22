@@ -268,6 +268,8 @@ class IjcaiDiscoveryProvider:
         covered: list[str] = []
         coverage: list[CoverageSlice] = []
         for year in request.years:
+            if f"{_PROVIDER_ID}:{year}:Main Track" in request.completed_slices:
+                continue
             index_url = self.index_template.format(year=year)
             host = urlsplit(index_url).hostname
             if not host or host.casefold() not in self.production_hosts:

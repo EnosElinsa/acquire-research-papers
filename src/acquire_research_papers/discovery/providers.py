@@ -66,6 +66,9 @@ class CrossrefVenueDiscoveryProvider:
         page_size = max(1, min(self.page_size, 1000))
         for venue in request.venues:
             for year in request.years:
+                slice_label = f"{self.provider_id}:{venue.name}:{year}"
+                if slice_label in request.completed_slices:
+                    continue
                 filters = {
                     "from-pub-date": f"{year:04d}-01-01",
                     "until-pub-date": f"{year:04d}-12-31",
@@ -212,6 +215,9 @@ class DoiBatchEnrichmentProvider:
         candidates: tuple[CandidateMetadata, ...],
         request: DiscoveryRequest,
     ) -> DiscoveryBatch:
+        coverage_label = f"{self.provider_id}:doi-batch"
+        if coverage_label in request.completed_slices:
+            return DiscoveryBatch()
         venue_names = {
             _normalized(name)
             for venue in request.venues
@@ -278,6 +284,8 @@ class QueryApiProvider:
 
     def discover(self, request: DiscoveryRequest) -> DiscoveryBatch:
         if not self.configured:
+            return DiscoveryBatch()
+        if self.provider_id in request.completed_slices:
             return DiscoveryBatch()
         found: list[CandidateMetadata] = []
         diagnostics: list[DiscoveryDiagnostic] = []

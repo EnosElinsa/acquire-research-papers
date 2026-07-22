@@ -20,10 +20,9 @@ from acquire_research_papers.discovery.contracts import (
 )
 from acquire_research_papers.discovery.coordinator import DiscoveryCoordinator
 from acquire_research_papers.discovery.corpus import CorpusDiscoveryWorkflow
-from acquire_research_papers.selection import SelectionStore
 
 
-def test_discover_corpus_writes_frozen_list_without_acquiring(
+def test_discover_corpus_writes_review_evidence_without_acquiring(
     tmp_path: Path,
     capsys,
 ) -> None:
@@ -63,12 +62,12 @@ def test_discover_corpus_writes_frozen_list_without_acquiring(
 
     payload = json.loads(capsys.readouterr().out)
     assert exit_code == 0
-    assert payload["status"] == "planned"
-    assert Path(payload["selected"]).is_file()
-    assert Path(payload["selection_manifest"]).is_file()
-    selection = SelectionStore.load(Path(payload["selection_manifest"]))
-    assert [record.key for record in selection.records] == ["high"]
-    assert selection.manifest["provider_coverage"] == ["fake:split"]
+    assert payload["status"] == "review_required"
+    assert Path(payload["evidence_packets"]).is_file()
+    assert Path(payload["coverage"]).is_file()
+    assert payload["reviewable"] == 1
+    assert not (output / "selected-papers.jsonl").exists()
+    assert not (output / "selection-manifest.json").exists()
     assert not (output / "acquisition-manifest.jsonl").exists()
     assert not (output / "manual-download.csv").exists()
     assert not list(output.rglob("*.pdf"))
@@ -111,8 +110,7 @@ def test_discover_corpus_persists_sanitized_provider_diagnostics(
 
     payload = json.loads(capsys.readouterr().out)
     assert exit_code == 0
-    assert payload["status"] == "shortfall"
-    assert payload["shortfall"] == 1
+    assert payload["status"] == "coverage_incomplete"
     rows = [
         json.loads(line)
         for line in Path(payload["discovery_errors"]).read_text(encoding="utf-8").splitlines()
@@ -187,10 +185,10 @@ def test_fake_provider_extends_corpus_without_core_venue_changes(
     ) == 0
     capsys.readouterr()
 
-    selected = (output / "selected-papers.jsonl").read_text(encoding="utf-8")
-    assert venue in selected
+    evidence = (output / "evidence-packets.jsonl").read_text(encoding="utf-8")
+    assert venue in evidence
     assert "invented-provider:2026" in (
-        output / "selection-manifest.json"
+        output / "discovery-manifest.json"
     ).read_text(encoding="utf-8")
 
 

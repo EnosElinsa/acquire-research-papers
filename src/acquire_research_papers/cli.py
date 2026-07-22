@@ -787,17 +787,16 @@ def run_cli(
                 {
                     "status": result.status,
                     "candidates": str(result.candidates_path),
-                    "selected": str(result.selected_path),
-                    "pending_review": str(result.pending_review_path),
+                    "evidence_packets": str(result.evidence_path),
+                    "pending_metadata": str(result.pending_metadata_path),
+                    "coverage": str(result.coverage_path),
+                    "request": str(result.request_path),
                     "discovery_errors": str(result.diagnostics_path),
-                    "selection_manifest": str(result.selection_manifest_path),
                     "manifest": str(result.manifest_path),
-                    "accepted": result.accepted,
-                    "pending": result.pending,
-                    "rejected": result.rejected,
-                    "not_selected": result.not_selected,
-                    "shortfall": result.shortfall,
-                    "quota_shortfalls": list(result.quota_shortfalls),
+                    "reviewable": result.reviewable,
+                    "pending_metadata_count": result.pending_metadata,
+                    "hard_gate_failed": result.hard_gate_failed,
+                    "coverage_incomplete": result.coverage_incomplete,
                 }
             )
             return 0

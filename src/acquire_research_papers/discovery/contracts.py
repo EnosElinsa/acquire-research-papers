@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field, replace
+from dataclasses import asdict, dataclass, field, fields, replace
 from typing import Any, Protocol
 
 
@@ -33,6 +33,7 @@ class DiscoveryRequest:
     minimum: int
     preferred: int
     maximum: int
+    completed_slices: frozenset[str] = frozenset()
 
     @property
     def queries(self) -> tuple[str, ...]:
@@ -49,6 +50,9 @@ class DiscoveryRequest:
             years=years,
             year_priority=tuple(year for year in self.year_priority if year in years),
         )
+
+    def with_completed_slices(self, values: frozenset[str]) -> DiscoveryRequest:
+        return replace(self, completed_slices=values)
 
     @classmethod
     def from_spec(cls, spec: dict[str, Any]) -> DiscoveryRequest:
@@ -111,6 +115,26 @@ class CandidateMetadata:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> CandidateMetadata:
+        allowed = {item.name for item in fields(cls)}
+        values = {key: value for key, value in payload.items() if key in allowed}
+        for key in (
+            "evidence_fields",
+            "authors",
+            "keywords",
+            "related_ids",
+            "source_records",
+        ):
+            if key in values:
+                values[key] = tuple(values[key])
+        if "field_provenance" in values:
+            values["field_provenance"] = {
+                str(key): tuple(sources)
+                for key, sources in values["field_provenance"].items()
+            }
+        return cls(**values)
 
 
 @dataclass(frozen=True)
