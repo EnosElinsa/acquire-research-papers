@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
 
@@ -243,6 +244,8 @@ class DoiBatchEnrichmentProvider:
     provider_id: str
     lookup: Callable[[list[str]], Iterable[CandidateMetadata]]
     batch_size: int = 500
+    pause_seconds: float = 0.0
+    sleeper: Callable[[float], None] = time.sleep
 
     def capabilities(self) -> DiscoveryCapabilities:
         return DiscoveryCapabilities(
@@ -279,18 +282,33 @@ class DoiBatchEnrichmentProvider:
                 normalize_doi(candidate.doi)
                 for candidate in candidates
                 if candidate.doi
+                and not candidate.abstract.strip()
                 and (not years or candidate.year in years)
                 and (not venue_names or _normalized(candidate.venue) in venue_names)
             )
         )
+        if not dois:
+            return DiscoveryBatch(covered_slices=(coverage_label,))
         found: list[CandidateMetadata] = []
         diagnostics: list[DiscoveryDiagnostic] = []
         successful_chunks = 0
-        for index in range(0, len(dois), max(1, min(self.batch_size, 500))):
-            chunk = dois[index : index + self.batch_size]
+        chunk_size = max(1, min(self.batch_size, 500))
+        for index in range(0, len(dois), chunk_size):
+            chunk = dois[index : index + chunk_size]
             try:
                 found.extend(self.lookup(chunk))
-            except (RateLimited, NetworkTransient):
+            except RateLimited:
+                diagnostics.append(
+                    DiscoveryDiagnostic(
+                        provider_id=self.provider_id,
+                        phase="doi-enrichment",
+                        error_code="rate_limited",
+                        message="DOI metadata enrichment was rate limited",
+                        retryable=True,
+                    )
+                )
+                break
+            except NetworkTransient:
                 diagnostics.append(
                     DiscoveryDiagnostic(
                         provider_id=self.provider_id,
@@ -312,6 +330,8 @@ class DoiBatchEnrichmentProvider:
                 )
                 continue
             successful_chunks += 1
+            if index + chunk_size < len(dois) and self.pause_seconds > 0:
+                self.sleeper(self.pause_seconds)
         return DiscoveryBatch(
             candidates=tuple(found),
             diagnostics=tuple(diagnostics),

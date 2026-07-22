@@ -168,7 +168,13 @@ def _production_discovery_enrichers(
         client=SafeHttpClient(allowed_hosts={"api.semanticscholar.org"}),
         api_key=configured.get("SEMANTIC_SCHOLAR_API_KEY", "").strip() or None,
     )
-    return [DoiBatchEnrichmentProvider("semantic-scholar", semantic.lookup_dois)]
+    return [
+        DoiBatchEnrichmentProvider(
+            "semantic-scholar",
+            semantic.lookup_dois,
+            pause_seconds=1.0,
+        )
+    ]
 
 
 @dataclass

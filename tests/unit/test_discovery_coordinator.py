@@ -392,10 +392,95 @@ def test_doi_enricher_does_not_checkpoint_a_partially_failed_batch() -> None:
         return (seeds[0],)
 
     batch = DoiBatchEnrichmentProvider(
-        "semantic-scholar", lookup, batch_size=1
+        "semantic-scholar", lookup, batch_size=1, sleeper=lambda _: None
     ).enrich(seeds, request())
 
     assert [candidate.doi for candidate in batch.candidates] == ["10.1000/a"]
     assert batch.covered_slices == ()
     assert len(batch.diagnostics) == 1
     assert batch.diagnostics[0].retryable
+
+
+def test_doi_enricher_only_queries_missing_abstracts_and_paces_batches() -> None:
+    seeds = (
+        CandidateMetadata(
+            "ready",
+            "Ready",
+            2026,
+            "Venue A",
+            0.0,
+            True,
+            ("title", "abstract", "venue"),
+            doi="10.1000/ready",
+            abstract="Already complete",
+        ),
+        CandidateMetadata(
+            "missing-a",
+            "Missing A",
+            2026,
+            "Venue A",
+            0.0,
+            True,
+            ("title", "venue"),
+            doi="10.1000/missing-a",
+        ),
+        CandidateMetadata(
+            "missing-b",
+            "Missing B",
+            2026,
+            "Venue A",
+            0.0,
+            True,
+            ("title", "venue"),
+            doi="10.1000/missing-b",
+        ),
+    )
+    calls: list[list[str]] = []
+    pauses: list[float] = []
+
+    def lookup(dois: list[str]):
+        calls.append(dois)
+        return ()
+
+    batch = DoiBatchEnrichmentProvider(
+        "semantic-scholar",
+        lookup,
+        batch_size=1,
+        pause_seconds=1.0,
+        sleeper=pauses.append,
+    ).enrich(seeds, request())
+
+    assert calls == [["10.1000/missing-a"], ["10.1000/missing-b"]]
+    assert pauses == [1.0]
+    assert batch.covered_slices == ("semantic-scholar:doi-batch",)
+
+
+def test_doi_enricher_stops_after_explicit_rate_limit() -> None:
+    seeds = tuple(
+        CandidateMetadata(
+            suffix,
+            f"Paper {suffix}",
+            2026,
+            "Venue A",
+            0.0,
+            True,
+            ("title", "venue"),
+            doi=f"10.1000/{suffix}",
+        )
+        for suffix in ("a", "b", "c")
+    )
+    calls: list[list[str]] = []
+
+    def lookup(dois: list[str]):
+        calls.append(dois)
+        if dois == ["10.1000/b"]:
+            raise RateLimited(429, "https://api.example/batch")
+        return ()
+
+    batch = DoiBatchEnrichmentProvider(
+        "semantic-scholar", lookup, batch_size=1, sleeper=lambda _: None
+    ).enrich(seeds, request())
+
+    assert calls == [["10.1000/a"], ["10.1000/b"]]
+    assert batch.covered_slices == ()
+    assert batch.diagnostics[0].error_code == "rate_limited"
