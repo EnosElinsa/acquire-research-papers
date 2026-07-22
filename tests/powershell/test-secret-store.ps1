@@ -73,6 +73,14 @@ try {
     AttributeReleaseAcceptControlName = "_eventId_proceed"
     AttributeReleaseRejectControlName = "_eventId_AttributeReleaseRejected"
   }
+  $sameAttributeControls = [ordered]@{}
+  foreach ($entry in $institution.GetEnumerator()) {
+    $sameAttributeControls[$entry.Key] = $entry.Value
+  }
+  $sameAttributeControls.AttributeReleaseAcceptControlName = $institution.AttributeReleaseRejectControlName
+  Assert-Throws {
+    ConvertTo-IeeeInstitutionProfile -Institution $sameAttributeControls | Out-Null
+  } "IEEE accept and reject controls must be different"
 
   $elsevierOnlyPath = Join-Path $tempRoot "elsevier-only\secrets.clixml"
   Set-ElsevierApiKey -ApiKey $elsevierKey -Path $elsevierOnlyPath

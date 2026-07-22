@@ -135,6 +135,10 @@ function ConvertTo-IeeeInstitutionProfile([object]$Institution) {
       -not [string]::IsNullOrWhiteSpace($attributeReleaseReject)) {
     throw "An attribute-release reject control requires an accept or continue control."
   }
+  if (-not [string]::IsNullOrWhiteSpace($attributeReleaseReject) -and
+      $attributeReleaseAccept -ceq $attributeReleaseReject) {
+    throw "IEEE attribute-release accept and reject control names must be different."
+  }
   foreach ($controlName in @($attributeReleaseAccept, $attributeReleaseReject)) {
     if (-not [string]::IsNullOrWhiteSpace($controlName) -and $controlName -notmatch '^[A-Za-z0-9_-]+$') {
       throw "IEEE attribute-release control names may contain only letters, digits, underscores, and hyphens."

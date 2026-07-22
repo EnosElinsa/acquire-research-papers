@@ -197,6 +197,7 @@ class FakePage {
     resourceGatewayReturnsIeee = true,
     resourceGatewayRequiresLogin = true,
     resourceGatewayPortalVisits = 0,
+    resourceGatewayNavigationFailures = 0,
     xplMetadata = {},
   } = {}) {
     this.currentUrl = "about:blank";
@@ -223,6 +224,7 @@ class FakePage {
     this.resourceGatewayReturnsIeee = resourceGatewayReturnsIeee;
     this.resourceGatewayRequiresLogin = resourceGatewayRequiresLogin;
     this.resourceGatewayPortalVisits = resourceGatewayPortalVisits;
+    this.resourceGatewayNavigationFailures = resourceGatewayNavigationFailures;
     this.resourceGatewayVisits = 0;
     this.attributeReleaseReady = false;
     this.attributeReleaseAccepted = false;
@@ -241,6 +243,10 @@ class FakePage {
       this.paperNavigationFailures -= 1;
       this.currentUrl = "chrome-error://chromewebdata/";
       throw new Error("page.goto: net::ERR_ABORTED at chrome-error://chromewebdata/");
+    }
+    if (url === INSTITUTION_PROFILE.resourceAccessUrl && this.resourceGatewayNavigationFailures > 0) {
+      this.resourceGatewayNavigationFailures -= 1;
+      throw new Error("page.goto: net::ERR_ABORTED while opening the resource gateway");
     }
     if (url.includes("/stamp/stamp.jsp")) this.stampVisits += 1;
     if (url.includes("/stamp/stamp.jsp") && this.denyFirstStamp && !this.authenticated) {
@@ -367,6 +373,13 @@ test("uses a configured institution profile and exact credential host", () => {
   assert.equal(subject.isApprovedCredentialHost("login.example.edu.evil.example", INSTITUTION_PROFILE), false);
   assert.equal(subject.isApprovedCredentialHost("login.example.edu.", INSTITUTION_PROFILE), false);
   assert.throws(
+    () => subject.normalizeInstitutionProfile({
+      ...INSTITUTION_PROFILE,
+      attributeReleaseAcceptControlName: INSTITUTION_PROFILE.attributeReleaseRejectControlName,
+    }),
+    /accept and reject control names must be different/i,
+  );
+  assert.throws(
     () => subject.normalizeInstitutionProfile({ ...INSTITUTION_PROFILE, credentialHost: "https://login.example.edu/path" }),
     /exact DNS hostname/,
   );
@@ -383,6 +396,23 @@ test("uses a configured institution profile and exact credential host", () => {
     subject.sanitizeTransitionUrl("https://idp.example.edu/SSO?execution=e1s2&token=secret#state"),
     "https://idp.example.edu/SSO?execution=[redacted]&token=[redacted]",
   );
+});
+
+test("sanitizes URL query values at the automation error boundary", () => {
+  const payload = subject.toErrorPayload(new subject.IeeeFlowError(
+    "paper-navigation",
+    "page.goto failed for https://ieeexplore.ieee.org/document/11014597?RelayState=TOPSECRET&SAMLRequest=SECRET2",
+    {
+      targetUrl: "https://ieeexplore.ieee.org/document/11014597?Signature=SECRET3&OSSAccessKeyId=SECRET4&token=SECRET5",
+    },
+  ));
+  const serialized = JSON.stringify(payload);
+  for (const secret of ["TOPSECRET", "SECRET2", "SECRET3", "SECRET4", "SECRET5"]) {
+    assert.equal(serialized.includes(secret), false);
+  }
+  for (const key of ["RelayState", "SAMLRequest", "Signature", "OSSAccessKeyId", "token"]) {
+    assert.equal(serialized.includes(`${key}=[redacted]`), true);
+  }
 });
 
 test("preserves Unicode across the PowerShell profile and credential bridges", async () => {
@@ -932,6 +962,64 @@ test("re-enters the configured resource when institutional login returns to the 
   }
 });
 
+test("counts transient CARSI recovery against the three-visit resource gateway budget", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "arp-ieee-gateway-budget-"));
+  try {
+    const page = new FakePage({
+      carsiNavigationFailures: 1,
+      resourceGatewayPortalVisits: 3,
+    });
+    await assert.rejects(
+      subject.retrieveIeeePaper({
+        page,
+        browserContext: fakeContext({
+          pdfResponses: [new FakeResponse("denied", { status: 403, contentType: "text/html" })],
+        }),
+        reference: "https://ieeexplore.ieee.org/document/11014597",
+        workDir: root,
+        institutionProfile: INSTITUTION_PROFILE,
+        credentialReader: async () => ({ username: "user", password: "password" }),
+      }),
+      (error) => error?.phase === "institutional-return",
+    );
+    assert.equal(page.resourceGatewayVisits, 3);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("retries a transient gateway failure without trusting a stale IEEE page URL", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "arp-ieee-stale-gateway-url-"));
+  let credentialReads = 0;
+  try {
+    const page = new FakePage({ resourceGatewayNavigationFailures: 1 });
+    const result = await subject.retrieveIeeePaper({
+      page,
+      browserContext: fakeContext({
+        pdfResponses: [
+          new FakeResponse("denied", { status: 403, contentType: "text/html" }),
+          new FakeResponse("%PDF-1.7\nauthorized after gateway retry\n%%EOF\n"),
+        ],
+      }),
+      reference: "https://ieeexplore.ieee.org/document/11014597",
+      workDir: root,
+      institutionProfile: INSTITUTION_PROFILE,
+      credentialReader: async () => {
+        credentialReads += 1;
+        return { username: "user", password: "password" };
+      },
+    });
+    assert.equal(result.status, "downloaded");
+    assert.equal(credentialReads, 1);
+    assert.equal(
+      page.navigations.filter((url) => url === INSTITUTION_PROFILE.resourceAccessUrl).length,
+      3,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("starts at the configured resource gateway before CARSI institution selection", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "arp-ieee-gateway-first-"));
   let reads = 0;
@@ -1061,6 +1149,33 @@ test("retries one transient chrome-error paper navigation", async () => {
       page.navigations.filter((url) => url.includes("/document/11014597")).length >= 2,
       true,
     );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("redacts SAML query values from a real navigation failure payload", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "arp-ieee-paper-navigation-error-"));
+  try {
+    const reference = "https://ieeexplore.ieee.org/document/11014597?RelayState=TOPSECRET&SAMLRequest=SECRET2";
+    let caught;
+    try {
+      await subject.retrieveIeeePaper({
+        page: new FakePage({ paperNavigationFailures: 2 }),
+        browserContext: fakeContext(),
+        reference,
+        workDir: root,
+        credentialReader: async () => { throw new Error("credentials must not be read"); },
+      });
+    } catch (error) {
+      caught = error;
+    }
+    assert.ok(caught);
+    const serialized = JSON.stringify(subject.toErrorPayload(caught));
+    assert.equal(serialized.includes("TOPSECRET"), false);
+    assert.equal(serialized.includes("SECRET2"), false);
+    assert.equal(serialized.includes("RelayState=[redacted]"), true);
+    assert.equal(serialized.includes("SAMLRequest=[redacted]"), true);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

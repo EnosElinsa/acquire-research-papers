@@ -13,6 +13,7 @@ const CITATION_URL = `https://${IEEE_HOST}/rest/search/citation/format`;
 const DNS_HOST = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;
 const CONTROL_NAME = /^[A-Za-z0-9_-]+$/;
 const MAX_RESOURCE_GATEWAY_VISITS = 3;
+const TRANSIENT_GATEWAY_HOST = "transient-navigation";
 
 export const SELECTORS = Object.freeze({
   documentTitle: "h1.document-title",
@@ -118,6 +119,15 @@ export function normalizeInstitutionProfile(payload = {}) {
       "Institution attribute-release reject control requires an accept or continue control.",
     );
   }
+  if (
+    profile.attributeReleaseRejectControlName
+    && profile.attributeReleaseAcceptControlName === profile.attributeReleaseRejectControlName
+  ) {
+    throw new IeeeFlowError(
+      "credential-read",
+      "Institution attribute-release accept and reject control names must be different.",
+    );
+  }
   for (const controlName of controlNames) {
     if (controlName && !CONTROL_NAME.test(controlName)) {
       throw new IeeeFlowError(
@@ -212,6 +222,45 @@ export function sanitizeTransitionUrl(value) {
   return `${url.origin}${url.pathname}${query}`;
 }
 
+function sanitizeUrlsInText(value) {
+  return String(value ?? "").replace(/https?:\/\/[^\s"'<>\\]+/giu, (candidate) => {
+    try {
+      return sanitizeTransitionUrl(candidate);
+    } catch {
+      return "[redacted-url]";
+    }
+  });
+}
+
+function sanitizeErrorValue(value, key = "") {
+  if (/(?:token|signature|ossaccesskeyid|relaystate|samlrequest)/iu.test(key)) {
+    return "[redacted]";
+  }
+  if (typeof value === "string") return sanitizeUrlsInText(value);
+  if (Array.isArray(value)) return value.map((item) => sanitizeErrorValue(item));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([entryKey, entryValue]) => [
+        entryKey,
+        sanitizeErrorValue(entryValue, entryKey),
+      ]),
+    );
+  }
+  return value;
+}
+
+export function toErrorPayload(error) {
+  const payload = {
+    status: "error",
+    phase: error instanceof IeeeFlowError ? error.phase : "automation",
+    message: sanitizeUrlsInText(error?.message ?? error),
+  };
+  if (error instanceof IeeeFlowError && Object.keys(error.details).length) {
+    payload.details = sanitizeErrorValue(error.details);
+  }
+  return payload;
+}
+
 async function uniqueLocator(locator, phase, description) {
   const count = await locator.count();
   if (count !== 1) {
@@ -249,10 +298,75 @@ async function navigateWithTransientRetry(page, targetUrl, timeoutMs, phase) {
       throw new IeeeFlowError(
         phase,
         `Browser navigation did not reach the requested page after ${attempt} attempt(s).`,
-        { targetUrl, attempts: attempt },
+        { targetUrl: sanitizeTransitionUrl(targetUrl), attempts: attempt },
       );
     }
   }
+}
+
+function gatewayLimitError(page, gatewayState) {
+  const returnHost = gatewayState.transitions.at(-1)?.host
+    ?? hostnameOf(page.url(), "institutional-return");
+  return new IeeeFlowError(
+    "institutional-return",
+    `The configured CARSI resource did not return to the exact ${IEEE_HOST} host after ${gatewayState.visits} visits; received ${returnHost}.`,
+    {
+      hostname: returnHost,
+      resourceVisits: gatewayState.visits,
+      requiresUserAction: true,
+      transitions: gatewayState.transitions,
+    },
+  );
+}
+
+async function visitResourceGateway({
+  page,
+  institutionProfile,
+  timeoutMs,
+  gatewayState,
+  phase,
+}) {
+  if (gatewayState.visits >= MAX_RESOURCE_GATEWAY_VISITS) {
+    throw gatewayLimitError(page, gatewayState);
+  }
+  gatewayState.visits += 1;
+  const visit = gatewayState.visits;
+  try {
+    await page.goto(institutionProfile.resourceAccessUrl, {
+      waitUntil: "domcontentloaded",
+      timeout: timeoutMs,
+    });
+  } catch (error) {
+    if (!isTransientChromeNavigation(error, page)) {
+      throw new IeeeFlowError(
+        phase,
+        "Browser navigation did not reach the configured CARSI resource gateway.",
+        {
+          targetUrl: sanitizeTransitionUrl(institutionProfile.resourceAccessUrl),
+          resourceVisits: gatewayState.visits,
+        },
+      );
+    }
+    gatewayState.transitions.push({
+      visit,
+      host: TRANSIENT_GATEWAY_HOST,
+      url: sanitizeTransitionUrl(institutionProfile.resourceAccessUrl),
+    });
+    return TRANSIENT_GATEWAY_HOST;
+  }
+  await waitForDocument(page, timeoutMs);
+  const observedHost = hostnameOf(page.url(), phase);
+  const returnHost = observedHost === "chromewebdata"
+    ? TRANSIENT_GATEWAY_HOST
+    : observedHost;
+  gatewayState.transitions.push({
+    visit,
+    host: returnHost,
+    url: returnHost === TRANSIENT_GATEWAY_HOST
+      ? sanitizeTransitionUrl(institutionProfile.resourceAccessUrl)
+      : sanitizeTransitionUrl(page.url()),
+  });
+  return returnHost;
 }
 
 function firstText(...values) {
@@ -468,7 +582,7 @@ async function resolvePdfUrls(page, paperUrl, timeoutMs, fallbackStampUrl = "") 
   if (stampUrl.hostname.toLowerCase() !== IEEE_HOST) {
     throw new IeeeFlowError("pdf-link", "The IEEE PDF action points outside IEEE Xplore.");
   }
-  await page.goto(stampUrl.href, { waitUntil: "domcontentloaded", timeout: timeoutMs });
+  await navigateWithTransientRetry(page, stampUrl.href, timeoutMs, "pdf-frame");
   await waitForDocument(page, timeoutMs);
   const landed = new URL(page.url());
   if (landed.hostname.toLowerCase() !== IEEE_HOST) {
@@ -715,6 +829,7 @@ async function authenticateThroughCarsi({
   secretPath,
   timeoutMs,
   acceptAttributeRelease,
+  gatewayState,
 }) {
   let authHost = hostnameOf(page.url(), "unexpected-auth-host");
   if (authHost === IEEE_HOST) return;
@@ -723,12 +838,28 @@ async function authenticateThroughCarsi({
       authHost = await openCarsiInstitutionLogin(page, timeoutMs, institutionProfile);
       if (authHost !== "chromewebdata") break;
       if (attempt === 0) {
-        await navigateWithTransientRetry(
+        authHost = await visitResourceGateway({
           page,
-          institutionProfile.resourceAccessUrl,
+          institutionProfile,
           timeoutMs,
-          "carsi-navigation",
-        );
+          gatewayState,
+          phase: "carsi-navigation",
+        });
+        while (
+          authHost === TRANSIENT_GATEWAY_HOST
+          && gatewayState.visits < MAX_RESOURCE_GATEWAY_VISITS
+        ) {
+          authHost = await visitResourceGateway({
+            page,
+            institutionProfile,
+            timeoutMs,
+            gatewayState,
+            phase: "carsi-navigation",
+          });
+        }
+        if (authHost === TRANSIENT_GATEWAY_HOST) throw gatewayLimitError(page, gatewayState);
+        if (authHost === IEEE_HOST) return;
+        if (authHost !== CARSI_HOST) break;
       }
     }
   }
@@ -957,21 +1088,19 @@ async function authorizeIeeeResource({
   institutionProfile,
   acceptAttributeRelease,
   timeoutMs,
-  maxVisits = MAX_RESOURCE_GATEWAY_VISITS,
-  startingVisit = 0,
-  initialTransitions = [],
+  gatewayState,
 }) {
-  const transitions = [...initialTransitions];
-  for (let attempt = 1; attempt <= maxVisits; attempt += 1) {
-    const visit = startingVisit + attempt;
-    await page.goto(institutionProfile.resourceAccessUrl, {
-      waitUntil: "domcontentloaded",
-      timeout: timeoutMs,
+  while (gatewayState.visits < MAX_RESOURCE_GATEWAY_VISITS) {
+    const returnVisit = gatewayState.visits + 1;
+    let returnHost = await visitResourceGateway({
+      page,
+      institutionProfile,
+      timeoutMs,
+      gatewayState,
+      phase: "institutional-return",
     });
-    await waitForDocument(page, timeoutMs);
-    let returnHost = hostnameOf(page.url(), "institutional-return");
-    transitions.push({ visit, host: returnHost, url: sanitizeTransitionUrl(page.url()) });
     if (returnHost === IEEE_HOST) return;
+    if (returnHost === TRANSIENT_GATEWAY_HOST) continue;
 
     const handledRelease = await handleConfiguredAttributeRelease({
       page,
@@ -981,35 +1110,24 @@ async function authorizeIeeeResource({
     });
     if (handledRelease) {
       returnHost = hostnameOf(page.url(), "institutional-return");
-      transitions.push({
-        visit,
+      gatewayState.transitions.push({
+        visit: returnVisit,
         host: returnHost,
         url: sanitizeTransitionUrl(page.url()),
         after: "attribute-release",
       });
       if (returnHost === IEEE_HOST) return;
     }
-    if (returnHost === CARSI_HOST && attempt < maxVisits) continue;
+    if (returnHost === CARSI_HOST) continue;
     if (returnHost !== CARSI_HOST) {
       throw new IeeeFlowError(
         "unexpected-auth-host",
         `The institutional return reached unexpected host ${returnHost}.`,
-        { hostname: returnHost, transitions },
+        { hostname: returnHost, transitions: gatewayState.transitions },
       );
     }
   }
-
-  const returnHost = hostnameOf(page.url(), "institutional-return");
-  throw new IeeeFlowError(
-    "institutional-return",
-    `The configured CARSI resource did not return to the exact ${IEEE_HOST} host after ${startingVisit + maxVisits} visits; received ${returnHost}.`,
-    {
-      hostname: returnHost,
-      resourceVisits: startingVisit + maxVisits,
-      requiresUserAction: true,
-      transitions,
-    },
-  );
+  throw gatewayLimitError(page, gatewayState);
 }
 
 function resultPayload(paper, downloaded, bibtex) {
@@ -1069,19 +1187,29 @@ export async function retrieveIeeePaper(options) {
     const institutionProfile = options.institutionProfile
       ? normalizeInstitutionProfile(options.institutionProfile)
       : await profileReader({ secretPath });
-    await navigateWithTransientRetry(
-      options.page,
-      institutionProfile.resourceAccessUrl,
+    const gatewayState = { visits: 0, transitions: [] };
+    let initialHost = await visitResourceGateway({
+      page: options.page,
+      institutionProfile,
       timeoutMs,
-      "carsi-ieee-resource",
-    );
-    await waitForDocument(options.page, timeoutMs);
-    const initialHost = hostnameOf(options.page.url(), "carsi-ieee-resource");
-    const transitions = [{
-      visit: 1,
-      host: initialHost,
-      url: sanitizeTransitionUrl(options.page.url()),
-    }];
+      gatewayState,
+      phase: "carsi-ieee-resource",
+    });
+    while (
+      initialHost === TRANSIENT_GATEWAY_HOST
+      && gatewayState.visits < MAX_RESOURCE_GATEWAY_VISITS
+    ) {
+      initialHost = await visitResourceGateway({
+        page: options.page,
+        institutionProfile,
+        timeoutMs,
+        gatewayState,
+        phase: "carsi-ieee-resource",
+      });
+    }
+    if (initialHost === TRANSIENT_GATEWAY_HOST) {
+      throw gatewayLimitError(options.page, gatewayState);
+    }
     if (initialHost !== IEEE_HOST) {
       await authenticateThroughCarsi({
         page: options.page,
@@ -1090,6 +1218,7 @@ export async function retrieveIeeePaper(options) {
         secretPath,
         timeoutMs,
         acceptAttributeRelease,
+        gatewayState,
       });
       const authenticatedHost = hostnameOf(options.page.url(), "authentication-result");
       if (authenticatedHost !== IEEE_HOST) {
@@ -1098,9 +1227,7 @@ export async function retrieveIeeePaper(options) {
           institutionProfile,
           acceptAttributeRelease,
           timeoutMs,
-          maxVisits: MAX_RESOURCE_GATEWAY_VISITS - 1,
-          startingVisit: 1,
-          initialTransitions: transitions,
+          gatewayState,
         });
       }
     }
@@ -1211,14 +1338,7 @@ async function main() {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   main().catch((error) => {
-    const payload = {
-      status: "error",
-      phase: error instanceof IeeeFlowError ? error.phase : "automation",
-      message: String(error?.message ?? error),
-      ...(error instanceof IeeeFlowError && Object.keys(error.details).length
-        ? { details: error.details }
-        : {}),
-    };
+    const payload = toErrorPayload(error);
     process.stderr.write(`${JSON.stringify(payload)}\n`);
     process.exitCode = 1;
   });
