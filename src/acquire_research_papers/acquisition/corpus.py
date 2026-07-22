@@ -96,13 +96,61 @@ def _read_previous(path: Path) -> dict[str, dict[str, Any]]:
         return {}
     previous: dict[str, dict[str, Any]] = {}
     try:
-        for line in path.read_text(encoding="utf-8").splitlines():
+        for line_number, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(), start=1
+        ):
+            if not line.strip():
+                continue
             value = json.loads(line)
-            if isinstance(value, dict) and value.get("selection_id"):
-                previous[str(value["selection_id"])] = value
-    except (OSError, UnicodeError, json.JSONDecodeError):
-        return {}
+            if not isinstance(value, dict) or not value.get("selection_id"):
+                raise ValueError(
+                    f"acquisition manifest row {line_number} has no selection_id"
+                )
+            selection_id = str(value["selection_id"])
+            if selection_id in previous:
+                raise ValueError("acquisition manifest contains duplicate selection_id")
+            previous[selection_id] = value
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        raise ValueError("existing acquisition output has an unreadable acquisition manifest") from exc
     return previous
+
+
+def _read_json_object(path: Path, description: str) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"existing acquisition output has an unreadable {description}") from exc
+    if not isinstance(value, dict):
+        raise ValueError(f"existing acquisition output has an unreadable {description}")
+    return value
+
+
+def _write_json_object(path: Path, value: Mapping[str, Any]) -> None:
+    atomic_write_bytes(
+        path,
+        (
+            json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+        ).encode("utf-8"),
+    )
+
+
+def _has_unbound_managed_artifacts(
+    destination: Path,
+    records: tuple[SelectionRecord, ...],
+) -> bool:
+    managed = (
+        "acquisition-manifest.jsonl",
+        "manual-download.csv",
+        "retryable-downloads.csv",
+        "paper-manifest.csv",
+    )
+    if any((destination / name).exists() for name in managed):
+        return True
+    return any(
+        path.exists()
+        for record in records
+        for path in _expected_paths(record, destination).values()
+    )
 
 
 def _verified_previous(
@@ -275,24 +323,47 @@ class CorpusAcquisitionWorkflow:
         selected_snapshot = selection.selected_path.read_bytes()
         destination = output.resolve()
         destination.mkdir(parents=True, exist_ok=True)
+        selection_sha256 = str(selection.manifest["selected_sha256"])
+        binding_path = destination / "selection-binding.json"
         manifest_path = destination / "delivery-manifest.json"
-        if manifest_path.is_file():
-            try:
-                existing_manifest = json.loads(
-                    manifest_path.read_text(encoding="utf-8")
-                )
-            except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-                raise ValueError(
-                    "existing acquisition output has an unreadable delivery manifest"
-                ) from exc
-            if existing_manifest.get("selection_sha256") != selection.manifest.get(
-                "selected_sha256"
-            ):
+        existing_manifest = (
+            _read_json_object(manifest_path, "delivery manifest")
+            if manifest_path.is_file()
+            else None
+        )
+        if existing_manifest is not None:
+            if existing_manifest.get("selection_sha256") != selection_sha256:
                 raise ValueError(
                     "acquisition output belongs to a different frozen selection"
                 )
+        if binding_path.is_file():
+            binding = _read_json_object(binding_path, "selection binding")
+            if binding.get("selection_sha256") != selection_sha256:
+                raise ValueError(
+                    "acquisition output belongs to a different frozen selection"
+                )
+        else:
+            if existing_manifest is None and _has_unbound_managed_artifacts(
+                destination, selection.records
+            ):
+                raise ValueError(
+                    "acquisition output contains unbound managed artifacts"
+                )
+            _write_json_object(
+                binding_path,
+                {
+                    "schema_version": 1,
+                    "phase": "acquisition_binding",
+                    "selection_sha256": selection_sha256,
+                },
+            )
         acquisition_path = destination / "acquisition-manifest.jsonl"
         previous = _read_previous(acquisition_path)
+        selection_ids = {record.selection_id for record in selection.records}
+        if set(previous) - selection_ids:
+            raise ValueError(
+                "existing acquisition output has an unreadable acquisition manifest"
+            )
 
         rows: list[dict[str, Any]] = []
         for record in selection.records:
@@ -300,6 +371,12 @@ class CorpusAcquisitionWorkflow:
             if _verified_previous(record, prior, destination):
                 rows.append(dict(prior))
                 continue
+            if any(
+                path.exists() for path in _expected_paths(record, destination).values()
+            ):
+                raise ValueError(
+                    "acquisition output contains an unverified reserved artifact"
+                )
             publisher_host = _normalized_record_host(record)
             if publisher_host in deferred:
                 outcome = {
@@ -390,7 +467,7 @@ class CorpusAcquisitionWorkflow:
             "schema_version": 1,
             "phase": "acquisition",
             "status": status,
-            "selection_sha256": selection.manifest["selected_sha256"],
+            "selection_sha256": selection_sha256,
             "total": len(rows),
             **counts,
             "complete": complete,
@@ -398,13 +475,9 @@ class CorpusAcquisitionWorkflow:
             "manual_download": manual_path.name,
             "retryable_downloads": retryable_path.name,
             "paper_manifest": paper_manifest_path.name,
+            "selection_binding": binding_path.name,
         }
-        atomic_write_bytes(
-            manifest_path,
-            (json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode(
-                "utf-8"
-            ),
-        )
+        _write_json_object(manifest_path, manifest)
         if selection.selected_path.read_bytes() != selected_snapshot:
             raise ValueError("frozen selection changed during acquisition")
         return AcquisitionRunResult(

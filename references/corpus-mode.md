@@ -11,14 +11,14 @@ Create a `CorpusSpec` conforming to `schemas/corpus-spec.schema.json`. Capture:
 - included and prioritized years;
 - included and excluded publication types or tracks;
 - positive topics, synonyms, and exclusion concepts;
-- group, venue, year, and recent-window quotas;
+- group, venue, year, publication-type, and recent-window quotas;
 - output profile, numbering, PDF/BibTeX requirements, and explicit Markdown choice.
 
 Natural language is the usual input. A DOCX, Markdown, TXT, CSV, DOI list, or URL list is only an adapter. If the file contains several people or sections, use a `scope_selector` derived from the user's instruction and preserve the extracted constraints in the run provenance.
 
 ## Enumerate, enrich, and prepare evidence
 
-Enumerate every requested venue/year slice before topic screening. Use an official proceedings index where supported and a paginated Crossref venue/date stream as the generic source. ISSN identifies journals. For a Crossref-indexed proceedings collection, set `collection_doi` to the parent DOI values; the provider enumerates records through Crossref's exact `alternative-id` filter. A conference declared with `kind: conference` and no official provider or collection DOI is reported as incomplete instead of treating fuzzy title search as exhaustive. OpenAlex and Semantic Scholar may enrich or expand candidates, but they do not establish final citation artifacts. Preserve the source, record ID, observed fields, coverage state, and sanitized request provenance.
+Enumerate every requested venue/year slice before topic screening. Use an official proceedings index where supported and a paginated Crossref venue/date stream as the generic source. ISSN identifies journals. Without an ISSN, Crossref enumeration uses the exact `container-title` filter. For a Crossref-indexed proceedings collection, set `collection_doi` to the parent DOI values; the provider enumerates records through Crossref's exact `alternative-id` filter. A conference declared with `kind: conference` and no official provider or collection DOI is reported as incomplete instead of treating fuzzy title search as exhaustive. OpenAlex and Semantic Scholar may enrich or expand candidates, but they do not establish final citation artifacts. Preserve the source, record ID, observed fields, recognized/emitted record counts, coverage state, and sanitized request provenance.
 
 Apply hard gates before semantic relevance:
 
@@ -46,7 +46,7 @@ Discovery produces:
 - `evidence-packets.jsonl`: immutable review evidence with candidate ID and SHA-256;
 - `pending-metadata.csv`: candidates that still lack title or abstract evidence;
 - `discovery-errors.jsonl`: sanitized provider and page diagnostics;
-- `discovery-manifest.json`: request hash, counts, provider coverage, and artifact names.
+- `discovery-manifest.json`: request hash, candidate/evidence/coverage hashes, counts, provider coverage, and artifact names.
 
 It does not write `selected-papers.jsonl`, resolve publisher artifacts, or write PDF, BibTeX, acquisition, manual, or retry files. Retry the same output directory when coverage is partial; completed slices are checkpointed and candidates are merged by stable identity.
 
@@ -67,7 +67,7 @@ uv run --project $skill arp review corpus `
   --run <discovery-run> --decisions <review-decisions.jsonl>
 ```
 
-The importer rejects unknown/duplicate IDs, changed hashes, invalid enums, unsupported evidence fields, and acceptance without ready metadata. It applies group and recent-window quotas to accepted candidates, stops at the preferred total, and writes `reviewed-candidates.jsonl`, `pending-review.csv`, `selected-papers.jsonl`, and `selection-manifest.json`. Named shortfall classes distinguish coverage, evidence, review, and quota work. Never lower semantic criteria to fill a quota.
+The importer verifies the request and all discovery artifact hashes, then rejects unknown/duplicate IDs, changed hashes, invalid enums, unsupported evidence fields, and acceptance without ready title-and-abstract metadata. It applies venue, year, publication-type, group, and recent-window quotas to accepted candidates and stops at the preferred total. A scalable early stop is valid only when the accepted pool already satisfies that preferred total and every quota. The manifest records `review_completion: target_satisfied_early_stop` and `ready_unreviewed`; every omitted ready packet remains in `pending-review.csv` and is excluded from selection. Otherwise, all ready packets require an explicit decision before the review can be complete. The workflow writes `reviewed-candidates.jsonl`, `pending-review.csv`, `selected-papers.jsonl`, and `selection-manifest.json`. Named shortfall classes distinguish coverage, evidence, review, and quota work. Never lower semantic criteria to fill a quota.
 
 ## Acquire and deliver
 
@@ -79,7 +79,7 @@ uv run --project $skill arp acquire corpus `
   --defer-host <publisher.example>
 ```
 
-The acquisition phase verifies the selected-list hash before any publisher request. It routes every frozen record through the same publisher adapters used by `fetch`; it cannot discover extra papers or change semantic decisions. Delivery is complete only when both files pass:
+The acquisition phase verifies the selected-list hash and atomically writes `selection-binding.json` before any publisher request. It routes every frozen record through the same publisher adapters used by `fetch`; it cannot discover extra papers or change semantic decisions. An existing final manifest with the same hash can migrate to the binding contract. A corrupt ledger, a different selection hash, or an unbound/unverified reserved artifact stops the run before overwrite. Delivery is complete only when both files pass:
 
 - official PDF validation and SHA-256 recording;
 - official raw BibTeX parse and metadata comparison.

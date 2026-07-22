@@ -142,7 +142,9 @@ def test_coordinator_slices_provider_by_capability() -> None:
 def test_coordinator_routes_official_venue_years_away_from_generic_enumerator() -> None:
     official = FakeProvider(
         "official-a",
-        DiscoveryBatch(),
+        DiscoveryBatch(
+            coverage=(CoverageSlice("official-a", "Venue A", 2026, "complete"),)
+        ),
         venue_aliases=frozenset({"VA"}),
         supported_years=frozenset({2026}),
     )
@@ -162,6 +164,55 @@ def test_coordinator_routes_official_venue_years_away_from_generic_enumerator() 
         ("Venue A", (2025,)),
         ("Venue B", (2026, 2025)),
     ]
+
+
+def test_coordinator_falls_back_to_generic_when_official_slice_failed() -> None:
+    official = FakeProvider(
+        "official-a",
+        DiscoveryBatch(
+            coverage=(CoverageSlice("official-a", "Venue A", 2026, "failed"),)
+        ),
+        venue_aliases=frozenset({"VA"}),
+        supported_years=frozenset({2026}),
+    )
+    generic = FakeProvider(
+        "generic",
+        DiscoveryBatch(),
+        source_class="venue_enumerator",
+    )
+
+    DiscoveryCoordinator([generic, official]).discover(request())
+
+    assert generic.received is not None
+    assert [(venue.name, venue.years) for venue in generic.received.venues] == [
+        ("Venue A", (2026, 2025)),
+        ("Venue B", (2026, 2025)),
+    ]
+
+
+def test_coordinator_records_failed_coverage_for_provider_wide_exception() -> None:
+    class BrokenOfficial(FakeProvider):
+        def discover(self, request: DiscoveryRequest) -> DiscoveryBatch:
+            raise RuntimeError("broken")
+
+    provider = BrokenOfficial(
+        "official-a",
+        DiscoveryBatch(),
+        venue_aliases=frozenset({"VA"}),
+        supported_years=frozenset({2026}),
+    )
+
+    batch = DiscoveryCoordinator([provider]).discover(request())
+
+    assert batch.coverage == (
+        CoverageSlice(
+            "official-a",
+            "Venue A",
+            2026,
+            "failed",
+            diagnostic_code="provider_error",
+        ),
+    )
 
 
 def test_coordinator_preserves_structured_coverage() -> None:
@@ -360,6 +411,47 @@ def test_coordinator_enriches_in_scope_dois_after_provider_discovery() -> None:
     assert enriched.abstract == "Enriched abstract"
     assert enriched.official_url is None
     assert batch.covered_slices == ("semantic-scholar:doi-batch",)
+
+
+def test_coordinator_enriches_seed_candidates_when_enumeration_is_checkpointed() -> None:
+    seed = CandidateMetadata(
+        "seed",
+        "In Scope",
+        2026,
+        "Venue A",
+        0.8,
+        True,
+        ("title", "venue"),
+        doi="10.1000/seed",
+        provenance={"source": "crossref"},
+    )
+    looked_up: list[str] = []
+
+    def lookup(dois: list[str]):
+        looked_up.extend(dois)
+        return (
+            CandidateMetadata(
+                "enriched",
+                "In Scope",
+                2026,
+                "Venue A",
+                0.5,
+                True,
+                ("title", "abstract", "venue"),
+                doi="10.1000/seed",
+                abstract="Recovered abstract",
+                provenance={"source": "semantic-scholar"},
+            ),
+        )
+
+    seeded_request = request().with_seed_candidates((seed,))
+    batch = DiscoveryCoordinator(
+        [FakeProvider("crossref", DiscoveryBatch())],
+        enrichers=[DoiBatchEnrichmentProvider("semantic-scholar", lookup)],
+    ).discover(seeded_request)
+
+    assert looked_up == ["10.1000/seed"]
+    assert batch.candidates[0].abstract == "Recovered abstract"
 
 
 def test_doi_enricher_does_not_checkpoint_a_partially_failed_batch() -> None:

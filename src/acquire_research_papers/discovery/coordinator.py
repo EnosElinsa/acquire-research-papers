@@ -138,17 +138,33 @@ class DiscoveryCoordinator:
         self.enrichers = tuple(enrichers)
 
     def discover(self, request: DiscoveryRequest) -> DiscoveryBatch:
-        merged: dict[str, CandidateMetadata] = {}
+        merged: dict[str, CandidateMetadata] = {
+            candidate_identity(candidate): candidate
+            for candidate in request.seed_candidates
+        }
         diagnostics: list[DiscoveryDiagnostic] = []
         covered: list[str] = []
         coverage: list[CoverageSlice] = []
-        capabilities = tuple(provider.capabilities() for provider in self.providers)
-        official_capabilities = tuple(
-            capability
-            for capability in capabilities
-            if capability.source_class == "official_index"
+        configured = tuple(
+            (provider, provider.capabilities()) for provider in self.providers
         )
-        for provider, capability in zip(self.providers, capabilities, strict=True):
+        priority = {"official_index": 0, "venue_enumerator": 1}
+        ordered = tuple(
+            sorted(
+                enumerate(configured),
+                key=lambda item: (priority.get(item[1][1].source_class, 2), item[0]),
+            )
+        )
+        official_complete: set[tuple[str, int]] = set()
+
+        def requested_name(coverage_venue: str) -> str | None:
+            normalized = coverage_venue.casefold()
+            for venue in request.venues:
+                if normalized in {name.casefold() for name in venue.all_names}:
+                    return venue.name
+            return None
+
+        for _, (provider, capability) in ordered:
             if capability.source_class == "venue_enumerator" and request.venues:
                 supported_venues = tuple(
                     replace(
@@ -158,11 +174,7 @@ class DiscoveryCoordinator:
                             for year in request.years
                             if venue.supports_year(year)
                             and capability.supports_year(year)
-                            and not any(
-                                official.supports(venue)
-                                and official.supports_year(year)
-                                for official in official_capabilities
-                            )
+                            and (venue.name, year) not in official_complete
                         ),
                     )
                     for venue in request.venues
@@ -170,11 +182,7 @@ class DiscoveryCoordinator:
                     and any(
                         venue.supports_year(year)
                         and capability.supports_year(year)
-                        and not any(
-                            official.supports(venue)
-                            and official.supports_year(year)
-                            for official in official_capabilities
-                        )
+                        and (venue.name, year) not in official_complete
                         for year in request.years
                     )
                 )
@@ -196,29 +204,62 @@ class DiscoveryCoordinator:
             try:
                 batch = provider.discover(provider_request)
             except (RateLimited, NetworkTransient):
+                error_code = "network_transient"
                 diagnostics.append(
                     DiscoveryDiagnostic(
                         capability.provider_id,
                         "discover",
-                        "network_transient",
+                        error_code,
                         "provider temporarily unavailable",
                         retryable=True,
                     )
                 )
+                if capability.source_class in {"official_index", "venue_enumerator"}:
+                    coverage.extend(
+                        CoverageSlice(
+                            capability.provider_id,
+                            venue.name,
+                            year,
+                            "failed",
+                            diagnostic_code=error_code,
+                        )
+                        for venue in supported_venues
+                        for year in provider_request.years
+                        if venue.supports_year(year)
+                    )
                 continue
             except (HttpStatusError, RuntimeError, ValueError):
+                error_code = "provider_error"
                 diagnostics.append(
                     DiscoveryDiagnostic(
                         capability.provider_id,
                         "discover",
-                        "provider_error",
+                        error_code,
                         "provider failed during discovery",
                     )
                 )
+                if capability.source_class in {"official_index", "venue_enumerator"}:
+                    coverage.extend(
+                        CoverageSlice(
+                            capability.provider_id,
+                            venue.name,
+                            year,
+                            "failed",
+                            diagnostic_code=error_code,
+                        )
+                        for venue in supported_venues
+                        for year in provider_request.years
+                        if venue.supports_year(year)
+                    )
                 continue
             diagnostics.extend(batch.diagnostics)
             covered.extend(batch.covered_slices)
             coverage.extend(batch.coverage)
+            if capability.source_class == "official_index":
+                for item in batch.coverage:
+                    venue_name = requested_name(item.venue)
+                    if item.state == "complete" and venue_name is not None:
+                        official_complete.add((venue_name, item.year))
             for candidate in batch.candidates:
                 identity = candidate_identity(candidate)
                 try:

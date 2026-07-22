@@ -172,8 +172,12 @@ class IjcaiDiscoveryProvider:
         return not included or bool(included & _MAIN_TYPES)
 
     @staticmethod
-    def _index_entries(soup: BeautifulSoup, year: int) -> list[tuple[str, str, str]]:
+    def _index_entries(
+        soup: BeautifulSoup,
+        year: int,
+    ) -> tuple[int, list[tuple[str, str, str]]]:
         entries: list[tuple[str, str, str]] = []
+        recognized = 0
         track = ""
         expected_path = re.compile(rf"^/proceedings/{year}/\d+/?$")
         for node in soup.find_all(["h1", "h2", "h3", "h4", "div"]):
@@ -189,6 +193,9 @@ class IjcaiDiscoveryProvider:
             classes = {str(value).casefold() for value in node.get("class", ())}
             if "paper_wrapper" not in classes:
                 continue
+            if "main track" not in track.casefold():
+                continue
+            recognized += 1
             detail_anchors = [
                 anchor
                 for anchor in node.find_all("a", href=True)
@@ -206,7 +213,7 @@ class IjcaiDiscoveryProvider:
             )
             if title:
                 entries.append((track, title, href))
-        return entries
+        return recognized, entries
 
     @staticmethod
     def _candidate(
@@ -277,6 +284,7 @@ class IjcaiDiscoveryProvider:
                 venue.supports_year(year) for venue in request.venues
             ):
                 continue
+            requested_venue = _requested_venue(request, year)
             if f"{_PROVIDER_ID}:{year}:Main Track" in request.completed_slices:
                 continue
             index_url = self.index_template.format(year=year)
@@ -292,7 +300,7 @@ class IjcaiDiscoveryProvider:
                         phase="proceedings-index",
                         error_code="network_transient",
                         message="IJCAI proceedings index is temporarily unavailable",
-                        venue=_OFFICIAL_VENUE,
+                        venue=requested_venue,
                         year=year,
                         url=index_url,
                         retryable=True,
@@ -301,7 +309,7 @@ class IjcaiDiscoveryProvider:
                 coverage.append(
                     CoverageSlice(
                         provider_id=_PROVIDER_ID,
-                        venue=_OFFICIAL_VENUE,
+                        venue=requested_venue,
                         year=year,
                         state="failed",
                         diagnostic_code="network_transient",
@@ -315,7 +323,7 @@ class IjcaiDiscoveryProvider:
                         phase="proceedings-index",
                         error_code="source_unavailable",
                         message="IJCAI proceedings index is unavailable for the requested year",
-                        venue=_OFFICIAL_VENUE,
+                        venue=requested_venue,
                         year=year,
                         url=index_url,
                     )
@@ -323,7 +331,7 @@ class IjcaiDiscoveryProvider:
                 coverage.append(
                     CoverageSlice(
                         provider_id=_PROVIDER_ID,
-                        venue=_OFFICIAL_VENUE,
+                        venue=requested_venue,
                         year=year,
                         state="failed",
                         diagnostic_code="source_unavailable",
@@ -331,15 +339,15 @@ class IjcaiDiscoveryProvider:
                 )
                 continue
             soup = BeautifulSoup(index_html, "html.parser")
-            entries = self._index_entries(soup, year)
-            if not entries:
+            records_recognized, entries = self._index_entries(soup, year)
+            if not records_recognized:
                 diagnostics.append(
                     DiscoveryDiagnostic(
                         provider_id=_PROVIDER_ID,
                         phase="proceedings-index",
                         error_code="page_contract_changed",
                         message="IJCAI proceedings index has no recognizable paper records",
-                        venue=_OFFICIAL_VENUE,
+                        venue=requested_venue,
                         year=year,
                         url=index_url,
                     )
@@ -347,7 +355,7 @@ class IjcaiDiscoveryProvider:
                 coverage.append(
                     CoverageSlice(
                         provider_id=_PROVIDER_ID,
-                        venue=_OFFICIAL_VENUE,
+                        venue=requested_venue,
                         year=year,
                         state="failed",
                         pages_fetched=1,
@@ -355,10 +363,46 @@ class IjcaiDiscoveryProvider:
                     )
                 )
                 continue
-            requested_venue = _requested_venue(request, year)
+            if not entries:
+                diagnostics.append(
+                    DiscoveryDiagnostic(
+                        provider_id=_PROVIDER_ID,
+                        phase="proceedings-index",
+                        error_code="page_contract_changed",
+                        message="IJCAI proceedings index contains no usable paper records",
+                        venue=requested_venue,
+                        year=year,
+                        url=index_url,
+                    )
+                )
+                coverage.append(
+                    CoverageSlice(
+                        provider_id=_PROVIDER_ID,
+                        venue=requested_venue,
+                        year=year,
+                        state="failed",
+                        pages_fetched=1,
+                        diagnostic_code="page_contract_changed",
+                        records_recognized=records_recognized,
+                    )
+                )
+                continue
             seen_urls: set[str] = set()
             detail_attempts = 0
             slice_error_codes: list[str] = []
+            if len(entries) != records_recognized:
+                diagnostics.append(
+                    DiscoveryDiagnostic(
+                        provider_id=_PROVIDER_ID,
+                        phase="proceedings-index",
+                        error_code="page_contract_changed",
+                        message="IJCAI proceedings index contains malformed paper records",
+                        venue=requested_venue,
+                        year=year,
+                        url=index_url,
+                    )
+                )
+                slice_error_codes.append("page_contract_changed")
             records_before = len(candidates)
             for track, title, href in entries:
                 if "main track" not in track.casefold():
@@ -387,7 +431,7 @@ class IjcaiDiscoveryProvider:
                             phase="paper-detail",
                             error_code="network_transient",
                             message="IJCAI paper detail is temporarily unavailable",
-                            venue=_OFFICIAL_VENUE,
+                            venue=requested_venue,
                             year=year,
                             url=detail_url,
                             retryable=True,
@@ -402,7 +446,7 @@ class IjcaiDiscoveryProvider:
                             phase="paper-detail",
                             error_code="page_contract_changed",
                             message="IJCAI paper detail does not match its expected structure",
-                            venue=_OFFICIAL_VENUE,
+                            venue=requested_venue,
                             year=year,
                             url=detail_url,
                         )
@@ -422,6 +466,7 @@ class IjcaiDiscoveryProvider:
                     pages_fetched=1 + detail_attempts,
                     records_fetched=len(candidates) - records_before,
                     diagnostic_code=(slice_error_codes[0] if slice_error_codes else ""),
+                    records_recognized=records_recognized,
                 )
             )
         return DiscoveryBatch(

@@ -113,6 +113,42 @@ def test_group_maximum_is_never_exceeded() -> None:
     assert plan.quota_shortfalls == ()
 
 
+def test_group_quota_can_match_publication_type() -> None:
+    spec = {
+        "target": {"minimum": 2, "preferred": 2, "maximum": 2},
+        "quotas": {
+            "groups": [
+                {
+                    "name": "journals",
+                    "minimum": 1,
+                    "publication_types": ["journal-article"],
+                },
+                {
+                    "name": "proceedings",
+                    "minimum": 1,
+                    "publication_types": ["proceedings-article"],
+                },
+            ]
+        },
+    }
+    journal = replace(
+        candidate("journal", 2026, 0.86, venue="Mixed"),
+        publication_type="journal-article",
+    )
+    proceedings = replace(
+        candidate("proceedings", 2026, 0.99, venue="Mixed"),
+        publication_type="proceedings-article",
+    )
+
+    plan = CorpusPlanner(spec).select([proceedings, journal])
+
+    assert {item.publication_type for item in plan.auto_accepted} == {
+        "journal-article",
+        "proceedings-article",
+    }
+    assert plan.quota_shortfalls == ()
+
+
 def test_recent_window_ratio_uses_publication_date() -> None:
     spec = {
         "target": {"minimum": 2, "preferred": 2, "maximum": 3},

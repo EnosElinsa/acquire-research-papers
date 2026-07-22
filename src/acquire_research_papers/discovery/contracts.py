@@ -39,6 +39,7 @@ class DiscoveryRequest:
     preferred: int
     maximum: int
     completed_slices: frozenset[str] = frozenset()
+    seed_candidates: tuple[CandidateMetadata, ...] = ()
 
     @property
     def queries(self) -> tuple[str, ...]:
@@ -58,6 +59,12 @@ class DiscoveryRequest:
 
     def with_completed_slices(self, values: frozenset[str]) -> DiscoveryRequest:
         return replace(self, completed_slices=values)
+
+    def with_seed_candidates(
+        self,
+        values: tuple[CandidateMetadata, ...],
+    ) -> DiscoveryRequest:
+        return replace(self, seed_candidates=values)
 
     @classmethod
     def from_spec(cls, spec: dict[str, Any]) -> DiscoveryRequest:
@@ -196,11 +203,16 @@ class CoverageSlice:
     records_fetched: int = 0
     next_cursor: str | None = None
     diagnostic_code: str = ""
+    records_recognized: int = 0
 
     def __post_init__(self) -> None:
         if self.state not in {"complete", "partial", "failed"}:
             raise ValueError("coverage state must be complete, partial, or failed")
-        if self.pages_fetched < 0 or self.records_fetched < 0:
+        if (
+            self.pages_fetched < 0
+            or self.records_fetched < 0
+            or self.records_recognized < 0
+        ):
             raise ValueError("coverage counters must not be negative")
 
     @property

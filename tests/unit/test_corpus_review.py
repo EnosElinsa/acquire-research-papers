@@ -73,8 +73,8 @@ def candidate(
 
 
 def create_run(tmp_path: Path, candidates: tuple[CandidateMetadata, ...], spec: dict) -> Path:
-    venues = sorted({item.venue for item in candidates})
-    years = sorted({item.year for item in candidates})
+    venues = [item["name"] for item in spec.get("scope", {}).get("venues", ())]
+    years = spec.get("scope", {}).get("years", {}).get("include", ())
     coverage = tuple(
         CoverageSlice("fixture", venue, year, "complete", 1, 1)
         for venue in venues
@@ -283,7 +283,34 @@ def test_unreviewed_overflow_does_not_block_a_satisfied_selection(tmp_path: Path
     assert result.status == "frozen"
     assert result.selected == 2
     assert result.pending == 2
+    assert result.ready_unreviewed == 1
+    assert result.review_completion == "target_satisfied_early_stop"
     assert result.shortfall_classes == ()
+
+
+def test_early_stop_is_not_frozen_before_the_preferred_target(tmp_path: Path) -> None:
+    spec = corpus_spec(minimum=1, preferred=2)
+    spec.pop("quotas")
+    run = create_run(
+        tmp_path / "run",
+        (
+            candidate("accepted", "Conference"),
+            candidate("unreviewed", "Journal"),
+        ),
+        spec,
+    )
+    evidence = packets(run)
+    decisions = write_decisions(
+        tmp_path / "decisions.jsonl",
+        [decision(evidence["doi:10.1000/accepted"])],
+    )
+
+    result = CorpusReviewWorkflow().run(run, decisions)
+
+    assert result.status == "shortfall"
+    assert result.review_completion == "incomplete"
+    assert result.ready_unreviewed == 1
+    assert "review" in result.shortfall_classes
 
 
 def test_review_import_is_idempotent_but_rejects_conflicting_rewrite(tmp_path: Path) -> None:
@@ -306,3 +333,83 @@ def test_review_import_is_idempotent_but_rejects_conflicting_rewrite(tmp_path: P
     )
     with pytest.raises(ReviewValidationError, match="already frozen"):
         workflow.run(run, changed)
+
+
+def test_review_rejects_a_request_changed_after_discovery(tmp_path: Path) -> None:
+    run = create_run(
+        tmp_path / "run",
+        (candidate("one", "Conference"),),
+        corpus_spec(minimum=1, preferred=1),
+    )
+    packet = next(iter(packets(run).values()))
+    decisions = write_decisions(tmp_path / "decisions.jsonl", [decision(packet)])
+    request_path = run / "request-spec.json"
+    request = json.loads(request_path.read_text(encoding="utf-8"))
+    request["target"]["maximum"] = 3
+    request_path.write_text(json.dumps(request), encoding="utf-8")
+
+    with pytest.raises(ReviewValidationError, match="request hash"):
+        CorpusReviewWorkflow().run(run, decisions)
+
+
+@pytest.mark.parametrize(
+    ("artifact", "message"),
+    [
+        ("candidates.jsonl", "candidates"),
+        ("evidence-packets.jsonl", "evidence packets"),
+        ("coverage.jsonl", "coverage"),
+    ],
+)
+def test_review_rejects_discovery_artifact_mutation(
+    tmp_path: Path,
+    artifact: str,
+    message: str,
+) -> None:
+    run = create_run(
+        tmp_path / "run",
+        (candidate("one", "Conference"),),
+        corpus_spec(minimum=1, preferred=1),
+    )
+    packet = next(iter(packets(run).values()))
+    decisions = write_decisions(tmp_path / "decisions.jsonl", [decision(packet)])
+    with (run / artifact).open("a", encoding="utf-8") as handle:
+        handle.write(" \n")
+
+    with pytest.raises(ReviewValidationError, match=message):
+        CorpusReviewWorkflow().run(run, decisions)
+
+
+def test_cached_review_revalidates_the_frozen_selection(tmp_path: Path) -> None:
+    run = create_run(
+        tmp_path / "run",
+        (candidate("one", "Conference"),),
+        corpus_spec(minimum=1, preferred=1),
+    )
+    packet = next(iter(packets(run).values()))
+    decisions = write_decisions(tmp_path / "decisions.jsonl", [decision(packet)])
+    workflow = CorpusReviewWorkflow()
+    result = workflow.run(run, decisions)
+    result.selected_path.write_text("{}\n", encoding="utf-8")
+
+    with pytest.raises(ReviewValidationError, match="frozen selection"):
+        workflow.run(run, decisions)
+
+
+def test_valid_spec_without_delivery_uses_generic_layout(tmp_path: Path) -> None:
+    spec = corpus_spec(minimum=1, preferred=1)
+    spec.pop("delivery")
+    spec.pop("quotas")
+    run = create_run(
+        tmp_path / "run",
+        (candidate("one", "Conference"),),
+        spec,
+    )
+    packet = next(iter(packets(run).values()))
+    decisions = write_decisions(tmp_path / "decisions.jsonl", [decision(packet)])
+
+    result = CorpusReviewWorkflow().run(run, decisions)
+
+    assert result.status == "frozen"
+    assert SelectionStore.load(result.selection_manifest_path).records[0].relative_pdf.endswith(
+        "/paper.pdf"
+    )

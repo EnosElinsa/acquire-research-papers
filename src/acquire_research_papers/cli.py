@@ -848,6 +848,8 @@ def run_cli(
                     "accepted": result.accepted,
                     "rejected": result.rejected,
                     "pending": result.pending,
+                    "ready_unreviewed": result.ready_unreviewed,
+                    "review_completion": result.review_completion,
                     "selected": result.selected,
                     "shortfall_classes": list(result.shortfall_classes),
                     "quota_shortfalls": list(result.quota_shortfalls),

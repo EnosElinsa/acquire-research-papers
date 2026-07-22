@@ -73,7 +73,31 @@ def test_ijcai_provider_fetches_every_main_track_detail_before_topic_screening(
     assert batch.covered_slices == ("ijcai-proceedings:2025:Main Track",)
     assert batch.coverage[0].state == "complete"
     assert batch.coverage[0].records_fetched == 2
+    assert batch.coverage[0].records_recognized == 2
     assert batch.diagnostics == ()
+
+
+def test_ijcai_provider_marks_malformed_index_record_as_partial(
+    fixture_server,
+) -> None:
+    index = (
+        "<h2>Main Track</h2>"
+        '<div class="paper_wrapper"><a href="/proceedings/2025/12">'
+        "Evolutionary Optimization for Large Language Models</a></div>"
+        '<div class="paper_wrapper"><div class="title">Missing Link</div></div>'
+    )
+    fixture_server.serve_text("/proceedings/2025/", index)
+    fixture_server.serve_text(
+        "/proceedings/2025/12", PAPER.read_text(encoding="utf-8")
+    )
+
+    batch = provider(fixture_server).discover(request())
+
+    assert len(batch.candidates) == 1
+    assert batch.coverage[0].state == "partial"
+    assert batch.coverage[0].records_recognized == 2
+    assert batch.coverage[0].records_fetched == 1
+    assert batch.diagnostics[0].error_code == "page_contract_changed"
 
 
 def test_ijcai_provider_parses_current_index_title_and_details_layout(
@@ -266,3 +290,5 @@ def test_ijcai_provider_keeps_published_year_when_new_year_is_unavailable(
     assert batch.covered_slices == ("ijcai-proceedings:2025:Main Track",)
     assert len(batch.diagnostics) == 1
     assert batch.diagnostics[0].year == 2026
+    assert batch.coverage[0].venue == "IJCAI"
+    assert batch.coverage[1].venue == "IJCAI"

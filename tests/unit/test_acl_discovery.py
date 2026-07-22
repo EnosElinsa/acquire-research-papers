@@ -62,7 +62,30 @@ def test_acl_provider_emits_all_requested_long_papers_before_topic_screening(
     assert batch.covered_slices == ("acl-anthology:2025",)
     assert batch.coverage[0].state == "complete"
     assert batch.coverage[0].records_fetched == 3
+    assert batch.coverage[0].records_recognized == 3
     assert batch.diagnostics == ()
+
+
+def test_acl_provider_marks_malformed_eligible_record_as_partial(fixture_server) -> None:
+    fixture_server.serve_text(
+        "/events/acl-2025/",
+        '<article data-anthology-id="2025.acl-long.1">'
+        '<h5><a href="/2025.acl-long.1/">Valid Paper</a></h5></article>'
+        '<article data-anthology-id="2025.acl-long.2"></article>',
+    )
+    provider = AclAnthologyDiscoveryProvider(
+        client=fixture_server.client,
+        event_template=fixture_server.url("/events/acl-{year}/"),
+        production_hosts={fixture_server.host},
+    )
+
+    batch = provider.discover(request())
+
+    assert [item.title for item in batch.candidates] == ["Valid Paper"]
+    assert batch.coverage[0].state == "partial"
+    assert batch.coverage[0].records_recognized == 2
+    assert batch.coverage[0].records_fetched == 1
+    assert batch.diagnostics[0].error_code == "page_contract_changed"
 
 
 def test_acl_provider_reports_page_drift_without_copying_page_body(fixture_server) -> None:

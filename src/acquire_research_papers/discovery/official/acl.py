@@ -305,6 +305,7 @@ class AclAnthologyDiscoveryProvider:
                 venue.supports_year(year) for venue in request.venues
             ):
                 continue
+            requested_venue = _requested_venue(request, year)
             if f"{_PROVIDER_ID}:{year}" in request.completed_slices:
                 continue
             event_url = self.event_template.format(year=year)
@@ -320,7 +321,7 @@ class AclAnthologyDiscoveryProvider:
                         phase="event-index",
                         error_code="network_transient",
                         message="ACL volume index is temporarily unavailable",
-                        venue=_OFFICIAL_VENUE,
+                        venue=requested_venue,
                         year=year,
                         url=event_url,
                         retryable=True,
@@ -329,7 +330,7 @@ class AclAnthologyDiscoveryProvider:
                 coverage.append(
                     CoverageSlice(
                         provider_id=_PROVIDER_ID,
-                        venue=_OFFICIAL_VENUE,
+                        venue=requested_venue,
                         year=year,
                         state="failed",
                         diagnostic_code="network_transient",
@@ -343,7 +344,7 @@ class AclAnthologyDiscoveryProvider:
                         phase="event-index",
                         error_code="source_unavailable",
                         message="ACL volume index is unavailable for the requested year",
-                        venue=_OFFICIAL_VENUE,
+                        venue=requested_venue,
                         year=year,
                         url=event_url,
                     )
@@ -351,7 +352,7 @@ class AclAnthologyDiscoveryProvider:
                 coverage.append(
                     CoverageSlice(
                         provider_id=_PROVIDER_ID,
-                        venue=_OFFICIAL_VENUE,
+                        venue=requested_venue,
                         year=year,
                         state="failed",
                         diagnostic_code="source_unavailable",
@@ -361,10 +362,21 @@ class AclAnthologyDiscoveryProvider:
             if "data-anthology-id" in html:
                 soup = BeautifulSoup(html, "html.parser")
                 articles = soup.select("article[data-anthology-id]")
-                recognized = len(articles)
+                eligible_articles = []
+                for article in articles:
+                    anthology_id = str(article.get("data-anthology-id", "")).strip()
+                    record_type = article.select_one(".type")
+                    is_front_matter = bool(
+                        record_type
+                        and "front matter"
+                        in record_type.get_text(" ", strip=True).casefold()
+                    )
+                    if _LONG_ID.fullmatch(anthology_id) and not is_front_matter:
+                        eligible_articles.append(article)
+                recognized = len(eligible_articles)
                 year_candidates = [
                     candidate
-                    for article in articles
+                    for article in eligible_articles
                     if (candidate := self._article_candidate(article, year, event_url)) is not None
                 ]
             else:
@@ -376,7 +388,7 @@ class AclAnthologyDiscoveryProvider:
                         phase="event-index",
                         error_code="page_contract_changed",
                         message="ACL event index has no recognizable paper records",
-                        venue=_OFFICIAL_VENUE,
+                        venue=requested_venue,
                         year=year,
                         url=event_url,
                     )
@@ -384,7 +396,7 @@ class AclAnthologyDiscoveryProvider:
                 coverage.append(
                     CoverageSlice(
                         provider_id=_PROVIDER_ID,
-                        venue=_OFFICIAL_VENUE,
+                        venue=requested_venue,
                         year=year,
                         state="failed",
                         pages_fetched=1,
@@ -392,8 +404,24 @@ class AclAnthologyDiscoveryProvider:
                     )
                 )
                 continue
-            covered.append(f"{_PROVIDER_ID}:{year}")
-            requested_venue = _requested_venue(request, year)
+            slice_state = "complete"
+            diagnostic_code = ""
+            if len(year_candidates) != recognized:
+                slice_state = "partial" if year_candidates else "failed"
+                diagnostic_code = "page_contract_changed"
+                diagnostics.append(
+                    DiscoveryDiagnostic(
+                        provider_id=_PROVIDER_ID,
+                        phase="event-index",
+                        error_code=diagnostic_code,
+                        message="ACL event index contains malformed paper records",
+                        venue=requested_venue,
+                        year=year,
+                        url=event_url,
+                    )
+                )
+            else:
+                covered.append(f"{_PROVIDER_ID}:{year}")
             for candidate in year_candidates:
                 candidates.append(replace(candidate, venue=requested_venue))
             coverage.append(
@@ -401,9 +429,11 @@ class AclAnthologyDiscoveryProvider:
                     provider_id=_PROVIDER_ID,
                     venue=requested_venue,
                     year=year,
-                    state="complete",
+                    state=slice_state,
                     pages_fetched=1,
                     records_fetched=len(year_candidates),
+                    diagnostic_code=diagnostic_code,
+                    records_recognized=recognized,
                 )
             )
         return DiscoveryBatch(

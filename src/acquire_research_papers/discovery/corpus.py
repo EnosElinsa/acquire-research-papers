@@ -15,6 +15,7 @@ from acquire_research_papers.artifacts import (
     atomic_write_bytes,
     sanitize_artifact_value,
     sha256_bytes,
+    sha256_file,
 )
 from acquire_research_papers.discovery.contracts import (
     CandidateMetadata,
@@ -23,6 +24,7 @@ from acquire_research_papers.discovery.contracts import (
     DiscoveryBatch,
     DiscoveryDiagnostic,
     DiscoveryRequest,
+    VenueScope,
 )
 from acquire_research_papers.discovery.coordinator import candidate_identity, merge_candidates
 from acquire_research_papers.discovery.evidence import EvidencePacket, evaluate_prefilter
@@ -93,8 +95,14 @@ class CorpusPlanner:
     def _matches_group(candidate: CandidateMetadata, group: dict[str, Any]) -> bool:
         venues = {str(value).casefold() for value in group.get("venues", [])}
         years = set(group.get("years", []))
+        publication_types = {
+            str(value).casefold() for value in group.get("publication_types", [])
+        }
         return (not venues or candidate.venue.casefold() in venues) and (
             not years or candidate.year in years
+        ) and (
+            not publication_types
+            or (candidate.publication_type or "").casefold() in publication_types
         )
 
     def _group_count(
@@ -376,6 +384,30 @@ class CorpusDiscoveryWorkflow:
     def _coverage_key(item: CoverageSlice) -> tuple[str, str, int]:
         return (item.provider_id, item.venue, item.year)
 
+    @staticmethod
+    def _expected_slices(request: DiscoveryRequest) -> tuple[tuple[VenueScope, int], ...]:
+        return tuple(
+            (venue, year)
+            for venue in request.venues
+            for year in request.years
+            if venue.supports_year(year)
+        )
+
+    @staticmethod
+    def _covers(
+        item: CoverageSlice,
+        venue: VenueScope,
+        year: int,
+        *,
+        state: str | None = None,
+    ) -> bool:
+        names = {name.casefold() for name in venue.all_names}
+        return (
+            item.year == year
+            and item.venue.casefold() in names
+            and (state is None or item.state == state)
+        )
+
     def run(self, spec: dict[str, Any], output: Path) -> CorpusDiscoveryResult:
         destination = output.resolve()
         destination.mkdir(parents=True, exist_ok=True)
@@ -425,14 +457,30 @@ class CorpusDiscoveryWorkflow:
                 *(item.label for item in prior_coverage if item.state == "complete"),
             )
         )
+        expected_slices = self._expected_slices(request)
+        if expected_slices:
+            prior_coverage_complete = all(
+                any(
+                    self._covers(item, venue, year, state="complete")
+                    for item in prior_coverage
+                )
+                for venue, year in expected_slices
+            )
+        else:
+            prior_coverage_complete = not any(
+                item.state != "complete" for item in prior_coverage
+            )
         prior_is_complete = bool(prior_manifest) and (
-            prior_manifest.get("status") != "coverage_incomplete"
-            and not any(item.state != "complete" for item in prior_coverage)
+            prior_coverage_complete
+            and not any(item.retryable for item in prior_diagnostics)
         )
         if prior_is_complete:
             batch = DiscoveryBatch()
         else:
-            batch = self.discoverer(request.with_completed_slices(completed_slices))
+            resume_request = request.with_completed_slices(
+                completed_slices
+            ).with_seed_candidates(prior_candidates)
+            batch = self.discoverer(resume_request)
 
         merged: dict[str, CandidateMetadata] = {}
         for candidate in (*prior_candidates, *batch.candidates):
@@ -459,6 +507,70 @@ class CorpusDiscoveryWorkflow:
                 if (item.provider_id, item.venue, item.year) not in rerun_keys
                 and item.provider_id not in retryable_providers
             ) + batch.diagnostics
+
+        real_coverage = tuple(
+            item for item in coverage if item.provider_id != "discovery"
+        )
+        resolved_synthetic = {
+            (venue.name, year)
+            for venue, year in expected_slices
+            if any(self._covers(item, venue, year) for item in real_coverage)
+        }
+        if resolved_synthetic:
+            coverage = tuple(
+                item
+                for item in coverage
+                if not (
+                    item.provider_id == "discovery"
+                    and (item.venue, item.year) in resolved_synthetic
+                )
+            )
+            diagnostics = tuple(
+                item
+                for item in diagnostics
+                if not (
+                    item.provider_id == "discovery"
+                    and item.error_code == "coverage_missing"
+                    and (item.venue, item.year) in resolved_synthetic
+                )
+            )
+
+        missing_slices = tuple(
+            (venue, year)
+            for venue, year in expected_slices
+            if not any(self._covers(item, venue, year) for item in coverage)
+        )
+        if missing_slices:
+            synthetic = tuple(
+                CoverageSlice(
+                    "discovery",
+                    venue.name,
+                    year,
+                    "failed",
+                    diagnostic_code="coverage_missing",
+                )
+                for venue, year in missing_slices
+            )
+            coverage = tuple(
+                sorted(
+                    (*coverage, *synthetic),
+                    key=lambda item: self._coverage_key(item),
+                )
+            )
+            diagnostics = (
+                *diagnostics,
+                *(
+                    DiscoveryDiagnostic(
+                        "discovery",
+                        "coverage",
+                        "coverage_missing",
+                        "no provider reported the requested venue/year slice",
+                        venue=venue.name,
+                        year=year,
+                    )
+                    for venue, year in missing_slices
+                ),
+            )
 
         legacy_coverage = tuple(
             dict.fromkeys((*resumable_legacy, *batch.covered_slices))
@@ -550,8 +662,17 @@ class CorpusDiscoveryWorkflow:
         self._write_jsonl(diagnostics_path, (asdict(item) for item in diagnostics))
         self._write_jsonl(coverage_path, (item.to_dict() for item in coverage))
 
-        coverage_incomplete = sum(item.state != "complete" for item in coverage)
-        if diagnostics and not coverage:
+        if expected_slices:
+            coverage_incomplete = sum(
+                not any(
+                    self._covers(item, venue, year, state="complete")
+                    for item in coverage
+                )
+                for venue, year in expected_slices
+            )
+        else:
+            coverage_incomplete = sum(item.state != "complete" for item in coverage)
+        if diagnostics and not coverage and not expected_slices:
             coverage_incomplete = max(1, coverage_incomplete)
         reviewable = sum(packet.metadata_state == "ready" for packet in packets)
         if coverage_incomplete:
@@ -574,8 +695,11 @@ class CorpusDiscoveryWorkflow:
             "provider_coverage": list(complete_labels),
             "request": request_path.name,
             "coverage": coverage_path.name,
+            "coverage_sha256": sha256_file(coverage_path),
             "candidates": candidates_path.name,
+            "candidates_sha256": sha256_file(candidates_path),
             "evidence_packets": evidence_path.name,
+            "evidence_packets_sha256": sha256_file(evidence_path),
             "pending_metadata_file": pending_path.name,
             "discovery_errors_file": diagnostics_path.name,
         }

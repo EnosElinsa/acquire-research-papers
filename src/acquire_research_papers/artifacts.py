@@ -14,15 +14,33 @@ class InvalidPdfError(ValueError):
 
 
 _SENSITIVE_ARTIFACT_KEYS = {
+    "accesskey",
+    "accesskeyid",
+    "accesstoken",
+    "apikey",
     "authorization",
+    "authtoken",
+    "bearertoken",
+    "clientsecret",
+    "clienttoken",
     "credential",
     "ossaccesskeyid",
+    "password",
+    "passwd",
     "securitytoken",
+    "secret",
+    "secretkey",
+    "sessiontoken",
+    "sig",
     "signature",
     "token",
+    "xapikey",
+    "xelsapikey",
     "xamzcredential",
     "xamzsecuritytoken",
     "xamzsignature",
+    "xgoogcredential",
+    "xgoogsignature",
     "xosssignature",
 }
 

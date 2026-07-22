@@ -116,6 +116,9 @@ class CrossrefVenueDiscoveryProvider:
                     elif collection_doi:
                         filters["alternative-id"] = collection_doi
                         query = ""
+                    else:
+                        filters["container-title"] = venue.name
+                        query = ""
                     cursor = "*"
                     seen_pages: set[
                         tuple[tuple[str, str, str, int, str], ...]
@@ -164,7 +167,7 @@ class CrossrefVenueDiscoveryProvider:
                             completed_enumerations += 1
                             break
                         page_candidates = page.candidates
-                        if venue.issn or collection_doi:
+                        if venue.issn or collection_doi or filters.get("container-title"):
                             page_candidates = tuple(
                                 replace(
                                     candidate,
@@ -226,6 +229,7 @@ class CrossrefVenueDiscoveryProvider:
                         records_fetched=records_fetched,
                         next_cursor=resume_cursor,
                         diagnostic_code=first_error,
+                        records_recognized=records_fetched,
                     )
                 )
         return DiscoveryBatch(

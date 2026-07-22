@@ -115,7 +115,8 @@ def test_crossref_provider_enumerates_every_venue_year_cursor_without_topic_quer
 
     def searcher(query: str, **kwargs) -> CandidatePage:
         calls.append({"query": query, **kwargs})
-        if query == "":
+        if kwargs["filters"].get("issn"):
+            assert query == ""
             assert kwargs["filters"]["issn"] == "1111-2222"
             if kwargs["cursor"] == "*":
                 return CandidatePage(
@@ -123,7 +124,8 @@ def test_crossref_provider_enumerates_every_venue_year_cursor_without_topic_quer
                     next_cursor="a-next",
                 )
             return CandidatePage(())
-        assert query == "Proceedings B"
+        assert query == ""
+        assert kwargs["filters"]["container-title"] == "Proceedings B"
         assert kwargs["query_field"] == "container-title"
         return CandidatePage((crossref_candidate("b1", "Proceedings B"),))
 
@@ -173,6 +175,7 @@ def test_crossref_provider_allows_same_cursor_for_distinct_scroll_pages() -> Non
     assert [candidate.key for candidate in batch.candidates] == ["a1", "a2"]
     assert batch.coverage[0].state == "complete"
     assert batch.coverage[0].records_fetched == 2
+    assert batch.coverage[0].records_recognized == 2
     assert batch.diagnostics == ()
 
 
@@ -242,10 +245,7 @@ def test_crossref_provider_respects_venue_specific_year_scope() -> None:
 
     CrossrefVenueDiscoveryProvider(searcher=searcher).discover(request)
 
-    assert calls == [
-        ("Conference 2024", "2024-01-01"),
-        ("Conference 2025", "2025-01-01"),
-    ]
+    assert calls == [("", "2024-01-01"), ("", "2025-01-01")]
 
 
 def test_crossref_provider_enumerates_each_exact_collection_doi() -> None:

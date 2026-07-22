@@ -113,6 +113,10 @@ def test_discovery_writes_evidence_artifacts_without_freezing_selection(
     }
     assert all(len(packet["evidence_hash"]) == 64 for packet in packets)
     assert read_jsonl(result.coverage_path)[0]["state"] == "complete"
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+    assert len(manifest["candidates_sha256"]) == 64
+    assert len(manifest["evidence_packets_sha256"]) == 64
+    assert len(manifest["coverage_sha256"]) == 64
     assert "10.1000/missing" in result.pending_metadata_path.read_text(
         encoding="utf-8-sig"
     )
@@ -224,6 +228,139 @@ def test_resume_retries_legacy_checkpoint_with_retryable_provider_error(
     assert "semantic-scholar:doi-batch" in json.loads(
         second.manifest_path.read_text(encoding="utf-8")
     )["provider_coverage"]
+
+
+def test_metadata_pending_run_retries_a_retryable_enricher(
+    tmp_path: Path,
+) -> None:
+    calls: list[frozenset[str]] = []
+
+    def discover(request: DiscoveryRequest) -> DiscoveryBatch:
+        calls.append(request.completed_slices)
+        if len(calls) == 1:
+            return DiscoveryBatch(
+                candidates=(candidate("missing", "Venue A", abstract=""),),
+                diagnostics=(
+                    DiscoveryDiagnostic(
+                        "semantic-scholar",
+                        "doi-enrichment",
+                        "rate_limited",
+                        "temporarily unavailable",
+                        retryable=True,
+                    ),
+                ),
+                coverage=(CoverageSlice("fake", "Venue A", 2025, "complete", 1, 1),),
+            )
+        assert "fake:Venue A:2025" in request.completed_slices
+        assert [item.key for item in request.seed_candidates] == ["missing"]
+        return DiscoveryBatch(
+            candidates=(candidate("missing", "Venue A"),),
+            covered_slices=("semantic-scholar:doi-batch",),
+        )
+
+    workflow = CorpusDiscoveryWorkflow(discoverer=discover)
+    first = workflow.run(
+        {
+            **spec(),
+            "scope": {**spec()["scope"], "venues": [{"name": "Venue A"}]},
+        },
+        tmp_path,
+    )
+    second = workflow.run(
+        {
+            **spec(),
+            "scope": {**spec()["scope"], "venues": [{"name": "Venue A"}]},
+        },
+        tmp_path,
+    )
+
+    assert first.status == "metadata_pending"
+    assert second.status == "review_required"
+    assert len(calls) == 2
+    assert second.pending_metadata == 0
+
+
+def test_missing_coverage_marker_is_removed_after_a_provider_reports(
+    tmp_path: Path,
+) -> None:
+    calls = 0
+
+    def discover(_: DiscoveryRequest) -> DiscoveryBatch:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return DiscoveryBatch(candidates=(candidate("a", "Venue A"),))
+        return DiscoveryBatch(
+            coverage=(CoverageSlice("fake", "Venue A", 2025, "complete", 1, 1),)
+        )
+
+    workflow = CorpusDiscoveryWorkflow(discoverer=discover)
+    requested = {
+        **spec(),
+        "scope": {**spec()["scope"], "venues": [{"name": "Venue A"}]},
+    }
+    assert workflow.run(requested, tmp_path).status == "coverage_incomplete"
+
+    second = workflow.run(requested, tmp_path)
+
+    assert second.status == "review_required"
+    assert {row["provider_id"] for row in read_jsonl(second.coverage_path)} == {"fake"}
+    assert read_jsonl(second.diagnostics_path) == []
+
+
+def test_requested_slice_without_provider_coverage_is_incomplete(tmp_path: Path) -> None:
+    result = CorpusDiscoveryWorkflow(
+        discoverer=lambda _: DiscoveryBatch(candidates=(candidate("a", "Venue A"),))
+    ).run(
+        {
+            **spec(),
+            "scope": {**spec()["scope"], "venues": [{"name": "Venue A"}]},
+        },
+        tmp_path,
+    )
+
+    assert result.status == "coverage_incomplete"
+    assert result.coverage_incomplete == 1
+    assert read_jsonl(result.coverage_path) == [
+        {
+            "diagnostic_code": "coverage_missing",
+            "next_cursor": None,
+            "pages_fetched": 0,
+            "provider_id": "discovery",
+            "records_fetched": 0,
+            "records_recognized": 0,
+            "state": "failed",
+            "venue": "Venue A",
+            "year": 2025,
+        }
+    ]
+
+
+def test_complete_fallback_covers_a_failed_official_slice(tmp_path: Path) -> None:
+    result = CorpusDiscoveryWorkflow(
+        discoverer=lambda _: DiscoveryBatch(
+            candidates=(candidate("a", "Venue A"),),
+            coverage=(
+                CoverageSlice(
+                    "official",
+                    "Venue A",
+                    2025,
+                    "failed",
+                    diagnostic_code="source_unavailable",
+                ),
+                CoverageSlice("crossref", "Venue A", 2025, "complete", 1, 1),
+            ),
+        )
+    ).run(
+        {
+            **spec(),
+            "scope": {**spec()["scope"], "venues": [{"name": "Venue A"}]},
+        },
+        tmp_path,
+    )
+
+    assert result.status == "review_required"
+    assert result.coverage_incomplete == 0
 
 
 def test_discovery_artifacts_strip_sensitive_keys_and_signed_query_strings(

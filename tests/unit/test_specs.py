@@ -72,6 +72,20 @@ def test_corpus_spec_rejects_group_maximum_below_minimum(tmp_path: Path) -> None
         load_corpus_spec(path)
 
 
+def test_corpus_spec_accepts_publication_type_quota(tmp_path: Path) -> None:
+    path = tmp_path / "publication-quota.yaml"
+    path.write_text(
+        "mode: corpus\nname: typed\ntarget:\n  minimum: 1\n  maximum: 2\n"
+        "quotas:\n  groups:\n    - name: journals\n      minimum: 1\n"
+        "      publication_types: [journal-article]\n",
+        encoding="utf-8",
+    )
+
+    spec = load_corpus_spec(path)
+
+    assert spec["quotas"]["groups"][0]["publication_types"] == ["journal-article"]
+
+
 def test_numbered_delivery_requires_number_and_extension_tokens(tmp_path: Path) -> None:
     path = tmp_path / "bad-layout.yaml"
     path.write_text(

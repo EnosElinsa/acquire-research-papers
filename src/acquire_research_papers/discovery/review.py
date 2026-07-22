@@ -82,6 +82,8 @@ class CorpusReviewResult:
     accepted: int
     rejected: int
     pending: int
+    ready_unreviewed: int
+    review_completion: str
     selected: int
     shortfall_classes: tuple[str, ...]
     quota_shortfalls: tuple[str, ...]
@@ -155,13 +157,17 @@ class CorpusReviewWorkflow:
                 raise ReviewValidationError("candidate metadata is not eligible for acceptance")
             if not record.matched_topics:
                 raise ReviewValidationError("accepted review matched_topics are required")
-            if not {"title", "abstract"} & supplied_fields:
-                raise ReviewValidationError("acceptance must cite title or abstract evidence")
+            if not {"title", "abstract"}.issubset(supplied_fields):
+                raise ReviewValidationError("acceptance must cite title and abstract evidence")
         elif packet.metadata_state != "ready" and record.decision != "pending":
             raise ReviewValidationError("candidate with incomplete metadata must remain pending")
 
     @staticmethod
-    def _load_existing(root: Path, decision_sha256: str) -> CorpusReviewResult | None:
+    def _load_existing(
+        root: Path,
+        decision_sha256: str,
+        discovery_manifest_sha256: str,
+    ) -> CorpusReviewResult | None:
         manifest_path = root / "review-manifest.json"
         if not manifest_path.is_file():
             return None
@@ -173,16 +179,28 @@ class CorpusReviewWorkflow:
             raise ReviewValidationError(
                 "review decisions are already frozen; start a new discovery run"
             )
+        if manifest.get("discovery_manifest_sha256") != discovery_manifest_sha256:
+            raise ReviewValidationError(
+                "review discovery lineage changed; start a new discovery run"
+            )
+        try:
+            selection = SelectionStore.load(root / "selection-manifest.json")
+        except ValueError as exc:
+            raise ReviewValidationError(
+                "existing frozen selection failed validation"
+            ) from exc
         return CorpusReviewResult(
             status=str(manifest["status"]),
             reviewed_path=root / str(manifest["reviewed_candidates"]),
             pending_review_path=root / str(manifest["pending_review"]),
-            selected_path=root / str(manifest["selected_papers"]),
-            selection_manifest_path=root / str(manifest["selection_manifest"]),
+            selected_path=selection.selected_path,
+            selection_manifest_path=selection.manifest_path,
             manifest_path=manifest_path,
             accepted=int(manifest["accepted"]),
             rejected=int(manifest["rejected"]),
             pending=int(manifest["pending"]),
+            ready_unreviewed=int(manifest.get("ready_unreviewed", 0)),
+            review_completion=str(manifest.get("review_completion", "complete")),
             selected=int(manifest["selected"]),
             shortfall_classes=tuple(manifest["shortfall_classes"]),
             quota_shortfalls=tuple(manifest["quota_shortfalls"]),
@@ -205,8 +223,39 @@ class CorpusReviewWorkflow:
             raise ReviewValidationError("review run is missing required discovery artifacts") from exc
         if discovery_manifest.get("schema_version") != 2:
             raise ReviewValidationError("review requires a schema version 2 discovery run")
+        request_sha256 = sha256_bytes(
+            json.dumps(
+                spec,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        )
+        if discovery_manifest.get("request_sha256") != request_sha256:
+            raise ReviewValidationError("discovery request hash validation failed")
+        artifact_hashes = (
+            (candidates_path, "candidates_sha256", "candidates"),
+            (evidence_path, "evidence_packets_sha256", "evidence packets"),
+            (root / "coverage.jsonl", "coverage_sha256", "coverage"),
+        )
+        for artifact_path, field, label in artifact_hashes:
+            try:
+                digest = sha256_file(artifact_path)
+            except OSError as exc:
+                raise ReviewValidationError(
+                    f"discovery {label} artifact could not be read"
+                ) from exc
+            if discovery_manifest.get(field) != digest:
+                raise ReviewValidationError(
+                    f"discovery {label} hash validation failed"
+                )
+        discovery_manifest_sha256 = sha256_file(discovery_manifest_path)
         decision_sha256 = sha256_bytes(decision_bytes)
-        existing = self._load_existing(root, decision_sha256)
+        existing = self._load_existing(
+            root,
+            decision_sha256,
+            discovery_manifest_sha256,
+        )
         if existing is not None:
             return existing
 
@@ -248,6 +297,7 @@ class CorpusReviewWorkflow:
         pending_rows: list[tuple[EvidencePacket, str]] = []
         accepted = rejected = pending = 0
         ready_pending = 0
+        ready_unreviewed = 0
         metadata_pending = 0
         for candidate_id, packet in sorted(packet_by_id.items()):
             record = decision_by_id.get(candidate_id)
@@ -281,6 +331,8 @@ class CorpusReviewWorkflow:
                     metadata_pending += 1
                 else:
                     ready_pending += 1
+                    if record is None:
+                        ready_unreviewed += 1
             reviewed_records.append(
                 {
                     **packet.to_dict(),
@@ -300,13 +352,30 @@ class CorpusReviewWorkflow:
         selected_records = build_selection_records(
             plan.auto_accepted,
             venues=request.venues,
-            delivery=spec["delivery"],
+            delivery=spec.get("delivery", {}),
         )
         shortfall_classes: list[str] = []
         if int(discovery_manifest.get("coverage_incomplete", 0)):
             shortfall_classes.append("coverage")
+        target = spec.get("target", {})
+        preferred = int(target.get("preferred", target.get("maximum", 0)))
+        maximum = int(target.get("maximum", preferred))
+        preferred_goal = min(preferred, maximum)
+        early_stop_satisfied = (
+            len(selected_records) >= preferred_goal
+            and not plan.shortfall
+            and not plan.quota_shortfalls
+        )
+        if not ready_pending:
+            review_completion = "complete"
+        elif early_stop_satisfied:
+            review_completion = "target_satisfied_early_stop"
+        else:
+            review_completion = "incomplete"
         unresolved_candidates_may_fill_shortfall = bool(
-            plan.shortfall or plan.quota_shortfalls
+            plan.shortfall
+            or plan.quota_shortfalls
+            or review_completion == "incomplete"
         )
         if unresolved_candidates_may_fill_shortfall:
             if metadata_pending:
@@ -359,10 +428,12 @@ class CorpusReviewWorkflow:
             "phase": "review",
             "status": status,
             "decision_sha256": decision_sha256,
-            "discovery_manifest_sha256": sha256_file(discovery_manifest_path),
+            "discovery_manifest_sha256": discovery_manifest_sha256,
             "accepted": accepted,
             "rejected": rejected,
             "pending": pending,
+            "ready_unreviewed": ready_unreviewed,
+            "review_completion": review_completion,
             "selected": len(selected_records),
             "shortfall_classes": shortfall_classes,
             "quota_shortfalls": list(plan.quota_shortfalls),
@@ -382,6 +453,8 @@ class CorpusReviewWorkflow:
             accepted=accepted,
             rejected=rejected,
             pending=pending,
+            ready_unreviewed=ready_unreviewed,
+            review_completion=review_completion,
             selected=len(selected_records),
             shortfall_classes=tuple(shortfall_classes),
             quota_shortfalls=plan.quota_shortfalls,

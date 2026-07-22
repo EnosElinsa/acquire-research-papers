@@ -5,6 +5,7 @@ import pytest
 from acquire_research_papers.artifacts import (
     InvalidPdfError,
     atomic_write_bytes,
+    sanitize_artifact_value,
     sha256_bytes,
     sha256_file,
     validate_pdf,
@@ -49,3 +50,28 @@ def test_atomic_pdf_write_removes_invalid_partial(tmp_path: Path) -> None:
         atomic_write_bytes(destination, b"<html>denied</html>", validator=validate_pdf)
     assert not destination.exists()
     assert not destination.with_suffix(".pdf.partial").exists()
+
+
+def test_artifact_sanitizer_removes_api_keys_and_signed_url_queries() -> None:
+    sanitized = sanitize_artifact_value(
+        {
+            "api_key": "secret-one",
+            "ApiKey": "secret-two",
+            "nested": {"X-API-Key": "secret-three", "safe": "kept"},
+            "api_url": "https://api.example/items?api_key=secret-four&page=2",
+            "azure_url": "https://blob.example/item?sv=1&sig=secret-five",
+            "google_url": (
+                "https://storage.example/item?X-Goog-Credential=secret-six"
+                "&X-Goog-Signature=secret-seven"
+            ),
+            "public_url": "https://example.test/items?page=2",
+        }
+    )
+
+    assert sanitized == {
+        "nested": {"safe": "kept"},
+        "api_url": "https://api.example/items",
+        "azure_url": "https://blob.example/item",
+        "google_url": "https://storage.example/item",
+        "public_url": "https://example.test/items?page=2",
+    }

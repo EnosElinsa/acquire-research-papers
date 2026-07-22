@@ -84,6 +84,7 @@ def test_coverage_slice_serializes_checkpoint_state() -> None:
         "records_fetched": 247,
         "next_cursor": "cursor-4",
         "diagnostic_code": "network_transient",
+        "records_recognized": 0,
     }
     assert coverage.label == "crossref:IEEE Transactions on Cybernetics:2025"
 
