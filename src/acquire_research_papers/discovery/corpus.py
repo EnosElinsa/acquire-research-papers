@@ -11,15 +11,24 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-from acquire_research_papers.artifacts import atomic_write_bytes
+from acquire_research_papers.artifacts import (
+    atomic_write_bytes,
+    sanitize_artifact_value,
+    sha256_bytes,
+    sha256_file,
+)
 from acquire_research_papers.discovery.contracts import (
     CandidateMetadata,
     CandidatePage,
+    CoverageSlice,
     DiscoveryBatch,
+    DiscoveryDiagnostic,
     DiscoveryRequest,
+    VenueScope,
 )
+from acquire_research_papers.discovery.coordinator import candidate_identity, merge_candidates
+from acquire_research_papers.discovery.evidence import EvidencePacket, evaluate_prefilter
 from acquire_research_papers.models import PaperStatus
-from acquire_research_papers.selection import SelectionStore, build_selection_records
 
 __all__ = ["CandidateMetadata", "CandidatePage"]
 
@@ -86,9 +95,24 @@ class CorpusPlanner:
     def _matches_group(candidate: CandidateMetadata, group: dict[str, Any]) -> bool:
         venues = {str(value).casefold() for value in group.get("venues", [])}
         years = set(group.get("years", []))
+        publication_types = {
+            _normalized_publication_type(str(value))
+            for value in group.get("publication_types", [])
+        }
+        recent_from = group.get("_recent_from")
+        recent_matches = True
+        if recent_from:
+            recent_matches = CorpusPlanner._is_recent(
+                candidate,
+                date.fromisoformat(str(recent_from)),
+            )
         return (not venues or candidate.venue.casefold() in venues) and (
             not years or candidate.year in years
-        )
+        ) and (
+            not publication_types
+            or _normalized_publication_type(candidate.publication_type or "")
+            in publication_types
+        ) and recent_matches
 
     def _group_count(
         self,
@@ -109,6 +133,556 @@ class CorpusPlanner:
             if self._group_count(selected, group) >= int(group_maximum):
                 return False
         return True
+
+    def _solve_quota_selection(
+        self,
+        candidates: list[CandidateMetadata],
+        groups: list[dict[str, Any]],
+        target_size: int,
+    ) -> tuple[CandidateMetadata, ...] | None:
+        """Solve exact cardinality and overlapping quotas by signature search."""
+        if target_size < 0 or target_size > len(candidates):
+            return None
+        if not groups:
+            return tuple(candidates[:target_size])
+        minimums = tuple(int(group.get("minimum", 0)) for group in groups)
+        maximums = tuple(
+            int(group["maximum"]) if group.get("maximum") is not None else None
+            for group in groups
+        )
+        bounds = tuple(
+            maximum if maximum is not None else minimum
+            for minimum, maximum in zip(minimums, maximums, strict=True)
+        )
+        buckets: dict[tuple[bool, ...], list[CandidateMetadata]] = {}
+        for candidate in candidates:
+            signature = tuple(
+                self._matches_group(candidate, group) for group in groups
+            )
+            buckets.setdefault(signature, []).append(candidate)
+        availability = tuple(
+            sum(len(bucket) for signature, bucket in buckets.items() if signature[index])
+            for index in range(len(groups))
+        )
+
+        def signature_order(signature: tuple[bool, ...]) -> tuple[Any, ...]:
+            required_availability = [
+                availability[index]
+                for index, matches in enumerate(signature)
+                if matches and minimums[index] > 0
+            ]
+            return (
+                0 if required_availability else 1,
+                min(required_availability, default=len(candidates) + 1),
+                -sum(signature),
+                self._rank(buckets[signature][0]),
+            )
+
+        signatures = tuple(sorted(buckets, key=signature_order))
+        capacities = tuple(
+            min(len(buckets[signature]), target_size) for signature in signatures
+        )
+        preferred_candidates = {id(candidate) for candidate in candidates[:target_size]}
+        preferred_quantities = tuple(
+            sum(id(candidate) in preferred_candidates for candidate in buckets[signature])
+            for signature in signatures
+        )
+        rank_positions = {
+            id(candidate): index + 1 for index, candidate in enumerate(candidates)
+        }
+        prefix_costs: list[tuple[int, ...]] = []
+        for signature, capacity in zip(signatures, capacities, strict=True):
+            costs = [0]
+            for candidate in buckets[signature][:capacity]:
+                costs.append(costs[-1] + rank_positions[id(candidate)])
+            prefix_costs.append(tuple(costs))
+        remaining_total = [0] * (len(signatures) + 1)
+        remaining_by_group = [
+            [0 for _ in groups] for _ in range(len(signatures) + 1)
+        ]
+        suffix_rank_costs: list[tuple[int, ...]] = [()] * (len(signatures) + 1)
+        suffix_rank_costs[-1] = (0,)
+        suffix_positions: list[int] = []
+        for index in range(len(signatures) - 1, -1, -1):
+            remaining_total[index] = remaining_total[index + 1] + capacities[index]
+            remaining_by_group[index] = remaining_by_group[index + 1].copy()
+            for group_index, matches in enumerate(signatures[index]):
+                if matches:
+                    remaining_by_group[index][group_index] += capacities[index]
+            suffix_positions.extend(
+                rank_positions[id(candidate)]
+                for candidate in buckets[signatures[index]][: capacities[index]]
+            )
+            suffix_positions.sort()
+            del suffix_positions[target_size:]
+            costs = [0]
+            for position in suffix_positions:
+                costs.append(costs[-1] + position)
+            suffix_rank_costs[index] = tuple(costs)
+
+        def state_is_reachable(
+            index: int,
+            selected_total: int,
+            counts: tuple[int, ...],
+        ) -> bool:
+            if selected_total > target_size:
+                return False
+            if selected_total + remaining_total[index] < target_size:
+                return False
+            if any(
+                count + remaining_by_group[index][group_index] < minimum
+                for group_index, (count, minimum) in enumerate(
+                    zip(counts, minimums, strict=True)
+                )
+            ):
+                return False
+            return True
+
+        def quantity_options(
+            index: int,
+            selected_total: int,
+            counts: tuple[int, ...],
+        ) -> tuple[int, ...]:
+            signature = signatures[index]
+            minimum_quantity = max(
+                0,
+                target_size - selected_total - remaining_total[index + 1],
+            )
+            maximum_quantity = min(
+                capacities[index],
+                target_size - selected_total,
+            )
+            for group_index, (matches, minimum, maximum, count) in enumerate(
+                zip(signature, minimums, maximums, counts, strict=True)
+            ):
+                if matches and maximum is not None:
+                    maximum_quantity = min(maximum_quantity, maximum - count)
+                if matches:
+                    minimum_quantity = max(
+                        minimum_quantity,
+                        minimum - count - remaining_by_group[index + 1][group_index],
+                    )
+            if minimum_quantity > maximum_quantity:
+                return ()
+
+            preferred = min(
+                maximum_quantity,
+                max(minimum_quantity, preferred_quantities[index]),
+            )
+            return tuple(
+                sorted(
+                    range(minimum_quantity, maximum_quantity + 1),
+                    key=lambda quantity: (abs(quantity - preferred), -quantity),
+                )
+            )
+
+        initial_state = (0, 0, tuple(0 for _ in groups))
+        stack = [initial_state]
+        parents: dict[
+            tuple[int, int, tuple[int, ...]],
+            tuple[tuple[int, int, tuple[int, ...]], int] | None,
+        ] = {initial_state: None}
+        solved_state: tuple[int, int, tuple[int, ...]] | None = None
+        while stack:
+            state = stack.pop()
+            index, selected_total, counts = state
+            if not state_is_reachable(index, selected_total, counts):
+                continue
+            if index == len(signatures):
+                if selected_total == target_size:
+                    solved_state = state
+                    break
+                continue
+            signature = signatures[index]
+            children = []
+            for quantity in quantity_options(index, selected_total, counts):
+                next_counts = tuple(
+                    min(bound, count + quantity * int(matches))
+                    for bound, count, matches in zip(
+                        bounds,
+                        counts,
+                        signature,
+                        strict=True,
+                    )
+                )
+                child = (
+                    index + 1,
+                    selected_total + quantity,
+                    next_counts,
+                )
+                if child in parents:
+                    continue
+                parents[child] = (state, quantity)
+                children.append(child)
+            stack.extend(reversed(children))
+
+        if solved_state is None:
+            return None
+        reversed_solution = []
+        cursor = solved_state
+        while parents[cursor] is not None:
+            parent, quantity = parents[cursor]
+            reversed_solution.append(quantity)
+            cursor = parent
+        solution = tuple(reversed(reversed_solution))
+
+        def solution_key(quantities: tuple[int, ...]) -> tuple[int, tuple[int, ...]]:
+            positions = tuple(
+                sorted(
+                    rank_positions[id(candidate)]
+                    for signature, quantity in zip(
+                        signatures,
+                        quantities,
+                        strict=True,
+                    )
+                    for candidate in buckets[signature][:quantity]
+                )
+            )
+            return (sum(positions), positions)
+
+        best_solution = solution
+        best_key = solution_key(solution)
+        unconstrained_cost = suffix_rank_costs[0][target_size]
+        if best_key[0] != unconstrained_cost:
+            lowest_state_cost: dict[tuple[int, int, tuple[int, ...]], int] = {}
+            optimize_stack: list[
+                tuple[int, int, tuple[int, ...], int, tuple[int, ...]]
+            ] = [(0, 0, tuple(0 for _ in groups), 0, ())]
+            while optimize_stack:
+                index, selected_total, counts, cost, used = optimize_stack.pop()
+                needed = target_size - selected_total
+                if needed < 0 or needed >= len(suffix_rank_costs[index]):
+                    continue
+                if cost + suffix_rank_costs[index][needed] > best_key[0]:
+                    continue
+                if any(
+                    count + remaining_by_group[index][group_index] < minimum
+                    for group_index, (count, minimum) in enumerate(
+                        zip(counts, minimums, strict=True)
+                    )
+                ):
+                    continue
+                state = (index, selected_total, counts)
+                previous_cost = lowest_state_cost.get(state)
+                if previous_cost is not None and cost > previous_cost:
+                    continue
+                if previous_cost is None or cost < previous_cost:
+                    lowest_state_cost[state] = cost
+                if index == len(signatures):
+                    if selected_total != target_size:
+                        continue
+                    key = solution_key(used)
+                    if key < best_key:
+                        best_key = key
+                        best_solution = used
+                    continue
+
+                signature = signatures[index]
+                minimum_quantity = max(
+                    0,
+                    target_size - selected_total - remaining_total[index + 1],
+                )
+                maximum_quantity = min(
+                    capacities[index],
+                    target_size - selected_total,
+                )
+                for group_index, (matches, minimum, maximum, count) in enumerate(
+                    zip(signature, minimums, maximums, counts, strict=True)
+                ):
+                    if matches and maximum is not None:
+                        maximum_quantity = min(maximum_quantity, maximum - count)
+                    if matches:
+                        minimum_quantity = max(
+                            minimum_quantity,
+                            minimum
+                            - count
+                            - remaining_by_group[index + 1][group_index],
+                        )
+                if minimum_quantity > maximum_quantity:
+                    continue
+
+                preferred = min(
+                    maximum_quantity,
+                    max(minimum_quantity, preferred_quantities[index]),
+                )
+
+                def branch_key(quantity: int) -> tuple[int, int, int]:
+                    remaining_needed = target_size - selected_total - quantity
+                    lower_cost = (
+                        prefix_costs[index][quantity]
+                        + suffix_rank_costs[index + 1][remaining_needed]
+                    )
+                    return (lower_cost, abs(quantity - preferred), -quantity)
+
+                children = []
+                for quantity in sorted(
+                    range(minimum_quantity, maximum_quantity + 1),
+                    key=branch_key,
+                ):
+                    next_counts = tuple(
+                        min(bound, count + quantity * int(matches))
+                        for bound, count, matches in zip(
+                            bounds,
+                            counts,
+                            signature,
+                            strict=True,
+                        )
+                    )
+                    children.append(
+                        (
+                            index + 1,
+                            selected_total + quantity,
+                            next_counts,
+                            cost + prefix_costs[index][quantity],
+                            (*used, quantity),
+                        )
+                    )
+                optimize_stack.extend(reversed(children))
+
+        selected = [
+            candidate
+            for signature, count in zip(signatures, best_solution, strict=True)
+            for candidate in buckets[signature][:count]
+        ]
+        return tuple(sorted(selected, key=self._rank))
+
+    def _best_effort_quota_selection(
+        self,
+        candidates: list[CandidateMetadata],
+        groups: list[dict[str, Any]],
+        target_size: int,
+    ) -> tuple[CandidateMetadata, ...] | None:
+        """Minimize aggregate quota deficit, then rank, at one cardinality."""
+        minimums = tuple(int(group.get("minimum", 0)) for group in groups)
+        maximums = tuple(
+            int(group["maximum"]) if group.get("maximum") is not None else None
+            for group in groups
+        )
+        maximum_only_groups = [{**group, "minimum": 0} for group in groups]
+        incumbent = self._solve_quota_selection(
+            candidates,
+            maximum_only_groups,
+            target_size,
+        )
+        if incumbent is None:
+            return None
+
+        bounds = tuple(
+            maximum if maximum is not None else minimum
+            for minimum, maximum in zip(minimums, maximums, strict=True)
+        )
+        buckets: dict[tuple[bool, ...], list[CandidateMetadata]] = {}
+        for candidate in candidates:
+            signature = tuple(
+                self._matches_group(candidate, group) for group in groups
+            )
+            buckets.setdefault(signature, []).append(candidate)
+        signatures = tuple(
+            sorted(
+                buckets,
+                key=lambda signature: self._rank(buckets[signature][0]),
+            )
+        )
+        capacities = tuple(
+            min(len(buckets[signature]), target_size) for signature in signatures
+        )
+        rank_positions = {
+            id(candidate): index + 1 for index, candidate in enumerate(candidates)
+        }
+        prefix_costs: list[tuple[int, ...]] = []
+        for signature, capacity in zip(signatures, capacities, strict=True):
+            costs = [0]
+            for candidate in buckets[signature][:capacity]:
+                costs.append(costs[-1] + rank_positions[id(candidate)])
+            prefix_costs.append(tuple(costs))
+        preferred_candidates = {id(candidate) for candidate in candidates[:target_size]}
+        preferred_quantities = tuple(
+            sum(id(candidate) in preferred_candidates for candidate in buckets[signature])
+            for signature in signatures
+        )
+        remaining_total = [0] * (len(signatures) + 1)
+        remaining_by_group = [
+            [0 for _ in groups] for _ in range(len(signatures) + 1)
+        ]
+        suffix_rank_costs: list[tuple[int, ...]] = [()] * (len(signatures) + 1)
+        suffix_rank_costs[-1] = (0,)
+        suffix_positions: list[int] = []
+        for index in range(len(signatures) - 1, -1, -1):
+            remaining_total[index] = remaining_total[index + 1] + capacities[index]
+            remaining_by_group[index] = remaining_by_group[index + 1].copy()
+            for group_index, matches in enumerate(signatures[index]):
+                if matches:
+                    remaining_by_group[index][group_index] += capacities[index]
+            suffix_positions.extend(
+                rank_positions[id(candidate)]
+                for candidate in buckets[signatures[index]][: capacities[index]]
+            )
+            suffix_positions.sort()
+            del suffix_positions[target_size:]
+            costs = [0]
+            for position in suffix_positions:
+                costs.append(costs[-1] + position)
+            suffix_rank_costs[index] = tuple(costs)
+
+        def deficit(counts: tuple[int, ...]) -> int:
+            return sum(
+                max(0, minimum - count)
+                for minimum, count in zip(minimums, counts, strict=True)
+            )
+
+        def deficit_lower_bound(
+            index: int,
+            counts: tuple[int, ...],
+            needed: int,
+        ) -> int:
+            current = tuple(
+                max(0, minimum - count)
+                for minimum, count in zip(minimums, counts, strict=True)
+            )
+            contributions = sorted(
+                (
+                    sum(
+                        matches and current[group_index] > 0
+                        for group_index, matches in enumerate(signature)
+                    )
+                    for signature, capacity in zip(
+                        signatures[index:],
+                        capacities[index:],
+                        strict=True,
+                    )
+                    for _ in range(capacity)
+                ),
+                reverse=True,
+            )
+            return max(0, sum(current) - sum(contributions[:needed]))
+
+        incumbent_counts = tuple(
+            sum(self._matches_group(candidate, group) for candidate in incumbent)
+            for group in groups
+        )
+        incumbent_positions = tuple(
+            sorted(rank_positions[id(candidate)] for candidate in incumbent)
+        )
+        best_key = (
+            deficit(incumbent_counts),
+            sum(incumbent_positions),
+            incumbent_positions,
+        )
+        initial_counts = tuple(0 for _ in groups)
+        if deficit_lower_bound(0, initial_counts, target_size) == best_key[0]:
+            return incumbent
+
+        best_solution: tuple[int, ...] | None = None
+        lowest_state_cost: dict[tuple[int, int, tuple[int, ...]], int] = {}
+        stack: list[tuple[int, int, tuple[int, ...], int, tuple[int, ...]]] = [
+            (0, 0, initial_counts, 0, ())
+        ]
+        while stack:
+            index, selected_total, counts, cost, used = stack.pop()
+            needed = target_size - selected_total
+            if needed < 0 or selected_total + remaining_total[index] < target_size:
+                continue
+            shortfall_bound = deficit_lower_bound(index, counts, needed)
+            if shortfall_bound > best_key[0]:
+                continue
+            if (
+                shortfall_bound == best_key[0]
+                and cost + suffix_rank_costs[index][needed] > best_key[1]
+            ):
+                continue
+            state = (index, selected_total, counts)
+            previous_cost = lowest_state_cost.get(state)
+            if previous_cost is not None and cost > previous_cost:
+                continue
+            if previous_cost is None or cost < previous_cost:
+                lowest_state_cost[state] = cost
+            if index == len(signatures):
+                if selected_total != target_size:
+                    continue
+                positions = tuple(
+                    sorted(
+                        rank_positions[id(candidate)]
+                        for signature, quantity in zip(
+                            signatures,
+                            used,
+                            strict=True,
+                        )
+                        for candidate in buckets[signature][:quantity]
+                    )
+                )
+                key = (deficit(counts), sum(positions), positions)
+                if key < best_key:
+                    best_key = key
+                    best_solution = used
+                continue
+
+            signature = signatures[index]
+            minimum_quantity = max(
+                0,
+                target_size - selected_total - remaining_total[index + 1],
+            )
+            maximum_quantity = min(
+                capacities[index],
+                target_size - selected_total,
+            )
+            for matches, maximum, count in zip(
+                signature,
+                maximums,
+                counts,
+                strict=True,
+            ):
+                if matches and maximum is not None:
+                    maximum_quantity = min(maximum_quantity, maximum - count)
+            if minimum_quantity > maximum_quantity:
+                continue
+            preferred = min(
+                maximum_quantity,
+                max(minimum_quantity, preferred_quantities[index]),
+            )
+
+            children = []
+            for quantity in range(minimum_quantity, maximum_quantity + 1):
+                next_counts = tuple(
+                    min(bound, count + quantity * int(matches))
+                    for bound, count, matches in zip(
+                        bounds,
+                        counts,
+                        signature,
+                        strict=True,
+                    )
+                )
+                remaining_needed = target_size - selected_total - quantity
+                child_shortfall = deficit_lower_bound(
+                    index + 1,
+                    next_counts,
+                    remaining_needed,
+                )
+                child = (
+                    index + 1,
+                    selected_total + quantity,
+                    next_counts,
+                    cost + prefix_costs[index][quantity],
+                    (*used, quantity),
+                )
+                order = (
+                    child_shortfall,
+                    prefix_costs[index][quantity]
+                    + suffix_rank_costs[index + 1][remaining_needed],
+                    abs(quantity - preferred),
+                    -quantity,
+                )
+                children.append((order, child))
+            children.sort(key=lambda item: item[0])
+            stack.extend(child for _, child in reversed(children))
+
+        if best_solution is None:
+            return incumbent
+        selected = [
+            candidate
+            for signature, quantity in zip(signatures, best_solution, strict=True)
+            for candidate in buckets[signature][:quantity]
+        ]
+        return tuple(sorted(selected, key=self._rank))
 
     @staticmethod
     def _is_recent(candidate: CandidateMetadata, start: date) -> bool:
@@ -163,31 +737,56 @@ class CorpusPlanner:
             selected_keys.add(candidate.key)
             return True
 
-        for group in groups:
-            required = int(group.get("minimum", 0))
-            for candidate in auto_pool:
-                if self._group_count(selected, group) >= required:
-                    break
-                if self._matches_group(candidate, group):
-                    add(candidate)
-
         recent_window = self.spec.get("quotas", {}).get("recent_window")
         recent_start: date | None = None
         recent_ratio = 0.0
         if recent_window:
             recent_start = date.fromisoformat(str(recent_window["from"]))
             recent_ratio = float(recent_window["minimum_ratio"])
-            required_recent = math.ceil(planned_total * recent_ratio)
-            for candidate in auto_pool:
-                if sum(self._is_recent(item, recent_start) for item in selected) >= required_recent:
-                    break
-                if self._is_recent(candidate, recent_start):
-                    add(candidate)
 
-        for candidate in auto_pool:
-            if len(selected) >= goal:
+        solved: tuple[CandidateMetadata, ...] | None = None
+        smallest_target = min(minimum, planned_total)
+        for target_size in range(planned_total, smallest_target - 1, -1):
+            quota_groups = list(groups)
+            if recent_start is not None:
+                quota_groups.append(
+                    {
+                        "name": "__recent__",
+                        "minimum": math.ceil(target_size * recent_ratio),
+                        "_recent_from": recent_start.isoformat(),
+                    }
+                )
+            solved = self._solve_quota_selection(
+                auto_pool,
+                quota_groups,
+                target_size,
+            )
+            if solved is not None:
                 break
-            add(candidate)
+
+        if solved is not None:
+            for candidate in solved:
+                add(candidate)
+        else:
+            for target_size in range(planned_total, -1, -1):
+                quota_groups = list(groups)
+                if recent_start is not None:
+                    quota_groups.append(
+                        {
+                            "name": "__recent__",
+                            "minimum": math.ceil(target_size * recent_ratio),
+                            "_recent_from": recent_start.isoformat(),
+                        }
+                    )
+                solved = self._best_effort_quota_selection(
+                    auto_pool,
+                    quota_groups,
+                    target_size,
+                )
+                if solved is not None:
+                    break
+            for candidate in solved or ():
+                add(candidate)
         selected.sort(key=self._rank)
         overflow = tuple(candidate for candidate in auto_pool if candidate.key not in selected_keys)
 
@@ -214,13 +813,24 @@ class CorpusPlanner:
             quota_shortfalls=tuple(quota_shortfalls),
         )
 
+    def select_accepted(self, candidates: Iterable[CandidateMetadata]) -> CorpusPlan:
+        """Apply quotas to candidates already accepted by semantic review."""
+        accepted = (
+            replace(candidate, relevance_score=1.0)
+            for candidate in candidates
+        )
+        return self.select(accepted)
+
 
 def _normalized(value: str) -> str:
     return " ".join(re.findall(r"\w+", value.casefold()))
 
 
-def _contains_term(text: str, term: str) -> bool:
-    return bool(term and f" {term} " in f" {text} ")
+def _normalized_publication_type(value: str) -> str:
+    normalized = _normalized(value)
+    if normalized in {"full", "main"}:
+        return "proceedings article"
+    return normalized
 
 
 class CorpusDiscoverer:
@@ -234,44 +844,49 @@ class CorpusDiscoverer:
         scope = spec.get("scope", {})
         years = set(scope.get("years", {}).get("include", []))
         venue_records = scope.get("venues", [])
-        venue_names = {
-            _normalized(name)
+        normalized_venue = _normalized(candidate.venue)
+        matching_venues = [
+            record
             for record in venue_records
-            for name in [record.get("name", ""), *record.get("aliases", [])]
-            if name
-        }
-        publication_types = scope.get("publication_types", {})
-        included_types = {_normalized(value) for value in publication_types.get("include", [])}
-        excluded_types = {_normalized(value) for value in publication_types.get("exclude", [])}
-        topics = scope.get("topics", {})
-        include_terms = [
-            _normalized(value)
-            for value in [*topics.get("include", []), *topics.get("synonyms", [])]
-            if value
+            if normalized_venue
+            in {
+                _normalized(name)
+                for name in [record.get("name", ""), *record.get("aliases", [])]
+                if name
+            }
         ]
-        exclude_terms = [_normalized(value) for value in topics.get("exclude", []) if value]
-
-        haystack = _normalized(f"{candidate.title} {candidate.abstract}")
-        title = _normalized(candidate.title)
-        topic_title = any(_contains_term(title, term) for term in include_terms)
-        topic_body = any(_contains_term(haystack, term) for term in include_terms)
-        excluded_topic = any(_contains_term(haystack, term) for term in exclude_terms)
+        publication_types = scope.get("publication_types", {})
+        included_types = {
+            _normalized_publication_type(value)
+            for value in publication_types.get("include", [])
+        }
+        excluded_types = {
+            _normalized_publication_type(value)
+            for value in publication_types.get("exclude", [])
+        }
+        topics = scope.get("topics", {})
+        include_terms = [*topics.get("include", []), *topics.get("synonyms", [])]
+        prefilter = evaluate_prefilter(candidate, spec)
         if not include_terms:
             score = max(candidate.relevance_score, 0.85)
-        elif topic_title:
+        elif any(signal.startswith("title:") for signal in prefilter.signals):
             score = max(candidate.relevance_score, 0.95)
-        elif topic_body:
+        elif prefilter.signals:
             score = max(candidate.relevance_score, 0.86)
         else:
             score = min(candidate.relevance_score, 0.64)
 
-        publication_type = _normalized(candidate.publication_type or "")
+        publication_type = _normalized_publication_type(candidate.publication_type or "")
         hard_gates = candidate.hard_gates_passed
         hard_gates &= not years or candidate.year in years
-        hard_gates &= not venue_names or _normalized(candidate.venue) in venue_names
+        hard_gates &= not venue_records or bool(matching_venues)
+        hard_gates &= not matching_venues or any(
+            not record.get("years") or candidate.year in set(record.get("years", ()))
+            for record in matching_venues
+        )
         hard_gates &= not included_types or publication_type in included_types
         hard_gates &= publication_type not in excluded_types
-        hard_gates &= not excluded_topic
+        hard_gates &= not prefilter.exclusion_signals
         return replace(candidate, relevance_score=score, hard_gates_passed=hard_gates)
 
     def __call__(self, spec: dict[str, Any]) -> list[CandidateMetadata]:
@@ -295,21 +910,20 @@ class CorpusDiscoverer:
 class CorpusDiscoveryResult:
     status: str
     candidates_path: Path
-    selected_path: Path
-    pending_review_path: Path
+    evidence_path: Path
+    pending_metadata_path: Path
     diagnostics_path: Path
-    selection_manifest_path: Path
+    coverage_path: Path
+    request_path: Path
     manifest_path: Path
-    accepted: int
-    pending: int
-    rejected: int
-    not_selected: int
-    shortfall: int
-    quota_shortfalls: tuple[str, ...]
+    reviewable: int
+    pending_metadata: int
+    hard_gate_failed: int
+    coverage_incomplete: int
 
 
 class CorpusDiscoveryWorkflow:
-    """Discover, screen, and freeze a corpus without acquiring artifacts."""
+    """Enumerate and prepare immutable evidence without freezing a selection."""
 
     def __init__(self, *, discoverer: Callable[[DiscoveryRequest], DiscoveryBatch]) -> None:
         self.discoverer = discoverer
@@ -317,114 +931,387 @@ class CorpusDiscoveryWorkflow:
     @staticmethod
     def _write_jsonl(path: Path, records: Iterable[dict[str, Any]]) -> None:
         payload = "".join(
-            json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n"
+            json.dumps(
+                sanitize_artifact_value(record),
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+            + "\n"
             for record in records
         )
         atomic_write_bytes(path, payload.encode("utf-8"))
 
+    @staticmethod
+    def _write_json(path: Path, payload: dict[str, Any]) -> None:
+        sanitized = sanitize_artifact_value(payload)
+        atomic_write_bytes(
+            path,
+            (
+                json.dumps(sanitized, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+            ).encode("utf-8"),
+        )
+
+    @staticmethod
+    def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+        if not path.is_file():
+            return []
+        return [
+            json.loads(line)
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+
+    @staticmethod
+    def _fingerprint(spec: dict[str, Any]) -> str:
+        canonical = json.dumps(
+            spec,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return sha256_bytes(canonical)
+
+    @staticmethod
+    def _safe_candidate(candidate: CandidateMetadata) -> CandidateMetadata:
+        payload = sanitize_artifact_value(candidate.to_dict())
+        assert isinstance(payload, dict)
+        return CandidateMetadata.from_dict(payload)
+
+    @staticmethod
+    def _coverage_key(item: CoverageSlice) -> tuple[str, str, int]:
+        return (item.provider_id, item.venue, item.year)
+
+    @staticmethod
+    def _expected_slices(request: DiscoveryRequest) -> tuple[tuple[VenueScope, int], ...]:
+        return tuple(
+            (venue, year)
+            for venue in request.venues
+            for year in request.years
+            if venue.supports_year(year)
+        )
+
+    @staticmethod
+    def _covers(
+        item: CoverageSlice,
+        venue: VenueScope,
+        year: int,
+        *,
+        state: str | None = None,
+    ) -> bool:
+        names = {name.casefold() for name in venue.all_names}
+        return (
+            item.year == year
+            and item.venue.casefold() in names
+            and (state is None or item.state == state)
+        )
+
     def run(self, spec: dict[str, Any], output: Path) -> CorpusDiscoveryResult:
         destination = output.resolve()
         destination.mkdir(parents=True, exist_ok=True)
+        request_path = destination / "request-spec.json"
+        manifest_path = destination / "discovery-manifest.json"
+        fingerprint = self._fingerprint(spec)
+        if request_path.is_file():
+            previous_spec = json.loads(request_path.read_text(encoding="utf-8"))
+            if self._fingerprint(previous_spec) != fingerprint:
+                raise ValueError("discovery output belongs to a different corpus specification")
+        elif manifest_path.is_file():
+            raise ValueError("discovery output contains an incompatible legacy run")
+        else:
+            self._write_json(request_path, spec)
+
         request = DiscoveryRequest.from_spec(spec)
-        batch = self.discoverer(request)
-        candidates = [CorpusDiscoverer._screen(item, spec) for item in batch.candidates]
-        plan = CorpusPlanner(spec).select(candidates)
-        decision_by_key = {decision.candidate.key: decision for decision in plan.decisions}
-        selected_keys = {candidate.key for candidate in plan.auto_accepted}
+        candidates_path = destination / "candidates.jsonl"
+        coverage_path = destination / "coverage.jsonl"
+        diagnostics_path = destination / "discovery-errors.jsonl"
+        prior_candidates = tuple(
+            CandidateMetadata.from_dict(record)
+            for record in self._read_jsonl(candidates_path)
+        )
+        prior_coverage = tuple(
+            CoverageSlice(**record) for record in self._read_jsonl(coverage_path)
+        )
+        prior_diagnostics = tuple(
+            DiscoveryDiagnostic(**record) for record in self._read_jsonl(diagnostics_path)
+        )
+        prior_manifest = (
+            json.loads(manifest_path.read_text(encoding="utf-8"))
+            if manifest_path.is_file()
+            else {}
+        )
+        prior_legacy = tuple(str(value) for value in prior_manifest.get("provider_coverage", ()))
+        retryable_providers = {
+            item.provider_id for item in prior_diagnostics if item.retryable
+        }
+        resumable_legacy = tuple(
+            label
+            for label in prior_legacy
+            if label.split(":", 1)[0] not in retryable_providers
+        )
+        completed_slices = frozenset(
+            (
+                *resumable_legacy,
+                *(item.label for item in prior_coverage if item.state == "complete"),
+            )
+        )
+        expected_slices = self._expected_slices(request)
+        if expected_slices:
+            prior_coverage_complete = all(
+                any(
+                    self._covers(item, venue, year, state="complete")
+                    for item in prior_coverage
+                )
+                for venue, year in expected_slices
+            )
+        else:
+            prior_coverage_complete = not any(
+                item.state != "complete" for item in prior_coverage
+            )
+        prior_is_complete = bool(prior_manifest) and (
+            prior_coverage_complete
+            and not any(item.retryable for item in prior_diagnostics)
+        )
+        if prior_is_complete:
+            batch = DiscoveryBatch()
+        else:
+            resume_request = request.with_completed_slices(
+                completed_slices
+            ).with_seed_candidates(prior_candidates).with_seed_coverage(prior_coverage)
+            batch = self.discoverer(resume_request)
+
+        merged: dict[str, CandidateMetadata] = {}
+        for candidate in (*prior_candidates, *batch.candidates):
+            safe = self._safe_candidate(candidate)
+            identity = candidate_identity(safe)
+            merged[identity] = merge_candidates(merged.get(identity), safe)
+
+        coverage_by_key = {
+            self._coverage_key(item): item for item in prior_coverage
+        }
+        for item in batch.coverage:
+            coverage_by_key[self._coverage_key(item)] = item
+        coverage = tuple(
+            sorted(coverage_by_key.values(), key=lambda item: self._coverage_key(item))
+        )
+
+        if prior_is_complete:
+            diagnostics = prior_diagnostics
+        else:
+            rerun_keys = {self._coverage_key(item) for item in batch.coverage}
+            diagnostics = tuple(
+                item
+                for item in prior_diagnostics
+                if (item.provider_id, item.venue, item.year) not in rerun_keys
+                and item.provider_id not in retryable_providers
+            ) + batch.diagnostics
+
+        real_coverage = tuple(
+            item for item in coverage if item.provider_id != "discovery"
+        )
+        resolved_synthetic = {
+            (venue.name, year)
+            for venue, year in expected_slices
+            if any(self._covers(item, venue, year) for item in real_coverage)
+        }
+        if resolved_synthetic:
+            coverage = tuple(
+                item
+                for item in coverage
+                if not (
+                    item.provider_id == "discovery"
+                    and (item.venue, item.year) in resolved_synthetic
+                )
+            )
+            diagnostics = tuple(
+                item
+                for item in diagnostics
+                if not (
+                    item.provider_id == "discovery"
+                    and item.error_code == "coverage_missing"
+                    and (item.venue, item.year) in resolved_synthetic
+                )
+            )
+
+        missing_slices = tuple(
+            (venue, year)
+            for venue, year in expected_slices
+            if not any(self._covers(item, venue, year) for item in coverage)
+        )
+        if missing_slices:
+            synthetic = tuple(
+                CoverageSlice(
+                    "discovery",
+                    venue.name,
+                    year,
+                    "failed",
+                    diagnostic_code="coverage_missing",
+                )
+                for venue, year in missing_slices
+            )
+            coverage = tuple(
+                sorted(
+                    (*coverage, *synthetic),
+                    key=lambda item: self._coverage_key(item),
+                )
+            )
+            diagnostics = (
+                *diagnostics,
+                *(
+                    DiscoveryDiagnostic(
+                        "discovery",
+                        "coverage",
+                        "coverage_missing",
+                        "no provider reported the requested venue/year slice",
+                        venue=venue.name,
+                        year=year,
+                    )
+                    for venue, year in missing_slices
+                ),
+            )
+
+        legacy_coverage = tuple(
+            dict.fromkeys((*resumable_legacy, *batch.covered_slices))
+        )
+        complete_labels = tuple(
+            dict.fromkeys(
+                (
+                    *legacy_coverage,
+                    *(item.label for item in coverage if item.state == "complete"),
+                )
+            )
+        )
 
         candidate_records: list[dict[str, Any]] = []
-        for candidate in sorted(candidates, key=lambda item: item.key):
-            decision = decision_by_key[candidate.key]
-            status = decision.status.value
-            if decision.status is PaperStatus.AUTO_ACCEPTED and candidate.key not in selected_keys:
-                status = "not_selected"
+        packets: list[EvidencePacket] = []
+        pending_packets: list[EvidencePacket] = []
+        hard_gate_failed = 0
+        for candidate in sorted(merged.values(), key=candidate_identity):
+            screened = CorpusDiscoverer._screen(candidate, spec)
+            prefilter = evaluate_prefilter(screened, spec)
+            packet = EvidencePacket.from_candidate(
+                screened,
+                prefilter_signals=prefilter.signals,
+            )
+            if not screened.hard_gates_passed:
+                decision = "hard_gate_failed"
+                reasons = ("hard_gate_failed", *prefilter.exclusion_signals)
+                hard_gate_failed += 1
+            elif packet.metadata_state != "ready":
+                decision = "metadata_pending"
+                reasons = (packet.metadata_state,)
+                packets.append(packet)
+                pending_packets.append(packet)
+            else:
+                decision = "review_required"
+                reasons = ("semantic_review_required",)
+                packets.append(packet)
             candidate_records.append(
                 {
-                    **candidate.to_dict(),
-                    "decision": status,
-                    "reasons": decision.reasons,
+                    **screened.to_dict(),
+                    "candidate_id": packet.candidate_id,
+                    "metadata_state": packet.metadata_state,
+                    "prefilter_signals": prefilter.signals,
+                    "exclusion_signals": prefilter.exclusion_signals,
+                    "decision": decision,
+                    "reasons": reasons,
                 }
             )
         candidates_path = destination / "candidates.jsonl"
         self._write_jsonl(candidates_path, candidate_records)
 
-        pending_path = destination / "pending-review.csv"
+        evidence_path = destination / "evidence-packets.jsonl"
+        self._write_jsonl(
+            evidence_path,
+            (packet.to_dict() for packet in sorted(packets, key=lambda item: item.candidate_id)),
+        )
+
+        pending_path = destination / "pending-metadata.csv"
         pending_buffer = io.StringIO(newline="")
         pending_writer = csv.writer(pending_buffer)
         pending_writer.writerow(
-            ["key", "title", "year", "venue", "relevance_score", "reasons"]
+            [
+                "candidate_id",
+                "title",
+                "year",
+                "venue",
+                "metadata_state",
+                "missing_fields",
+            ]
         )
-        for candidate in plan.pending_review:
-            reasons = decision_by_key[candidate.key].reasons
+        for packet in sorted(pending_packets, key=lambda item: item.candidate_id):
+            missing_fields = []
+            if not packet.title:
+                missing_fields.append("title")
+            if not packet.abstract:
+                missing_fields.append("abstract")
             pending_writer.writerow(
                 [
-                    candidate.key,
-                    candidate.title,
-                    candidate.year,
-                    candidate.venue,
-                    f"{candidate.relevance_score:.4f}",
-                    ";".join(reasons),
+                    packet.candidate_id,
+                    packet.title,
+                    packet.year,
+                    packet.venue,
+                    packet.metadata_state,
+                    ";".join(missing_fields),
                 ]
             )
         atomic_write_bytes(pending_path, pending_buffer.getvalue().encode("utf-8-sig"))
 
-        diagnostics_path = destination / "discovery-errors.jsonl"
-        self._write_jsonl(diagnostics_path, (asdict(item) for item in batch.diagnostics))
+        self._write_jsonl(diagnostics_path, (asdict(item) for item in diagnostics))
+        self._write_jsonl(coverage_path, (item.to_dict() for item in coverage))
 
-        selected_records = build_selection_records(
-            plan.auto_accepted,
-            venues=request.venues,
-            delivery=spec["delivery"],
-        )
-        selection = SelectionStore.write(
-            destination,
-            spec,
-            selected_records,
-            discovery_summary={
-                "provider_coverage": list(batch.covered_slices),
-                "discovery_errors": len(batch.diagnostics),
-                "quota_shortfalls": list(plan.quota_shortfalls),
-            },
-        )
-
-        run_status = "shortfall" if plan.quota_shortfalls else "planned"
-        manifest_path = destination / "corpus-manifest.json"
+        if expected_slices:
+            coverage_incomplete = sum(
+                not any(
+                    self._covers(item, venue, year, state="complete")
+                    for item in coverage
+                )
+                for venue, year in expected_slices
+            )
+        else:
+            coverage_incomplete = sum(item.state != "complete" for item in coverage)
+        if diagnostics and not coverage and not expected_slices:
+            coverage_incomplete = max(1, coverage_incomplete)
+        reviewable = sum(packet.metadata_state == "ready" for packet in packets)
+        if coverage_incomplete:
+            run_status = "coverage_incomplete"
+        elif pending_packets:
+            run_status = "metadata_pending"
+        else:
+            run_status = "review_required"
         manifest = {
-            "schema_version": 1,
+            "schema_version": 2,
             "phase": "discovery",
             "status": run_status,
-            "accepted": len(plan.auto_accepted),
-            "pending": len(plan.pending_review),
-            "rejected": len(plan.rejected),
-            "not_selected": len(plan.not_selected),
-            "shortfall": plan.shortfall,
-            "quota_shortfalls": list(plan.quota_shortfalls),
-            "discovery_errors": len(batch.diagnostics),
-            "provider_coverage": list(batch.covered_slices),
+            "request_sha256": fingerprint,
+            "candidate_count": len(candidate_records),
+            "reviewable": reviewable,
+            "pending_metadata": len(pending_packets),
+            "hard_gate_failed": hard_gate_failed,
+            "coverage_incomplete": coverage_incomplete,
+            "discovery_errors": len(diagnostics),
+            "provider_coverage": list(complete_labels),
+            "request": request_path.name,
+            "coverage": coverage_path.name,
+            "coverage_sha256": sha256_file(coverage_path),
             "candidates": candidates_path.name,
-            "selected": selection.selected_path.name,
-            "pending_review": pending_path.name,
+            "candidates_sha256": sha256_file(candidates_path),
+            "evidence_packets": evidence_path.name,
+            "evidence_packets_sha256": sha256_file(evidence_path),
+            "pending_metadata_file": pending_path.name,
             "discovery_errors_file": diagnostics_path.name,
-            "selection_manifest": selection.manifest_path.name,
         }
-        atomic_write_bytes(
-            manifest_path,
-            (json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode(
-                "utf-8"
-            ),
-        )
+        self._write_json(manifest_path, manifest)
         return CorpusDiscoveryResult(
             status=run_status,
             candidates_path=candidates_path,
-            selected_path=selection.selected_path,
-            pending_review_path=pending_path,
+            evidence_path=evidence_path,
+            pending_metadata_path=pending_path,
             diagnostics_path=diagnostics_path,
-            selection_manifest_path=selection.manifest_path,
+            coverage_path=coverage_path,
+            request_path=request_path,
             manifest_path=manifest_path,
-            accepted=len(plan.auto_accepted),
-            pending=len(plan.pending_review),
-            rejected=len(plan.rejected),
-            not_selected=len(plan.not_selected),
-            shortfall=plan.shortfall,
-            quota_shortfalls=plan.quota_shortfalls,
+            reviewable=reviewable,
+            pending_metadata=len(pending_packets),
+            hard_gate_failed=hard_gate_failed,
+            coverage_incomplete=coverage_incomplete,
         )

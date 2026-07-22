@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field, replace
+from dataclasses import asdict, dataclass, field, fields, replace
 from typing import Any, Protocol
 
 
@@ -11,12 +11,17 @@ class VenueScope:
     kind: str = ""
     issn: tuple[str, ...] = ()
     isbn: tuple[str, ...] = ()
+    collection_doi: tuple[str, ...] = ()
     short_name: str = ""
     publisher: str = ""
+    years: tuple[int, ...] = ()
 
     @property
     def all_names(self) -> tuple[str, ...]:
         return (self.name, *self.aliases)
+
+    def supports_year(self, year: int) -> bool:
+        return not self.years or year in self.years
 
 
 @dataclass(frozen=True)
@@ -33,6 +38,9 @@ class DiscoveryRequest:
     minimum: int
     preferred: int
     maximum: int
+    completed_slices: frozenset[str] = frozenset()
+    seed_candidates: tuple[CandidateMetadata, ...] = ()
+    seed_coverage: tuple[CoverageSlice, ...] = ()
 
     @property
     def queries(self) -> tuple[str, ...]:
@@ -50,6 +58,21 @@ class DiscoveryRequest:
             year_priority=tuple(year for year in self.year_priority if year in years),
         )
 
+    def with_completed_slices(self, values: frozenset[str]) -> DiscoveryRequest:
+        return replace(self, completed_slices=values)
+
+    def with_seed_candidates(
+        self,
+        values: tuple[CandidateMetadata, ...],
+    ) -> DiscoveryRequest:
+        return replace(self, seed_candidates=values)
+
+    def with_seed_coverage(
+        self,
+        values: tuple[CoverageSlice, ...],
+    ) -> DiscoveryRequest:
+        return replace(self, seed_coverage=values)
+
     @classmethod
     def from_spec(cls, spec: dict[str, Any]) -> DiscoveryRequest:
         scope = spec.get("scope", {})
@@ -64,8 +87,12 @@ class DiscoveryRequest:
                 kind=str(item.get("kind", "")),
                 issn=tuple(str(value) for value in item.get("issn", ())),
                 isbn=tuple(str(value) for value in item.get("isbn", ())),
+                collection_doi=tuple(
+                    str(value) for value in item.get("collection_doi", ())
+                ),
                 short_name=str(item.get("short_name", "")),
                 publisher=str(item.get("publisher", "")),
+                years=tuple(int(value) for value in item.get("years", ())),
             )
             for item in scope.get("venues", ())
         )
@@ -112,11 +139,33 @@ class CandidateMetadata:
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> CandidateMetadata:
+        allowed = {item.name for item in fields(cls)}
+        values = {key: value for key, value in payload.items() if key in allowed}
+        for key in (
+            "evidence_fields",
+            "authors",
+            "keywords",
+            "related_ids",
+            "source_records",
+        ):
+            if key in values:
+                values[key] = tuple(values[key])
+        if "field_provenance" in values:
+            values["field_provenance"] = {
+                str(key): tuple(sources)
+                for key, sources in values["field_provenance"].items()
+            }
+        return cls(**values)
+
 
 @dataclass(frozen=True)
 class CandidatePage:
     candidates: tuple[CandidateMetadata, ...]
     next_cursor: str | None = None
+    total_results: int | None = None
+    query_url: str = ""
 
 
 @dataclass(frozen=True)
@@ -152,10 +201,47 @@ class DiscoveryDiagnostic:
 
 
 @dataclass(frozen=True)
+class CoverageSlice:
+    provider_id: str
+    venue: str
+    year: int
+    state: str
+    pages_fetched: int = 0
+    records_fetched: int = 0
+    next_cursor: str | None = None
+    diagnostic_code: str = ""
+    records_recognized: int = 0
+
+    def __post_init__(self) -> None:
+        if self.state not in {"complete", "partial", "failed"}:
+            raise ValueError("coverage state must be complete, partial, or failed")
+        if (
+            self.pages_fetched < 0
+            or self.records_fetched < 0
+            or self.records_recognized < 0
+        ):
+            raise ValueError("coverage counters must not be negative")
+
+    @property
+    def label(self) -> str:
+        return f"{self.provider_id}:{self.venue}:{self.year}"
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class DiscoveryBatch:
     candidates: tuple[CandidateMetadata, ...] = ()
     diagnostics: tuple[DiscoveryDiagnostic, ...] = ()
     covered_slices: tuple[str, ...] = ()
+    coverage: tuple[CoverageSlice, ...] = ()
+
+    @property
+    def complete_slice_labels(self) -> tuple[str, ...]:
+        labels = [*self.covered_slices]
+        labels.extend(item.label for item in self.coverage if item.state == "complete")
+        return tuple(dict.fromkeys(labels))
 
 
 class DiscoveryProvider(Protocol):

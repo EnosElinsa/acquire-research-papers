@@ -9,6 +9,7 @@ from bs4 import BeautifulSoup, Tag
 
 from acquire_research_papers.discovery.contracts import (
     CandidateMetadata,
+    CoverageSlice,
     DiscoveryBatch,
     DiscoveryCapabilities,
     DiscoveryDiagnostic,
@@ -59,10 +60,11 @@ def _clean_fragments(fragments: list[str], *, preserve_boundaries: bool = False)
 
 
 def _requested_venue(request: DiscoveryRequest, year: int) -> str:
-    if len(request.venues) == 1:
-        return request.venues[0].name
+    eligible = tuple(venue for venue in request.venues if venue.supports_year(year))
+    if len(eligible) == 1:
+        return eligible[0].name
     tokens = (str(year), str(year)[2:])
-    for venue in request.venues:
+    for venue in eligible or request.venues:
         if any(
             re.search(rf"(?<!\d){re.escape(token)}(?!\d)", value)
             for token in tokens
@@ -201,9 +203,11 @@ class AclAnthologyDiscoveryProvider:
         year: int,
         event_url: str,
     ) -> CandidateMetadata | None:
-        if not title or not abstract:
+        if not title:
             return None
-        evidence = ["title", "abstract", "venue", "publication_type", "doi"]
+        evidence = ["title", "venue", "publication_type", "doi"]
+        if abstract:
+            evidence.append("abstract")
         if authors:
             evidence.append("authors")
         if keywords:
@@ -222,7 +226,7 @@ class AclAnthologyDiscoveryProvider:
             authors=authors,
             abstract=abstract,
             keywords=keywords,
-            publication_type="full",
+            publication_type="proceedings-article",
             track="long",
             provenance={"source": _PROVIDER_ID, "event_url": event_url},
             field_provenance=source_fields,
@@ -289,30 +293,21 @@ class AclAnthologyDiscoveryProvider:
                 candidates.append(candidate)
         return len(parser.order), candidates
 
-    @staticmethod
-    def _matches_topics(candidate: CandidateMetadata, request: DiscoveryRequest) -> bool:
-        terms = tuple(
-            " ".join(re.findall(r"\w+", value.casefold()))
-            for value in (*request.include_topics, *request.synonyms)
-            if value.strip()
-        )
-        if not terms:
-            return True
-        haystack = " ".join(
-            re.findall(
-                r"\w+",
-                f"{candidate.title} {candidate.abstract} {' '.join(candidate.keywords)}".casefold(),
-            )
-        )
-        return any(term in haystack for term in terms)
-
     def discover(self, request: DiscoveryRequest) -> DiscoveryBatch:
         if not self._supports_request(request):
             return DiscoveryBatch()
         candidates: list[CandidateMetadata] = []
         diagnostics: list[DiscoveryDiagnostic] = []
         covered: list[str] = []
+        coverage: list[CoverageSlice] = []
         for year in request.years:
+            if request.venues and not any(
+                venue.supports_year(year) for venue in request.venues
+            ):
+                continue
+            requested_venue = _requested_venue(request, year)
+            if f"{_PROVIDER_ID}:{year}" in request.completed_slices:
+                continue
             event_url = self.event_template.format(year=year)
             host = urlsplit(event_url).hostname
             if not host or host.casefold() not in self.production_hosts:
@@ -326,10 +321,19 @@ class AclAnthologyDiscoveryProvider:
                         phase="event-index",
                         error_code="network_transient",
                         message="ACL volume index is temporarily unavailable",
-                        venue=_OFFICIAL_VENUE,
+                        venue=requested_venue,
                         year=year,
                         url=event_url,
                         retryable=True,
+                    )
+                )
+                coverage.append(
+                    CoverageSlice(
+                        provider_id=_PROVIDER_ID,
+                        venue=requested_venue,
+                        year=year,
+                        state="failed",
+                        diagnostic_code="network_transient",
                     )
                 )
                 continue
@@ -340,19 +344,39 @@ class AclAnthologyDiscoveryProvider:
                         phase="event-index",
                         error_code="source_unavailable",
                         message="ACL volume index is unavailable for the requested year",
-                        venue=_OFFICIAL_VENUE,
+                        venue=requested_venue,
                         year=year,
                         url=event_url,
+                    )
+                )
+                coverage.append(
+                    CoverageSlice(
+                        provider_id=_PROVIDER_ID,
+                        venue=requested_venue,
+                        year=year,
+                        state="failed",
+                        diagnostic_code="source_unavailable",
                     )
                 )
                 continue
             if "data-anthology-id" in html:
                 soup = BeautifulSoup(html, "html.parser")
                 articles = soup.select("article[data-anthology-id]")
-                recognized = len(articles)
+                eligible_articles = []
+                for article in articles:
+                    anthology_id = str(article.get("data-anthology-id", "")).strip()
+                    record_type = article.select_one(".type")
+                    is_front_matter = bool(
+                        record_type
+                        and "front matter"
+                        in record_type.get_text(" ", strip=True).casefold()
+                    )
+                    if _LONG_ID.fullmatch(anthology_id) and not is_front_matter:
+                        eligible_articles.append(article)
+                recognized = len(eligible_articles)
                 year_candidates = [
                     candidate
-                    for article in articles
+                    for article in eligible_articles
                     if (candidate := self._article_candidate(article, year, event_url)) is not None
                 ]
             else:
@@ -364,19 +388,57 @@ class AclAnthologyDiscoveryProvider:
                         phase="event-index",
                         error_code="page_contract_changed",
                         message="ACL event index has no recognizable paper records",
-                        venue=_OFFICIAL_VENUE,
+                        venue=requested_venue,
                         year=year,
                         url=event_url,
                     )
                 )
+                coverage.append(
+                    CoverageSlice(
+                        provider_id=_PROVIDER_ID,
+                        venue=requested_venue,
+                        year=year,
+                        state="failed",
+                        pages_fetched=1,
+                        diagnostic_code="page_contract_changed",
+                    )
+                )
                 continue
-            covered.append(f"{_PROVIDER_ID}:{year}")
-            requested_venue = _requested_venue(request, year)
+            slice_state = "complete"
+            diagnostic_code = ""
+            if len(year_candidates) != recognized:
+                slice_state = "partial" if year_candidates else "failed"
+                diagnostic_code = "page_contract_changed"
+                diagnostics.append(
+                    DiscoveryDiagnostic(
+                        provider_id=_PROVIDER_ID,
+                        phase="event-index",
+                        error_code=diagnostic_code,
+                        message="ACL event index contains malformed paper records",
+                        venue=requested_venue,
+                        year=year,
+                        url=event_url,
+                    )
+                )
+            else:
+                covered.append(f"{_PROVIDER_ID}:{year}")
             for candidate in year_candidates:
-                if self._matches_topics(candidate, request):
-                    candidates.append(replace(candidate, venue=requested_venue))
+                candidates.append(replace(candidate, venue=requested_venue))
+            coverage.append(
+                CoverageSlice(
+                    provider_id=_PROVIDER_ID,
+                    venue=requested_venue,
+                    year=year,
+                    state=slice_state,
+                    pages_fetched=1,
+                    records_fetched=len(year_candidates),
+                    diagnostic_code=diagnostic_code,
+                    records_recognized=recognized,
+                )
+            )
         return DiscoveryBatch(
             candidates=tuple(candidates),
             diagnostics=tuple(diagnostics),
             covered_slices=tuple(covered),
+            coverage=tuple(coverage),
         )

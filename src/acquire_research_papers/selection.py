@@ -317,6 +317,12 @@ class SelectionStore:
             raise ValueError("selection manifest could not be read") from exc
         if not isinstance(manifest, dict) or manifest.get("schema_version") != 1:
             raise ValueError("unsupported selection manifest schema")
+        spec = manifest.get("spec")
+        if (
+            not isinstance(spec, dict)
+            or sha256_bytes(_canonical_json(spec)) != manifest.get("spec_sha256")
+        ):
+            raise ValueError("selection specification SHA-256 mismatch")
         selected_name = _safe_relative(str(manifest.get("selected_file", "")))
         selected_path = (resolved_manifest.parent / Path(selected_name)).resolve()
         if (
@@ -342,4 +348,3 @@ class SelectionStore:
         if len(records) != manifest.get("selected_count"):
             raise ValueError("selection record count mismatch")
         return cls(resolved_manifest, selected_path, tuple(records), manifest)
-

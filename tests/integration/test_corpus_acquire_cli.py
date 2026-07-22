@@ -4,6 +4,8 @@ import csv
 import json
 from pathlib import Path
 
+import pytest
+
 from acquire_research_papers.acquisition.corpus import CorpusAcquisitionWorkflow
 from acquire_research_papers.acquisition.base import AcquiredPair, SourceAdapter, SourceDocument
 from acquire_research_papers.artifacts import sha256_file
@@ -384,6 +386,163 @@ def test_acquire_corpus_reuses_only_hash_verified_delivery(
     assert calls == ["blocked"]
     assert payload["delivered"] == 1
     assert payload["retryable"] == 1
+
+
+def test_acquire_corpus_rejects_output_bound_to_a_different_selection(
+    tmp_path: Path,
+) -> None:
+    first = make_selection(tmp_path / "selection-first")
+    second = make_selection(
+        tmp_path / "selection-second",
+        publisher_host="other.example",
+    )
+    calls: list[str] = []
+
+    def acquirer(record, output: Path):
+        calls.append(record.key)
+        return delivered_outcome(record, output)
+
+    workflow = CorpusAcquisitionWorkflow(acquirer=acquirer)
+    output = tmp_path / "delivery"
+    workflow.run(first.manifest_path, output)
+    original_pdf = (output / first.records[0].relative_pdf).read_bytes()
+    calls.clear()
+
+    with pytest.raises(ValueError, match="different frozen selection"):
+        workflow.run(second.manifest_path, output)
+
+    assert calls == []
+    assert (output / first.records[0].relative_pdf).read_bytes() == original_pdf
+
+
+def test_acquire_corpus_binds_output_before_the_first_acquirer_call(
+    tmp_path: Path,
+) -> None:
+    first = make_selection(tmp_path / "selection-first")
+    second = make_selection(
+        tmp_path / "selection-second",
+        publisher_host="other.example",
+    )
+    output = tmp_path / "delivery"
+
+    def interrupted(record, destination: Path):
+        paths = {
+            "pdf": destination / record.relative_pdf,
+            "bibtex": destination / record.relative_bibtex,
+            "provenance": destination / record.relative_provenance,
+        }
+        paths["pdf"].parent.mkdir(parents=True, exist_ok=True)
+        paths["pdf"].write_bytes(b"partial")
+        raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        CorpusAcquisitionWorkflow(acquirer=interrupted).run(first.manifest_path, output)
+
+    binding = json.loads((output / "selection-binding.json").read_text(encoding="utf-8"))
+    assert binding["selection_sha256"] == first.manifest["selected_sha256"]
+    with pytest.raises(ValueError, match="different frozen selection"):
+        CorpusAcquisitionWorkflow(acquirer=lambda *_: {}).run(
+            second.manifest_path, output
+        )
+
+
+def test_acquire_corpus_rejects_unbound_reserved_artifacts(tmp_path: Path) -> None:
+    selection = make_selection(tmp_path / "selection")
+    output = tmp_path / "delivery"
+    reserved = output / selection.records[0].relative_pdf
+    reserved.parent.mkdir(parents=True)
+    reserved.write_bytes(b"unverified")
+    calls: list[str] = []
+
+    with pytest.raises(ValueError, match="unbound managed artifacts"):
+        CorpusAcquisitionWorkflow(
+            acquirer=lambda record, _: calls.append(record.key) or {}
+        ).run(selection.manifest_path, output)
+
+    assert calls == []
+
+
+def test_acquire_corpus_rejects_disjoint_unbound_delivery_artifacts(
+    tmp_path: Path,
+) -> None:
+    selection = make_selection(tmp_path / "selection")
+    output = tmp_path / "delivery"
+    unrelated = output / "old-selection" / "paper.pdf"
+    unrelated.parent.mkdir(parents=True)
+    unrelated.write_bytes(b"unverified")
+
+    with pytest.raises(ValueError, match="unbound managed artifacts"):
+        CorpusAcquisitionWorkflow(acquirer=lambda *_: {}).run(
+            selection.manifest_path, output
+        )
+
+
+def test_acquire_corpus_rejects_a_corrupt_existing_ledger(tmp_path: Path) -> None:
+    selection = make_selection(tmp_path / "selection")
+    output = tmp_path / "delivery"
+    workflow = CorpusAcquisitionWorkflow(acquirer=delivered_outcome)
+    workflow.run(selection.manifest_path, output)
+    (output / "acquisition-manifest.jsonl").write_text("not-json\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="unreadable acquisition manifest"):
+        workflow.run(selection.manifest_path, output)
+
+
+def test_acquire_corpus_refuses_unverified_reserved_paths(tmp_path: Path) -> None:
+    selection = make_selection(tmp_path / "selection")
+    output = tmp_path / "delivery"
+    workflow = CorpusAcquisitionWorkflow(
+        acquirer=lambda *_: {
+            "error_code": "access_required",
+            "message": "manual",
+        }
+    )
+    workflow.run(selection.manifest_path, output)
+    reserved = output / selection.records[0].relative_pdf
+    reserved.parent.mkdir(parents=True, exist_ok=True)
+    reserved.write_bytes(b"unverified")
+
+    with pytest.raises(ValueError, match="unverified reserved artifact"):
+        workflow.run(selection.manifest_path, output)
+
+
+def test_acquire_corpus_stops_if_a_failed_acquirer_leaves_a_reserved_file(
+    tmp_path: Path,
+) -> None:
+    selection = make_selection(tmp_path / "selection")
+    output = tmp_path / "delivery"
+
+    def unsafe_failure(record, destination: Path):
+        reserved = destination / record.relative_pdf
+        reserved.parent.mkdir(parents=True, exist_ok=True)
+        reserved.write_bytes(b"unverified")
+        raise RuntimeError("failed after writing")
+
+    with pytest.raises(ValueError, match="unverified reserved artifact"):
+        CorpusAcquisitionWorkflow(acquirer=unsafe_failure).run(
+            selection.manifest_path, output
+        )
+
+
+def test_acquire_corpus_rejects_invalid_binding_contract(tmp_path: Path) -> None:
+    selection = make_selection(tmp_path / "selection")
+    output = tmp_path / "delivery"
+    output.mkdir()
+    (output / "selection-binding.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 99,
+                "phase": "not-a-binding",
+                "selection_sha256": selection.manifest["selected_sha256"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="unreadable selection binding"):
+        CorpusAcquisitionWorkflow(acquirer=lambda *_: {}).run(
+            selection.manifest_path, output
+        )
 
 
 def test_acquire_corpus_rejects_modified_frozen_selection(

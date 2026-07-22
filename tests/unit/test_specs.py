@@ -72,6 +72,20 @@ def test_corpus_spec_rejects_group_maximum_below_minimum(tmp_path: Path) -> None
         load_corpus_spec(path)
 
 
+def test_corpus_spec_accepts_publication_type_quota(tmp_path: Path) -> None:
+    path = tmp_path / "publication-quota.yaml"
+    path.write_text(
+        "mode: corpus\nname: typed\ntarget:\n  minimum: 1\n  maximum: 2\n"
+        "quotas:\n  groups:\n    - name: journals\n      minimum: 1\n"
+        "      publication_types: [journal-article]\n",
+        encoding="utf-8",
+    )
+
+    spec = load_corpus_spec(path)
+
+    assert spec["quotas"]["groups"][0]["publication_types"] == ["journal-article"]
+
+
 def test_numbered_delivery_requires_number_and_extension_tokens(tmp_path: Path) -> None:
     path = tmp_path / "bad-layout.yaml"
     path.write_text(
@@ -96,3 +110,34 @@ def test_numbered_delivery_accepts_number_and_extension_tokens(tmp_path: Path) -
     spec = load_corpus_spec(path)
 
     assert spec["delivery"]["profile"] == "numbered"
+
+
+def test_corpus_spec_accepts_optional_venue_specific_years(tmp_path: Path) -> None:
+    path = tmp_path / "venue-years.yaml"
+    path.write_text(
+        "mode: corpus\nname: editions\ntarget:\n  minimum: 1\n  maximum: 2\n"
+        "scope:\n  venues:\n    - name: Conference 2025\n      years: [2025]\n"
+        "  years:\n    include: [2025, 2024]\n",
+        encoding="utf-8",
+    )
+
+    spec = load_corpus_spec(path)
+
+    assert spec["scope"]["venues"][0]["years"] == [2025]
+
+
+def test_corpus_spec_accepts_crossref_collection_dois(tmp_path: Path) -> None:
+    path = tmp_path / "collection.yaml"
+    path.write_text(
+        "mode: corpus\nname: collection\ntarget:\n  minimum: 1\n  maximum: 2\n"
+        "scope:\n  venues:\n    - name: Proceedings Collection\n"
+        "      collection_doi: [10.1145/123, 10.1145/456]\n",
+        encoding="utf-8",
+    )
+
+    spec = load_corpus_spec(path)
+
+    assert spec["scope"]["venues"][0]["collection_doi"] == [
+        "10.1145/123",
+        "10.1145/456",
+    ]

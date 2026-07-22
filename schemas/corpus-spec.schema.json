@@ -35,8 +35,10 @@
               "kind": {"type": "string"},
               "short_name": {"type": "string"},
               "publisher": {"type": "string"},
+              "years": {"type": "array", "items": {"type": "integer"}},
               "issn": {"type": "array", "items": {"type": "string"}},
-              "isbn": {"type": "array", "items": {"type": "string"}}
+              "isbn": {"type": "array", "items": {"type": "string"}},
+              "collection_doi": {"type": "array", "items": {"type": "string"}}
             }
           }
         },
@@ -91,7 +93,11 @@
               "minimum": {"type": "integer", "minimum": 0},
               "maximum": {"type": "integer", "minimum": 0},
               "venues": {"type": "array", "items": {"type": "string"}},
-              "years": {"type": "array", "items": {"type": "integer"}}
+              "years": {"type": "array", "items": {"type": "integer"}},
+              "publication_types": {
+                "type": "array",
+                "items": {"type": "string"}
+              }
             }
           }
         }

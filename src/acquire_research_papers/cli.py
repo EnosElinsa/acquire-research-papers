@@ -49,6 +49,7 @@ from acquire_research_papers.discovery.contracts import (
 )
 from acquire_research_papers.discovery.coordinator import DiscoveryCoordinator
 from acquire_research_papers.discovery.corpus import CorpusDiscoveryWorkflow
+from acquire_research_papers.discovery.review import CorpusReviewWorkflow
 from acquire_research_papers.discovery.crossref import CrossrefClient
 from acquire_research_papers.discovery.openalex import OpenAlexClient
 from acquire_research_papers.discovery.official import (
@@ -56,6 +57,7 @@ from acquire_research_papers.discovery.official import (
     IjcaiDiscoveryProvider,
 )
 from acquire_research_papers.discovery.providers import (
+    CrossrefVenueDiscoveryProvider,
     DoiBatchEnrichmentProvider,
     QueryApiProvider,
 )
@@ -133,7 +135,7 @@ def _production_discovery_providers(
     environment: Mapping[str, str] | None = None,
 ) -> list[DiscoveryProvider]:
     providers: list[DiscoveryProvider] = [
-        QueryApiProvider("crossref", crossref.corpus_searcher),
+        CrossrefVenueDiscoveryProvider(crossref.search),
         AclAnthologyDiscoveryProvider(client=acl_client),
         IjcaiDiscoveryProvider(client=ijcai_client),
     ]
@@ -166,7 +168,13 @@ def _production_discovery_enrichers(
         client=SafeHttpClient(allowed_hosts={"api.semanticscholar.org"}),
         api_key=configured.get("SEMANTIC_SCHOLAR_API_KEY", "").strip() or None,
     )
-    return [DoiBatchEnrichmentProvider("semantic-scholar", semantic.lookup_dois)]
+    return [
+        DoiBatchEnrichmentProvider(
+            "semantic-scholar",
+            semantic.lookup_dois,
+            pause_seconds=1.0,
+        )
+    ]
 
 
 @dataclass
@@ -649,8 +657,13 @@ def build_parser() -> argparse.ArgumentParser:
     resume = subparsers.add_parser("resume", help="resume an interrupted acquisition")
     resume.add_argument("--paper-id", required=True)
 
-    review = subparsers.add_parser("review", help="import or inspect review decisions")
-    review.add_argument("--input", type=Path, required=True)
+    review = subparsers.add_parser("review", help="validate semantic review decisions")
+    review_modes = review.add_subparsers(dest="review_mode", required=True)
+    review_corpus = review_modes.add_parser(
+        "corpus", help="import corpus decisions and freeze a selection"
+    )
+    review_corpus.add_argument("--run", type=Path, required=True)
+    review_corpus.add_argument("--decisions", type=Path, required=True)
 
     discover = subparsers.add_parser("discover", help="discover a corpus or research evidence")
     discover_modes = discover.add_subparsers(dest="discover_mode", required=True)
@@ -789,17 +802,16 @@ def run_cli(
                 {
                     "status": result.status,
                     "candidates": str(result.candidates_path),
-                    "selected": str(result.selected_path),
-                    "pending_review": str(result.pending_review_path),
+                    "evidence_packets": str(result.evidence_path),
+                    "pending_metadata": str(result.pending_metadata_path),
+                    "coverage": str(result.coverage_path),
+                    "request": str(result.request_path),
                     "discovery_errors": str(result.diagnostics_path),
-                    "selection_manifest": str(result.selection_manifest_path),
                     "manifest": str(result.manifest_path),
-                    "accepted": result.accepted,
-                    "pending": result.pending,
-                    "rejected": result.rejected,
-                    "not_selected": result.not_selected,
-                    "shortfall": result.shortfall,
-                    "quota_shortfalls": list(result.quota_shortfalls),
+                    "reviewable": result.reviewable,
+                    "pending_metadata_count": result.pending_metadata,
+                    "hard_gate_failed": result.hard_gate_failed,
+                    "coverage_incomplete": result.coverage_incomplete,
                 }
             )
             return 0
@@ -818,6 +830,31 @@ def run_cli(
                     "nearest_work_matrix": str(result.delivery.nearest_work_matrix),
                     "gap_analysis": str(result.delivery.gap_analysis),
                     "research_plan": str(result.delivery.research_plan),
+                }
+            )
+            return 0
+        if args.command == "review" and args.review_mode == "corpus":
+            try:
+                run_root = ensure_outside_repository(args.run, app.repository_root)
+                result = CorpusReviewWorkflow().run(run_root, args.decisions)
+            except ValueError as exc:
+                raise AmbiguousInput(str(exc)) from exc
+            _emit(
+                {
+                    "status": result.status,
+                    "reviewed_candidates": str(result.reviewed_path),
+                    "pending_review": str(result.pending_review_path),
+                    "selected_papers": str(result.selected_path),
+                    "selection_manifest": str(result.selection_manifest_path),
+                    "manifest": str(result.manifest_path),
+                    "accepted": result.accepted,
+                    "rejected": result.rejected,
+                    "pending": result.pending,
+                    "ready_unreviewed": result.ready_unreviewed,
+                    "review_completion": result.review_completion,
+                    "selected": result.selected,
+                    "shortfall_classes": list(result.shortfall_classes),
+                    "quota_shortfalls": list(result.quota_shortfalls),
                 }
             )
             return 0
@@ -850,7 +887,7 @@ def run_cli(
                 }
             )
             return 0
-        if args.command in {"resume", "review"}:
+        if args.command == "resume":
             raise AmbiguousInput(f"{args.command} requires a task produced by discover")
         parser.print_help()
         return 0

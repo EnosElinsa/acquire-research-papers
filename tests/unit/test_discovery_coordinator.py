@@ -4,16 +4,20 @@ from dataclasses import dataclass
 
 from acquire_research_papers.discovery.contracts import (
     CandidateMetadata,
+    CoverageSlice,
     DiscoveryBatch,
     DiscoveryCapabilities,
     DiscoveryRequest,
 )
-from acquire_research_papers.discovery.coordinator import DiscoveryCoordinator
+from acquire_research_papers.discovery.coordinator import (
+    DiscoveryCoordinator,
+    merge_candidates,
+)
 from acquire_research_papers.discovery.providers import (
     DoiBatchEnrichmentProvider,
     QueryApiProvider,
 )
-from acquire_research_papers.http import RateLimited
+from acquire_research_papers.http import NetworkTransient, RateLimited
 
 
 @dataclass
@@ -22,12 +26,13 @@ class FakeProvider:
     batch: DiscoveryBatch
     venue_aliases: frozenset[str] = frozenset()
     supported_years: frozenset[int] = frozenset()
+    source_class: str = "official_index"
     received: DiscoveryRequest | None = None
 
     def capabilities(self) -> DiscoveryCapabilities:
         return DiscoveryCapabilities(
             provider_id=self.provider_id,
-            source_class="official_index",
+            source_class=self.source_class,
             venue_aliases=self.venue_aliases,
             supported_years=self.supported_years,
         )
@@ -99,6 +104,26 @@ def test_coordinator_merges_official_abstract_into_api_identity() -> None:
     }
 
 
+def test_candidate_merge_deduplicates_identical_source_records() -> None:
+    item = CandidateMetadata(
+        "same",
+        "Same Paper",
+        2026,
+        "Venue A",
+        0.8,
+        True,
+        ("title", "abstract"),
+        doi="10.1000/same",
+        abstract="Evidence",
+        provenance={"source": "crossref", "record_id": "same"},
+        source_records=({"source": "crossref", "record_id": "same"},),
+    )
+
+    merged = merge_candidates(item, item)
+
+    assert merged.source_records == ({"source": "crossref", "record_id": "same"},)
+
+
 def test_coordinator_records_one_provider_failure_and_continues() -> None:
     class BrokenProvider(FakeProvider):
         def discover(self, request: DiscoveryRequest) -> DiscoveryBatch:
@@ -135,6 +160,129 @@ def test_coordinator_slices_provider_by_capability() -> None:
     assert [venue.name for venue in provider.received.venues] == ["Venue B"]
     assert provider.received.years == (2025,)
     assert provider.received.year_priority == (2025,)
+
+
+def test_coordinator_routes_official_venue_years_away_from_generic_enumerator() -> None:
+    official = FakeProvider(
+        "official-a",
+        DiscoveryBatch(
+            coverage=(CoverageSlice("official-a", "Venue A", 2026, "complete"),)
+        ),
+        venue_aliases=frozenset({"VA"}),
+        supported_years=frozenset({2026}),
+    )
+    generic = FakeProvider(
+        "generic",
+        DiscoveryBatch(),
+        source_class="venue_enumerator",
+    )
+
+    DiscoveryCoordinator([generic, official]).discover(request())
+
+    assert official.received is not None
+    assert [venue.name for venue in official.received.venues] == ["Venue A"]
+    assert official.received.years == (2026,)
+    assert generic.received is not None
+    assert [(venue.name, venue.years) for venue in generic.received.venues] == [
+        ("Venue A", (2025,)),
+        ("Venue B", (2026, 2025)),
+    ]
+
+
+def test_coordinator_preserves_official_routing_from_seed_coverage() -> None:
+    official = FakeProvider(
+        "official-a",
+        DiscoveryBatch(),
+        venue_aliases=frozenset({"VA"}),
+        supported_years=frozenset({2026}),
+    )
+    generic = FakeProvider(
+        "generic",
+        DiscoveryBatch(),
+        source_class="venue_enumerator",
+    )
+    resumed = request().with_seed_coverage(
+        (CoverageSlice("official-a", "Venue A", 2026, "complete"),)
+    )
+
+    DiscoveryCoordinator([generic, official]).discover(resumed)
+
+    assert generic.received is not None
+    assert [(venue.name, venue.years) for venue in generic.received.venues] == [
+        ("Venue A", (2025,)),
+        ("Venue B", (2026, 2025)),
+    ]
+
+
+def test_coordinator_falls_back_to_generic_when_official_slice_failed() -> None:
+    official = FakeProvider(
+        "official-a",
+        DiscoveryBatch(
+            coverage=(CoverageSlice("official-a", "Venue A", 2026, "failed"),)
+        ),
+        venue_aliases=frozenset({"VA"}),
+        supported_years=frozenset({2026}),
+    )
+    generic = FakeProvider(
+        "generic",
+        DiscoveryBatch(),
+        source_class="venue_enumerator",
+    )
+
+    DiscoveryCoordinator([generic, official]).discover(request())
+
+    assert generic.received is not None
+    assert [(venue.name, venue.years) for venue in generic.received.venues] == [
+        ("Venue A", (2026, 2025)),
+        ("Venue B", (2026, 2025)),
+    ]
+
+
+def test_coordinator_records_failed_coverage_for_provider_wide_exception() -> None:
+    class BrokenOfficial(FakeProvider):
+        def discover(self, request: DiscoveryRequest) -> DiscoveryBatch:
+            raise RuntimeError("broken")
+
+    provider = BrokenOfficial(
+        "official-a",
+        DiscoveryBatch(),
+        venue_aliases=frozenset({"VA"}),
+        supported_years=frozenset({2026}),
+    )
+
+    batch = DiscoveryCoordinator([provider]).discover(request())
+
+    assert batch.coverage == (
+        CoverageSlice(
+            "official-a",
+            "Venue A",
+            2026,
+            "failed",
+            diagnostic_code="provider_error",
+        ),
+    )
+
+
+def test_coordinator_preserves_structured_coverage() -> None:
+    coverage = CoverageSlice(
+        provider_id="venue-b",
+        venue="Venue B",
+        year=2025,
+        state="partial",
+        pages_fetched=2,
+        records_fetched=10,
+        next_cursor="next",
+    )
+    provider = FakeProvider(
+        "venue-b",
+        DiscoveryBatch(coverage=(coverage,)),
+        venue_aliases=frozenset({"VB"}),
+        supported_years=frozenset({2025}),
+    )
+
+    batch = DiscoveryCoordinator([provider]).discover(request())
+
+    assert batch.coverage == (coverage,)
 
 
 def test_coordinator_reports_identity_conflict_without_overwriting() -> None:
@@ -311,3 +459,190 @@ def test_coordinator_enriches_in_scope_dois_after_provider_discovery() -> None:
     assert enriched.abstract == "Enriched abstract"
     assert enriched.official_url is None
     assert batch.covered_slices == ("semantic-scholar:doi-batch",)
+
+
+def test_coordinator_enriches_seed_candidates_when_enumeration_is_checkpointed() -> None:
+    seed = CandidateMetadata(
+        "seed",
+        "In Scope",
+        2026,
+        "Venue A",
+        0.8,
+        True,
+        ("title", "venue"),
+        doi="10.1000/seed",
+        provenance={"source": "crossref"},
+    )
+    looked_up: list[str] = []
+
+    def lookup(dois: list[str]):
+        looked_up.extend(dois)
+        return (
+            CandidateMetadata(
+                "enriched",
+                "In Scope",
+                2026,
+                "Venue A",
+                0.5,
+                True,
+                ("title", "abstract", "venue"),
+                doi="10.1000/seed",
+                abstract="Recovered abstract",
+                provenance={"source": "semantic-scholar"},
+            ),
+        )
+
+    seeded_request = request().with_seed_candidates((seed,))
+    batch = DiscoveryCoordinator(
+        [FakeProvider("crossref", DiscoveryBatch())],
+        enrichers=[DoiBatchEnrichmentProvider("semantic-scholar", lookup)],
+    ).discover(seeded_request)
+
+    assert looked_up == ["10.1000/seed"]
+    assert batch.candidates[0].abstract == "Recovered abstract"
+
+
+def test_coordinator_does_not_return_an_unchanged_seed_candidate() -> None:
+    seed = CandidateMetadata(
+        "seed",
+        "Already Known",
+        2026,
+        "Venue A",
+        0.8,
+        True,
+        ("title", "abstract", "venue"),
+        doi="10.1000/seed",
+        abstract="Complete abstract",
+        provenance={"source": "crossref"},
+        source_records=({"source": "crossref", "record_id": "seed"},),
+    )
+
+    batch = DiscoveryCoordinator(
+        [FakeProvider("crossref", DiscoveryBatch())]
+    ).discover(request().with_seed_candidates((seed,)))
+
+    assert batch.candidates == ()
+
+
+def test_doi_enricher_does_not_checkpoint_a_partially_failed_batch() -> None:
+    seeds = (
+        CandidateMetadata(
+            "a",
+            "Paper A",
+            2026,
+            "Venue A",
+            0.0,
+            True,
+            ("title", "venue"),
+            doi="10.1000/a",
+        ),
+        CandidateMetadata(
+            "b",
+            "Paper B",
+            2026,
+            "Venue A",
+            0.0,
+            True,
+            ("title", "venue"),
+            doi="10.1000/b",
+        ),
+    )
+
+    def lookup(dois: list[str]):
+        if dois == ["10.1000/b"]:
+            raise NetworkTransient("temporary")
+        return (seeds[0],)
+
+    batch = DoiBatchEnrichmentProvider(
+        "semantic-scholar", lookup, batch_size=1, sleeper=lambda _: None
+    ).enrich(seeds, request())
+
+    assert [candidate.doi for candidate in batch.candidates] == ["10.1000/a"]
+    assert batch.covered_slices == ()
+    assert len(batch.diagnostics) == 1
+    assert batch.diagnostics[0].retryable
+
+
+def test_doi_enricher_only_queries_missing_abstracts_and_paces_batches() -> None:
+    seeds = (
+        CandidateMetadata(
+            "ready",
+            "Ready",
+            2026,
+            "Venue A",
+            0.0,
+            True,
+            ("title", "abstract", "venue"),
+            doi="10.1000/ready",
+            abstract="Already complete",
+        ),
+        CandidateMetadata(
+            "missing-a",
+            "Missing A",
+            2026,
+            "Venue A",
+            0.0,
+            True,
+            ("title", "venue"),
+            doi="10.1000/missing-a",
+        ),
+        CandidateMetadata(
+            "missing-b",
+            "Missing B",
+            2026,
+            "Venue A",
+            0.0,
+            True,
+            ("title", "venue"),
+            doi="10.1000/missing-b",
+        ),
+    )
+    calls: list[list[str]] = []
+    pauses: list[float] = []
+
+    def lookup(dois: list[str]):
+        calls.append(dois)
+        return ()
+
+    batch = DoiBatchEnrichmentProvider(
+        "semantic-scholar",
+        lookup,
+        batch_size=1,
+        pause_seconds=1.0,
+        sleeper=pauses.append,
+    ).enrich(seeds, request())
+
+    assert calls == [["10.1000/missing-a"], ["10.1000/missing-b"]]
+    assert pauses == [1.0]
+    assert batch.covered_slices == ("semantic-scholar:doi-batch",)
+
+
+def test_doi_enricher_stops_after_explicit_rate_limit() -> None:
+    seeds = tuple(
+        CandidateMetadata(
+            suffix,
+            f"Paper {suffix}",
+            2026,
+            "Venue A",
+            0.0,
+            True,
+            ("title", "venue"),
+            doi=f"10.1000/{suffix}",
+        )
+        for suffix in ("a", "b", "c")
+    )
+    calls: list[list[str]] = []
+
+    def lookup(dois: list[str]):
+        calls.append(dois)
+        if dois == ["10.1000/b"]:
+            raise RateLimited(429, "https://api.example/batch")
+        return ()
+
+    batch = DoiBatchEnrichmentProvider(
+        "semantic-scholar", lookup, batch_size=1, sleeper=lambda _: None
+    ).enrich(seeds, request())
+
+    assert calls == [["10.1000/a"], ["10.1000/b"]]
+    assert batch.covered_slices == ()
+    assert batch.diagnostics[0].error_code == "rate_limited"

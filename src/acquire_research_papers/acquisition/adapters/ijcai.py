@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html as html_lib
 import re
 from urllib.parse import urljoin, urlsplit
 
@@ -63,7 +64,7 @@ class IjcaiProceedingsAdapter:
 
         def values(name: str) -> list[str]:
             return [
-                str(tag.get("content", "")).strip()
+                html_lib.unescape(str(tag.get("content", "")).strip())
                 for tag in soup.find_all("meta", attrs={"name": re.compile(f"^{name}$", re.I)})
                 if str(tag.get("content", "")).strip()
             ]
