@@ -4,6 +4,8 @@ import csv
 import json
 from pathlib import Path
 
+import pytest
+
 from acquire_research_papers.acquisition.corpus import CorpusAcquisitionWorkflow
 from acquire_research_papers.acquisition.base import AcquiredPair, SourceAdapter, SourceDocument
 from acquire_research_papers.artifacts import sha256_file
@@ -384,6 +386,33 @@ def test_acquire_corpus_reuses_only_hash_verified_delivery(
     assert calls == ["blocked"]
     assert payload["delivered"] == 1
     assert payload["retryable"] == 1
+
+
+def test_acquire_corpus_rejects_output_bound_to_a_different_selection(
+    tmp_path: Path,
+) -> None:
+    first = make_selection(tmp_path / "selection-first")
+    second = make_selection(
+        tmp_path / "selection-second",
+        publisher_host="other.example",
+    )
+    calls: list[str] = []
+
+    def acquirer(record, output: Path):
+        calls.append(record.key)
+        return delivered_outcome(record, output)
+
+    workflow = CorpusAcquisitionWorkflow(acquirer=acquirer)
+    output = tmp_path / "delivery"
+    workflow.run(first.manifest_path, output)
+    original_pdf = (output / first.records[0].relative_pdf).read_bytes()
+    calls.clear()
+
+    with pytest.raises(ValueError, match="different frozen selection"):
+        workflow.run(second.manifest_path, output)
+
+    assert calls == []
+    assert (output / first.records[0].relative_pdf).read_bytes() == original_pdf
 
 
 def test_acquire_corpus_rejects_modified_frozen_selection(

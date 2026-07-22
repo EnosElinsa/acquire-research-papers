@@ -275,6 +275,22 @@ class CorpusAcquisitionWorkflow:
         selected_snapshot = selection.selected_path.read_bytes()
         destination = output.resolve()
         destination.mkdir(parents=True, exist_ok=True)
+        manifest_path = destination / "delivery-manifest.json"
+        if manifest_path.is_file():
+            try:
+                existing_manifest = json.loads(
+                    manifest_path.read_text(encoding="utf-8")
+                )
+            except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+                raise ValueError(
+                    "existing acquisition output has an unreadable delivery manifest"
+                ) from exc
+            if existing_manifest.get("selection_sha256") != selection.manifest.get(
+                "selected_sha256"
+            ):
+                raise ValueError(
+                    "acquisition output belongs to a different frozen selection"
+                )
         acquisition_path = destination / "acquisition-manifest.jsonl"
         previous = _read_previous(acquisition_path)
 
@@ -370,7 +386,6 @@ class CorpusAcquisitionWorkflow:
         }
         complete = counts["delivered"] == len(rows)
         status = "delivered" if complete else "partial"
-        manifest_path = destination / "delivery-manifest.json"
         manifest = {
             "schema_version": 1,
             "phase": "acquisition",
