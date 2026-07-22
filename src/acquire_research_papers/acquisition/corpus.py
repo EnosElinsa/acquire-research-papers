@@ -332,12 +332,26 @@ class CorpusAcquisitionWorkflow:
             else None
         )
         if existing_manifest is not None:
+            if (
+                existing_manifest.get("schema_version") != 1
+                or existing_manifest.get("phase") != "acquisition"
+            ):
+                raise ValueError(
+                    "existing acquisition output has an unreadable delivery manifest"
+                )
             if existing_manifest.get("selection_sha256") != selection_sha256:
                 raise ValueError(
                     "acquisition output belongs to a different frozen selection"
                 )
         if binding_path.is_file():
             binding = _read_json_object(binding_path, "selection binding")
+            if (
+                binding.get("schema_version") != 1
+                or binding.get("phase") != "acquisition_binding"
+            ):
+                raise ValueError(
+                    "existing acquisition output has an unreadable selection binding"
+                )
             if binding.get("selection_sha256") != selection_sha256:
                 raise ValueError(
                     "acquisition output belongs to a different frozen selection"
@@ -401,6 +415,12 @@ class CorpusAcquisitionWorkflow:
                     row = _failure_row(record, outcome)
             else:
                 row = _failure_row(record, outcome)
+            if row["state"] != "delivered" and any(
+                path.exists() for path in _expected_paths(record, destination).values()
+            ):
+                raise ValueError(
+                    "acquisition output contains an unverified reserved artifact"
+                )
             rows.append(row)
 
         manual_rows = [row for row in rows if row["state"] == "manual_required"]

@@ -491,6 +491,45 @@ def test_acquire_corpus_refuses_unverified_reserved_paths(tmp_path: Path) -> Non
         workflow.run(selection.manifest_path, output)
 
 
+def test_acquire_corpus_stops_if_a_failed_acquirer_leaves_a_reserved_file(
+    tmp_path: Path,
+) -> None:
+    selection = make_selection(tmp_path / "selection")
+    output = tmp_path / "delivery"
+
+    def unsafe_failure(record, destination: Path):
+        reserved = destination / record.relative_pdf
+        reserved.parent.mkdir(parents=True, exist_ok=True)
+        reserved.write_bytes(b"unverified")
+        raise RuntimeError("failed after writing")
+
+    with pytest.raises(ValueError, match="unverified reserved artifact"):
+        CorpusAcquisitionWorkflow(acquirer=unsafe_failure).run(
+            selection.manifest_path, output
+        )
+
+
+def test_acquire_corpus_rejects_invalid_binding_contract(tmp_path: Path) -> None:
+    selection = make_selection(tmp_path / "selection")
+    output = tmp_path / "delivery"
+    output.mkdir()
+    (output / "selection-binding.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 99,
+                "phase": "not-a-binding",
+                "selection_sha256": selection.manifest["selected_sha256"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="unreadable selection binding"):
+        CorpusAcquisitionWorkflow(acquirer=lambda *_: {}).run(
+            selection.manifest_path, output
+        )
+
+
 def test_acquire_corpus_rejects_modified_frozen_selection(
     tmp_path: Path,
     capsys,
