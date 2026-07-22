@@ -7,7 +7,7 @@ Use this reference for venue/topic/year/count collection tasks, including task f
 Create a `CorpusSpec` conforming to `schemas/corpus-spec.schema.json`. Capture:
 
 - minimum, preferred, and maximum totals;
-- exact venue names, aliases, type, optional venue-specific years, and optional ISSN/ISBN;
+- exact venue names, aliases, type, optional venue-specific years, optional ISSN/ISBN, and optional Crossref collection DOI values;
 - included and prioritized years;
 - included and excluded publication types or tracks;
 - positive topics, synonyms, and exclusion concepts;
@@ -18,7 +18,7 @@ Natural language is the usual input. A DOCX, Markdown, TXT, CSV, DOI list, or UR
 
 ## Enumerate, enrich, and prepare evidence
 
-Enumerate every requested venue/year slice before topic screening. Use an official proceedings index where supported and a paginated Crossref venue/date stream as the generic source. ISSN identifies journals when supplied; otherwise use the exact container title. OpenAlex and Semantic Scholar may enrich or expand candidates, but they do not establish final citation artifacts. Preserve the source, record ID, observed fields, coverage state, and sanitized request provenance.
+Enumerate every requested venue/year slice before topic screening. Use an official proceedings index where supported and a paginated Crossref venue/date stream as the generic source. ISSN identifies journals. For a Crossref-indexed proceedings collection, set `collection_doi` to the parent DOI values; the provider enumerates records through Crossref's exact `alternative-id` filter. A conference declared with `kind: conference` and no official provider or collection DOI is reported as incomplete instead of treating fuzzy title search as exhaustive. OpenAlex and Semantic Scholar may enrich or expand candidates, but they do not establish final citation artifacts. Preserve the source, record ID, observed fields, coverage state, and sanitized request provenance.
 
 Apply hard gates before semantic relevance:
 

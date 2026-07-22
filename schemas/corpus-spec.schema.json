@@ -37,7 +37,8 @@
               "publisher": {"type": "string"},
               "years": {"type": "array", "items": {"type": "integer"}},
               "issn": {"type": "array", "items": {"type": "string"}},
-              "isbn": {"type": "array", "items": {"type": "string"}}
+              "isbn": {"type": "array", "items": {"type": "string"}},
+              "collection_doi": {"type": "array", "items": {"type": "string"}}
             }
           }
         },

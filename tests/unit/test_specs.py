@@ -110,3 +110,20 @@ def test_corpus_spec_accepts_optional_venue_specific_years(tmp_path: Path) -> No
     spec = load_corpus_spec(path)
 
     assert spec["scope"]["venues"][0]["years"] == [2025]
+
+
+def test_corpus_spec_accepts_crossref_collection_dois(tmp_path: Path) -> None:
+    path = tmp_path / "collection.yaml"
+    path.write_text(
+        "mode: corpus\nname: collection\ntarget:\n  minimum: 1\n  maximum: 2\n"
+        "scope:\n  venues:\n    - name: Proceedings Collection\n"
+        "      collection_doi: [10.1145/123, 10.1145/456]\n",
+        encoding="utf-8",
+    )
+
+    spec = load_corpus_spec(path)
+
+    assert spec["scope"]["venues"][0]["collection_doi"] == [
+        "10.1145/123",
+        "10.1145/456",
+    ]

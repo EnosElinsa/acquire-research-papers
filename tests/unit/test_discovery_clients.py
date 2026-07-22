@@ -248,6 +248,85 @@ def test_crossref_provider_respects_venue_specific_year_scope() -> None:
     ]
 
 
+def test_crossref_provider_enumerates_each_exact_collection_doi() -> None:
+    request = DiscoveryRequest.from_spec(
+        {
+            "name": "collection",
+            "target": {"minimum": 1, "maximum": 5},
+            "scope": {
+                "venues": [
+                    {
+                        "name": "Proceedings Collection",
+                        "aliases": ["Proceedings Collection V.2"],
+                        "years": [2025],
+                        "collection_doi": ["10.1145/one", "10.1145/two"],
+                    }
+                ],
+                "years": {"include": [2025]},
+            },
+        }
+    )
+    calls: list[tuple[str, str]] = []
+
+    def searcher(query: str, **kwargs) -> CandidatePage:
+        collection_doi = kwargs["filters"]["alternative-id"]
+        calls.append((query, collection_doi))
+        suffix = collection_doi.rsplit("/", 1)[-1]
+        reported_venue = (
+            "Proceedings Collection V.2"
+            if suffix == "two"
+            else "Proceedings Collection"
+        )
+        return CandidatePage(
+            (crossref_candidate(suffix, reported_venue),),
+            total_results=1,
+        )
+
+    batch = CrossrefVenueDiscoveryProvider(searcher=searcher).discover(request)
+
+    assert calls == [("", "10.1145/one"), ("", "10.1145/two")]
+    assert [candidate.key for candidate in batch.candidates] == ["one", "two"]
+    assert {candidate.venue for candidate in batch.candidates} == {
+        "Proceedings Collection"
+    }
+    assert batch.candidates[1].provenance["reported_venue"] == (
+        "Proceedings Collection V.2"
+    )
+    assert len(batch.coverage) == 1
+    assert batch.coverage[0].state == "complete"
+    assert batch.coverage[0].pages_fetched == 2
+    assert batch.coverage[0].records_fetched == 2
+
+
+def test_crossref_provider_does_not_claim_complete_fuzzy_conference_coverage() -> None:
+    request = DiscoveryRequest.from_spec(
+        {
+            "name": "unpublished conference",
+            "target": {"minimum": 1, "maximum": 5},
+            "scope": {
+                "venues": [
+                    {
+                        "name": "Future Conference",
+                        "kind": "conference",
+                        "years": [2026],
+                    }
+                ],
+                "years": {"include": [2026]},
+            },
+        }
+    )
+
+    def searcher(query: str, **kwargs) -> CandidatePage:
+        raise AssertionError("a fuzzy conference query cannot prove complete coverage")
+
+    batch = CrossrefVenueDiscoveryProvider(searcher=searcher).discover(request)
+
+    assert batch.candidates == ()
+    assert batch.coverage[0].state == "failed"
+    assert batch.coverage[0].diagnostic_code == "exact_identifier_required"
+    assert batch.diagnostics[0].error_code == "exact_identifier_required"
+
+
 def test_crossref_rate_limit_is_classified(fixture_server) -> None:
     fixture_server.server.expect_request("/works").respond_with_data("limited", status=429)
     client = CrossrefClient(client=fixture_server.client, endpoint=fixture_server.url("/works"))

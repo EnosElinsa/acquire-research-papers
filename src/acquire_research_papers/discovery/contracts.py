@@ -11,6 +11,7 @@ class VenueScope:
     kind: str = ""
     issn: tuple[str, ...] = ()
     isbn: tuple[str, ...] = ()
+    collection_doi: tuple[str, ...] = ()
     short_name: str = ""
     publisher: str = ""
     years: tuple[int, ...] = ()
@@ -72,6 +73,9 @@ class DiscoveryRequest:
                 kind=str(item.get("kind", "")),
                 issn=tuple(str(value) for value in item.get("issn", ())),
                 isbn=tuple(str(value) for value in item.get("isbn", ())),
+                collection_doi=tuple(
+                    str(value) for value in item.get("collection_doi", ())
+                ),
                 short_name=str(item.get("short_name", "")),
                 publisher=str(item.get("publisher", "")),
                 years=tuple(int(value) for value in item.get("years", ())),
