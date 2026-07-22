@@ -152,10 +152,42 @@ class DiscoveryDiagnostic:
 
 
 @dataclass(frozen=True)
+class CoverageSlice:
+    provider_id: str
+    venue: str
+    year: int
+    state: str
+    pages_fetched: int = 0
+    records_fetched: int = 0
+    next_cursor: str | None = None
+    diagnostic_code: str = ""
+
+    def __post_init__(self) -> None:
+        if self.state not in {"complete", "partial", "failed"}:
+            raise ValueError("coverage state must be complete, partial, or failed")
+        if self.pages_fetched < 0 or self.records_fetched < 0:
+            raise ValueError("coverage counters must not be negative")
+
+    @property
+    def label(self) -> str:
+        return f"{self.provider_id}:{self.venue}:{self.year}"
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class DiscoveryBatch:
     candidates: tuple[CandidateMetadata, ...] = ()
     diagnostics: tuple[DiscoveryDiagnostic, ...] = ()
     covered_slices: tuple[str, ...] = ()
+    coverage: tuple[CoverageSlice, ...] = ()
+
+    @property
+    def complete_slice_labels(self) -> tuple[str, ...]:
+        labels = [*self.covered_slices]
+        labels.extend(item.label for item in self.coverage if item.state == "complete")
+        return tuple(dict.fromkeys(labels))
 
 
 class DiscoveryProvider(Protocol):

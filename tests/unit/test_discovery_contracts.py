@@ -1,4 +1,8 @@
-from acquire_research_papers.discovery.contracts import DiscoveryRequest
+from acquire_research_papers.discovery.contracts import (
+    CoverageSlice,
+    DiscoveryBatch,
+    DiscoveryRequest,
+)
 
 
 def test_discovery_request_preserves_generic_venue_scope() -> None:
@@ -52,3 +56,57 @@ def test_discovery_request_can_be_sliced_without_changing_the_original() -> None
     assert sliced.year_priority == (2025,)
     assert [venue.name for venue in request.venues] == ["Venue A", "Venue B"]
 
+
+def test_coverage_slice_serializes_checkpoint_state() -> None:
+    coverage = CoverageSlice(
+        provider_id="crossref",
+        venue="IEEE Transactions on Cybernetics",
+        year=2025,
+        state="partial",
+        pages_fetched=3,
+        records_fetched=247,
+        next_cursor="cursor-4",
+        diagnostic_code="network_transient",
+    )
+
+    assert coverage.to_dict() == {
+        "provider_id": "crossref",
+        "venue": "IEEE Transactions on Cybernetics",
+        "year": 2025,
+        "state": "partial",
+        "pages_fetched": 3,
+        "records_fetched": 247,
+        "next_cursor": "cursor-4",
+        "diagnostic_code": "network_transient",
+    }
+    assert coverage.label == "crossref:IEEE Transactions on Cybernetics:2025"
+
+
+def test_discovery_batch_preserves_legacy_and_structured_coverage() -> None:
+    complete = CoverageSlice(
+        provider_id="crossref",
+        venue="Venue A",
+        year=2026,
+        state="complete",
+        pages_fetched=2,
+        records_fetched=11,
+    )
+    partial = CoverageSlice(
+        provider_id="crossref",
+        venue="Venue B",
+        year=2026,
+        state="partial",
+        pages_fetched=1,
+        records_fetched=4,
+        next_cursor="next",
+    )
+
+    batch = DiscoveryBatch(
+        covered_slices=("legacy:2025",),
+        coverage=(complete, partial),
+    )
+
+    assert batch.complete_slice_labels == (
+        "legacy:2025",
+        "crossref:Venue A:2026",
+    )
