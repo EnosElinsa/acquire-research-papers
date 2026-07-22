@@ -8,6 +8,7 @@ from acquire_research_papers.discovery.contracts import (
     CandidateMetadata,
     CoverageSlice,
     DiscoveryBatch,
+    DiscoveryDiagnostic,
     DiscoveryRequest,
 )
 from acquire_research_papers.discovery.corpus import CorpusDiscoveryWorkflow
@@ -175,6 +176,54 @@ def test_partial_discovery_resume_passes_completed_slice_checkpoints(
         ("Venue A", "complete"),
         ("Venue B", "complete"),
     }
+
+
+def test_resume_retries_legacy_checkpoint_with_retryable_provider_error(
+    tmp_path: Path,
+) -> None:
+    calls: list[frozenset[str]] = []
+
+    def discover(request: DiscoveryRequest) -> DiscoveryBatch:
+        calls.append(request.completed_slices)
+        if len(calls) == 1:
+            return DiscoveryBatch(
+                candidates=(candidate("a", "Venue A"),),
+                diagnostics=(
+                    DiscoveryDiagnostic(
+                        "semantic-scholar",
+                        "doi-enrichment",
+                        "network_transient",
+                        "temporarily unavailable",
+                        retryable=True,
+                    ),
+                ),
+                covered_slices=("semantic-scholar:doi-batch",),
+                coverage=(
+                    CoverageSlice(
+                        "fake",
+                        "Venue A",
+                        2025,
+                        "partial",
+                        1,
+                        1,
+                        diagnostic_code="network_transient",
+                    ),
+                ),
+            )
+        assert "semantic-scholar:doi-batch" not in request.completed_slices
+        return DiscoveryBatch(
+            covered_slices=("semantic-scholar:doi-batch",),
+            coverage=(CoverageSlice("fake", "Venue A", 2025, "complete", 2, 1),),
+        )
+
+    workflow = CorpusDiscoveryWorkflow(discoverer=discover)
+    workflow.run(spec(), tmp_path)
+    second = workflow.run(spec(), tmp_path)
+
+    assert len(calls) == 2
+    assert "semantic-scholar:doi-batch" in json.loads(
+        second.manifest_path.read_text(encoding="utf-8")
+    )["provider_coverage"]
 
 
 def test_discovery_artifacts_strip_sensitive_keys_and_signed_query_strings(

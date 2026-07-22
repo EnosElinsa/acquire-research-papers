@@ -80,7 +80,7 @@ class CrossrefVenueDiscoveryProvider:
                     filters["issn"] = venue.issn[0]
                     query = ""
                 cursor = "*"
-                seen_cursors = {cursor}
+                seen_pages: set[tuple[tuple[str, str, str, int, str], ...]] = set()
                 pages_fetched = 0
                 records_fetched = 0
                 while True:
@@ -141,9 +141,7 @@ class CrossrefVenueDiscoveryProvider:
                         break
 
                     pages_fetched += 1
-                    records_fetched += len(page.candidates)
-                    candidates.extend(page.candidates)
-                    if not page.candidates or not page.next_cursor:
+                    if not page.candidates:
                         coverage.append(
                             CoverageSlice(
                                 provider_id=self.provider_id,
@@ -155,11 +153,21 @@ class CrossrefVenueDiscoveryProvider:
                             )
                         )
                         break
-                    if page.next_cursor in seen_cursors:
+                    page_identity = tuple(
+                        (
+                            normalize_doi(candidate.doi) if candidate.doi else "",
+                            candidate.key,
+                            candidate.title,
+                            candidate.year,
+                            candidate.venue,
+                        )
+                        for candidate in page.candidates
+                    )
+                    if page_identity in seen_pages:
                         diagnostics.append(
                             self._diagnostic(
-                                error_code="cursor_cycle",
-                                message="Crossref returned a repeated pagination cursor",
+                                error_code="repeated_page",
+                                message="Crossref returned a repeated result page",
                                 venue=venue.name,
                                 year=year,
                             )
@@ -173,12 +181,29 @@ class CrossrefVenueDiscoveryProvider:
                                 pages_fetched=pages_fetched,
                                 records_fetched=records_fetched,
                                 next_cursor=page.next_cursor,
-                                diagnostic_code="cursor_cycle",
+                                diagnostic_code="repeated_page",
+                            )
+                        )
+                        break
+                    seen_pages.add(page_identity)
+                    records_fetched += len(page.candidates)
+                    candidates.extend(page.candidates)
+                    if (
+                        page.total_results is not None
+                        and records_fetched >= page.total_results
+                    ) or not page.next_cursor:
+                        coverage.append(
+                            CoverageSlice(
+                                provider_id=self.provider_id,
+                                venue=venue.name,
+                                year=year,
+                                state="complete",
+                                pages_fetched=pages_fetched,
+                                records_fetched=records_fetched,
                             )
                         )
                         break
                     cursor = page.next_cursor
-                    seen_cursors.add(cursor)
         return DiscoveryBatch(
             candidates=tuple(candidates),
             diagnostics=tuple(diagnostics),
@@ -237,7 +262,7 @@ class DoiBatchEnrichmentProvider:
         )
         found: list[CandidateMetadata] = []
         diagnostics: list[DiscoveryDiagnostic] = []
-        successful = False
+        successful_chunks = 0
         for index in range(0, len(dois), max(1, min(self.batch_size, 500))):
             chunk = dois[index : index + self.batch_size]
             try:
@@ -263,11 +288,15 @@ class DoiBatchEnrichmentProvider:
                     )
                 )
                 continue
-            successful = True
+            successful_chunks += 1
         return DiscoveryBatch(
             candidates=tuple(found),
             diagnostics=tuple(diagnostics),
-            covered_slices=(f"{self.provider_id}:doi-batch",) if successful else (),
+            covered_slices=(
+                (f"{self.provider_id}:doi-batch",)
+                if successful_chunks and not diagnostics
+                else ()
+            ),
         )
 
 

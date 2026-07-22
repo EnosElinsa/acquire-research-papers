@@ -411,9 +411,17 @@ class CorpusDiscoveryWorkflow:
             else {}
         )
         prior_legacy = tuple(str(value) for value in prior_manifest.get("provider_coverage", ()))
+        retryable_providers = {
+            item.provider_id for item in prior_diagnostics if item.retryable
+        }
+        resumable_legacy = tuple(
+            label
+            for label in prior_legacy
+            if label.split(":", 1)[0] not in retryable_providers
+        )
         completed_slices = frozenset(
             (
-                *prior_legacy,
+                *resumable_legacy,
                 *(item.label for item in prior_coverage if item.state == "complete"),
             )
         )
@@ -449,10 +457,11 @@ class CorpusDiscoveryWorkflow:
                 item
                 for item in prior_diagnostics
                 if (item.provider_id, item.venue, item.year) not in rerun_keys
+                and item.provider_id not in retryable_providers
             ) + batch.diagnostics
 
         legacy_coverage = tuple(
-            dict.fromkeys((*prior_legacy, *batch.covered_slices))
+            dict.fromkeys((*resumable_legacy, *batch.covered_slices))
         )
         complete_labels = tuple(
             dict.fromkeys(

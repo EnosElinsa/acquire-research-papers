@@ -148,7 +148,35 @@ def test_crossref_provider_enumerates_every_venue_year_cursor_without_topic_quer
     )
 
 
-def test_crossref_provider_marks_repeated_cursor_partial_instead_of_looping() -> None:
+def test_crossref_provider_allows_same_cursor_for_distinct_scroll_pages() -> None:
+    calls = 0
+
+    def searcher(query: str, **kwargs) -> CandidatePage:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return CandidatePage(
+                (crossref_candidate("a1", "Journal A"),),
+                next_cursor="*",
+                total_results=2,
+            )
+        return CandidatePage(
+            (crossref_candidate("a2", "Journal A"),),
+            next_cursor="*",
+            total_results=2,
+        )
+
+    request = crossref_request().with_scope((crossref_request().venues[0],), (2025,))
+    batch = CrossrefVenueDiscoveryProvider(searcher=searcher).discover(request)
+
+    assert calls == 2
+    assert [candidate.key for candidate in batch.candidates] == ["a1", "a2"]
+    assert batch.coverage[0].state == "complete"
+    assert batch.coverage[0].records_fetched == 2
+    assert batch.diagnostics == ()
+
+
+def test_crossref_provider_marks_repeated_page_partial_instead_of_looping() -> None:
     calls = 0
 
     def searcher(query: str, **kwargs) -> CandidatePage:
@@ -162,10 +190,11 @@ def test_crossref_provider_marks_repeated_cursor_partial_instead_of_looping() ->
     request = crossref_request().with_scope((crossref_request().venues[0],), (2025,))
     batch = CrossrefVenueDiscoveryProvider(searcher=searcher).discover(request)
 
-    assert calls == 1
+    assert calls == 2
     assert batch.coverage[0].state == "partial"
-    assert batch.coverage[0].diagnostic_code == "cursor_cycle"
-    assert batch.diagnostics[0].error_code == "cursor_cycle"
+    assert batch.coverage[0].records_fetched == 1
+    assert batch.coverage[0].diagnostic_code == "repeated_page"
+    assert batch.diagnostics[0].error_code == "repeated_page"
 
 
 def test_crossref_provider_marks_network_failure_after_a_page_as_partial() -> None:

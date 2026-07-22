@@ -142,11 +142,46 @@ class DiscoveryCoordinator:
         diagnostics: list[DiscoveryDiagnostic] = []
         covered: list[str] = []
         coverage: list[CoverageSlice] = []
-        for provider in self.providers:
-            capability = provider.capabilities()
-            supported_venues = tuple(
-                venue for venue in request.venues if capability.supports(venue)
-            )
+        capabilities = tuple(provider.capabilities() for provider in self.providers)
+        official_capabilities = tuple(
+            capability
+            for capability in capabilities
+            if capability.source_class == "official_index"
+        )
+        for provider, capability in zip(self.providers, capabilities, strict=True):
+            if capability.source_class == "venue_enumerator" and request.venues:
+                supported_venues = tuple(
+                    replace(
+                        venue,
+                        years=tuple(
+                            year
+                            for year in request.years
+                            if venue.supports_year(year)
+                            and capability.supports_year(year)
+                            and not any(
+                                official.supports(venue)
+                                and official.supports_year(year)
+                                for official in official_capabilities
+                            )
+                        ),
+                    )
+                    for venue in request.venues
+                    if capability.supports(venue)
+                    and any(
+                        venue.supports_year(year)
+                        and capability.supports_year(year)
+                        and not any(
+                            official.supports(venue)
+                            and official.supports_year(year)
+                            for official in official_capabilities
+                        )
+                        for year in request.years
+                    )
+                )
+            else:
+                supported_venues = tuple(
+                    venue for venue in request.venues if capability.supports(venue)
+                )
             if request.venues and not supported_venues:
                 continue
             supported_years = tuple(
