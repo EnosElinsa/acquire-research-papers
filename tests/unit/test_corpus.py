@@ -363,6 +363,128 @@ def test_joint_quota_solver_scales_past_python_recursion_depth() -> None:
     assert plan.quota_shortfalls == ()
 
 
+def test_best_effort_selection_maximizes_size_before_reporting_quota_shortfall() -> None:
+    spec = {
+        "target": {"minimum": 2, "preferred": 2, "maximum": 2},
+        "quotas": {
+            "groups": [
+                {
+                    "name": "year-2025",
+                    "minimum": 1,
+                    "maximum": 1,
+                    "years": [2025],
+                },
+                {
+                    "name": "venue-x",
+                    "minimum": 0,
+                    "maximum": 1,
+                    "venues": ["X"],
+                },
+                {"name": "impossible", "minimum": 1, "venues": ["Z"]},
+            ]
+        },
+    }
+    candidates = [
+        candidate("bad", 2025, 0.99, venue="X"),
+        candidate("good", 2025, 0.98, venue="Y"),
+        candidate("filler", 2024, 0.97, venue="X"),
+    ]
+
+    plan = CorpusPlanner(spec).select(candidates)
+
+    assert {item.key for item in plan.auto_accepted} == {"good", "filler"}
+    assert plan.quota_shortfalls == ("group:impossible:1",)
+
+
+def test_joint_quota_solver_scales_across_eight_dense_signatures() -> None:
+    candidates = [
+        replace(
+            candidate(
+                f"p{index:03d}",
+                year,
+                0.90,
+                venue=venue,
+            ),
+            publication_type=publication_type,
+        )
+        for index, (venue, year, publication_type) in enumerate(
+            (venue, year, publication_type)
+            for venue in ("X", "Y")
+            for year in (2025, 2024)
+            for publication_type in ("journal-article", "proceedings-article")
+            for _ in range(25)
+        )
+    ]
+    spec = {
+        "target": {"minimum": 140, "preferred": 150, "maximum": 160},
+        "quotas": {
+            "groups": [
+                {"name": "venue-x", "minimum": 50, "maximum": 100, "venues": ["X"]},
+                {"name": "year-2025", "minimum": 50, "maximum": 100, "years": [2025]},
+                {
+                    "name": "journals",
+                    "minimum": 50,
+                    "maximum": 100,
+                    "publication_types": ["journal-article"],
+                },
+            ]
+        },
+    }
+
+    plan = CorpusPlanner(spec).select(candidates)
+
+    assert len(plan.auto_accepted) == 150
+    assert plan.quota_shortfalls == ()
+
+
+def test_joint_quota_solver_scales_across_twenty_four_signatures() -> None:
+    candidates = [
+        replace(
+            candidate(
+                f"p{index:03d}",
+                year,
+                0.90,
+                venue=venue,
+            ),
+            publication_type=publication_type,
+        )
+        for index, (venue, year, publication_type) in enumerate(
+            (venue, year, publication_type)
+            for venue in (f"V{number}" for number in range(10))
+            for year in range(2021, 2026)
+            for publication_type in (
+                "journal-article",
+                "proceedings-article",
+                "workshop",
+            )
+            for _ in range(2)
+        )
+    ]
+    spec = {
+        "target": {"minimum": 180, "preferred": 200, "maximum": 220},
+        "quotas": {
+            "groups": [
+                {"name": "venue-v0", "minimum": 10, "maximum": 30, "venues": ["V0"]},
+                {"name": "venue-v1", "minimum": 10, "maximum": 30, "venues": ["V1"]},
+                {"name": "venue-v2", "minimum": 10, "maximum": 30, "venues": ["V2"]},
+                {"name": "year-2024", "minimum": 20, "maximum": 60, "years": [2024]},
+                {"name": "year-2025", "minimum": 20, "maximum": 60, "years": [2025]},
+                {
+                    "name": "journals",
+                    "minimum": 30,
+                    "maximum": 100,
+                    "publication_types": ["journal-article"],
+                },
+            ]
+        },
+    }
+
+    plan = CorpusPlanner(spec).select(candidates)
+
+    assert len(plan.auto_accepted) == 200
+    assert plan.quota_shortfalls == ()
+
+
 def test_recent_window_ratio_uses_publication_date() -> None:
     spec = {
         "target": {"minimum": 2, "preferred": 2, "maximum": 3},
