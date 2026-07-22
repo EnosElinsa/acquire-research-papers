@@ -11,6 +11,7 @@ from acquire_research_papers.acquisition.adapters.ijcai import IjcaiProceedingsA
 from acquire_research_papers.acquisition.base import NotOfficial, PageContractChanged
 from acquire_research_papers.discovery.contracts import (
     CandidateMetadata,
+    CoverageSlice,
     DiscoveryBatch,
     DiscoveryCapabilities,
     DiscoveryDiagnostic,
@@ -203,12 +204,6 @@ class IjcaiDiscoveryProvider:
         return entries
 
     @staticmethod
-    def _matches_topic(title: str, request: DiscoveryRequest) -> bool:
-        terms = tuple(_normalized(value) for value in request.queries if _normalized(value))
-        normalized_title = _normalized(title)
-        return not terms or any(term in normalized_title for term in terms)
-
-    @staticmethod
     def _candidate(
         *,
         title: str,
@@ -225,19 +220,18 @@ class IjcaiDiscoveryProvider:
             raise PageContractChanged("IJCAI detail is outside the requested main track")
         soup = _content_soup(detail_html)
         abstract = _abstract(soup)
-        if not abstract:
-            raise PageContractChanged("IJCAI page has no abstract")
         keywords = _keywords(soup)
         publication_date = _publication_date(soup, document.metadata.year)
         evidence = [
             "title",
-            "abstract",
             "authors",
             "venue",
             "publication_type",
             "track",
             "doi",
         ]
+        if abstract:
+            evidence.append("abstract")
         if keywords:
             evidence.append("keywords")
         if publication_date:
@@ -272,6 +266,7 @@ class IjcaiDiscoveryProvider:
         candidates: list[CandidateMetadata] = []
         diagnostics: list[DiscoveryDiagnostic] = []
         covered: list[str] = []
+        coverage: list[CoverageSlice] = []
         for year in request.years:
             index_url = self.index_template.format(year=year)
             host = urlsplit(index_url).hostname
@@ -292,6 +287,15 @@ class IjcaiDiscoveryProvider:
                         retryable=True,
                     )
                 )
+                coverage.append(
+                    CoverageSlice(
+                        provider_id=_PROVIDER_ID,
+                        venue=_OFFICIAL_VENUE,
+                        year=year,
+                        state="failed",
+                        diagnostic_code="network_transient",
+                    )
+                )
                 continue
             except HttpStatusError:
                 diagnostics.append(
@@ -303,6 +307,15 @@ class IjcaiDiscoveryProvider:
                         venue=_OFFICIAL_VENUE,
                         year=year,
                         url=index_url,
+                    )
+                )
+                coverage.append(
+                    CoverageSlice(
+                        provider_id=_PROVIDER_ID,
+                        venue=_OFFICIAL_VENUE,
+                        year=year,
+                        state="failed",
+                        diagnostic_code="source_unavailable",
                     )
                 )
                 continue
@@ -320,17 +333,30 @@ class IjcaiDiscoveryProvider:
                         url=index_url,
                     )
                 )
+                coverage.append(
+                    CoverageSlice(
+                        provider_id=_PROVIDER_ID,
+                        venue=_OFFICIAL_VENUE,
+                        year=year,
+                        state="failed",
+                        pages_fetched=1,
+                        diagnostic_code="page_contract_changed",
+                    )
+                )
                 continue
-            covered.append(f"{_PROVIDER_ID}:{year}:Main Track")
             requested_venue = _requested_venue(request, year)
             seen_urls: set[str] = set()
+            detail_attempts = 0
+            slice_error_codes: list[str] = []
+            records_before = len(candidates)
             for track, title, href in entries:
-                if "main track" not in track.casefold() or not self._matches_topic(title, request):
+                if "main track" not in track.casefold():
                     continue
                 detail_url = urljoin(index_url, href)
                 if detail_url in seen_urls:
                     continue
                 seen_urls.add(detail_url)
+                detail_attempts += 1
                 try:
                     detail_html = self.client.get(detail_url).text
                     document = self.detail_adapter.parse(detail_url, detail_html)
@@ -356,6 +382,7 @@ class IjcaiDiscoveryProvider:
                             retryable=True,
                         )
                     )
+                    slice_error_codes.append("network_transient")
                     continue
                 except (HttpStatusError, NotOfficial, PageContractChanged, ValueError):
                     diagnostics.append(
@@ -369,10 +396,26 @@ class IjcaiDiscoveryProvider:
                             url=detail_url,
                         )
                     )
+                    slice_error_codes.append("page_contract_changed")
                     continue
                 candidates.append(candidate)
+            slice_state = "partial" if slice_error_codes else "complete"
+            if slice_state == "complete":
+                covered.append(f"{_PROVIDER_ID}:{year}:Main Track")
+            coverage.append(
+                CoverageSlice(
+                    provider_id=_PROVIDER_ID,
+                    venue=requested_venue,
+                    year=year,
+                    state=slice_state,
+                    pages_fetched=1 + detail_attempts,
+                    records_fetched=len(candidates) - records_before,
+                    diagnostic_code=(slice_error_codes[0] if slice_error_codes else ""),
+                )
+            )
         return DiscoveryBatch(
             candidates=tuple(candidates),
             diagnostics=tuple(diagnostics),
             covered_slices=tuple(covered),
+            coverage=tuple(coverage),
         )

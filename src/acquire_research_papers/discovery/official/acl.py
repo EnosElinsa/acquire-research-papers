@@ -9,6 +9,7 @@ from bs4 import BeautifulSoup, Tag
 
 from acquire_research_papers.discovery.contracts import (
     CandidateMetadata,
+    CoverageSlice,
     DiscoveryBatch,
     DiscoveryCapabilities,
     DiscoveryDiagnostic,
@@ -201,9 +202,11 @@ class AclAnthologyDiscoveryProvider:
         year: int,
         event_url: str,
     ) -> CandidateMetadata | None:
-        if not title or not abstract:
+        if not title:
             return None
-        evidence = ["title", "abstract", "venue", "publication_type", "doi"]
+        evidence = ["title", "venue", "publication_type", "doi"]
+        if abstract:
+            evidence.append("abstract")
         if authors:
             evidence.append("authors")
         if keywords:
@@ -289,29 +292,13 @@ class AclAnthologyDiscoveryProvider:
                 candidates.append(candidate)
         return len(parser.order), candidates
 
-    @staticmethod
-    def _matches_topics(candidate: CandidateMetadata, request: DiscoveryRequest) -> bool:
-        terms = tuple(
-            " ".join(re.findall(r"\w+", value.casefold()))
-            for value in (*request.include_topics, *request.synonyms)
-            if value.strip()
-        )
-        if not terms:
-            return True
-        haystack = " ".join(
-            re.findall(
-                r"\w+",
-                f"{candidate.title} {candidate.abstract} {' '.join(candidate.keywords)}".casefold(),
-            )
-        )
-        return any(term in haystack for term in terms)
-
     def discover(self, request: DiscoveryRequest) -> DiscoveryBatch:
         if not self._supports_request(request):
             return DiscoveryBatch()
         candidates: list[CandidateMetadata] = []
         diagnostics: list[DiscoveryDiagnostic] = []
         covered: list[str] = []
+        coverage: list[CoverageSlice] = []
         for year in request.years:
             event_url = self.event_template.format(year=year)
             host = urlsplit(event_url).hostname
@@ -332,6 +319,15 @@ class AclAnthologyDiscoveryProvider:
                         retryable=True,
                     )
                 )
+                coverage.append(
+                    CoverageSlice(
+                        provider_id=_PROVIDER_ID,
+                        venue=_OFFICIAL_VENUE,
+                        year=year,
+                        state="failed",
+                        diagnostic_code="network_transient",
+                    )
+                )
                 continue
             except HttpStatusError:
                 diagnostics.append(
@@ -343,6 +339,15 @@ class AclAnthologyDiscoveryProvider:
                         venue=_OFFICIAL_VENUE,
                         year=year,
                         url=event_url,
+                    )
+                )
+                coverage.append(
+                    CoverageSlice(
+                        provider_id=_PROVIDER_ID,
+                        venue=_OFFICIAL_VENUE,
+                        year=year,
+                        state="failed",
+                        diagnostic_code="source_unavailable",
                     )
                 )
                 continue
@@ -369,14 +374,34 @@ class AclAnthologyDiscoveryProvider:
                         url=event_url,
                     )
                 )
+                coverage.append(
+                    CoverageSlice(
+                        provider_id=_PROVIDER_ID,
+                        venue=_OFFICIAL_VENUE,
+                        year=year,
+                        state="failed",
+                        pages_fetched=1,
+                        diagnostic_code="page_contract_changed",
+                    )
+                )
                 continue
             covered.append(f"{_PROVIDER_ID}:{year}")
             requested_venue = _requested_venue(request, year)
             for candidate in year_candidates:
-                if self._matches_topics(candidate, request):
-                    candidates.append(replace(candidate, venue=requested_venue))
+                candidates.append(replace(candidate, venue=requested_venue))
+            coverage.append(
+                CoverageSlice(
+                    provider_id=_PROVIDER_ID,
+                    venue=requested_venue,
+                    year=year,
+                    state="complete",
+                    pages_fetched=1,
+                    records_fetched=len(year_candidates),
+                )
+            )
         return DiscoveryBatch(
             candidates=tuple(candidates),
             diagnostics=tuple(diagnostics),
             covered_slices=tuple(covered),
+            coverage=tuple(coverage),
         )

@@ -11,6 +11,7 @@ INDEX = FIXTURES / "index.html"
 CURRENT_INDEX = FIXTURES / "index-current.html"
 PAPER = FIXTURES / "paper.html"
 CURRENT_PAPER = FIXTURES / "paper-current.html"
+UNRELATED_PAPER = FIXTURES / "paper-unrelated.html"
 
 
 def request() -> DiscoveryRequest:
@@ -41,17 +42,25 @@ def provider(fixture_server) -> IjcaiDiscoveryProvider:
     )
 
 
-def test_ijcai_provider_prefilters_and_emits_main_track_detail(fixture_server) -> None:
+def test_ijcai_provider_fetches_every_main_track_detail_before_topic_screening(
+    fixture_server,
+) -> None:
     fixture_server.serve_text(
         "/proceedings/2025/", INDEX.read_text(encoding="utf-8")
     )
     fixture_server.serve_text(
         "/proceedings/2025/12", PAPER.read_text(encoding="utf-8")
     )
+    fixture_server.serve_text(
+        "/proceedings/2025/13", UNRELATED_PAPER.read_text(encoding="utf-8")
+    )
 
     batch = provider(fixture_server).discover(request())
 
-    assert [item.key for item in batch.candidates] == ["10.24963/ijcai.2025/12"]
+    assert [item.key for item in batch.candidates] == [
+        "10.24963/ijcai.2025/12",
+        "10.24963/ijcai.2025/13",
+    ]
     candidate = batch.candidates[0]
     assert candidate.track == "Main Track"
     assert candidate.publication_type == "main"
@@ -62,6 +71,8 @@ def test_ijcai_provider_prefilters_and_emits_main_track_detail(fixture_server) -
         "evolutionary optimization",
     )
     assert batch.covered_slices == ("ijcai-proceedings:2025:Main Track",)
+    assert batch.coverage[0].state == "complete"
+    assert batch.coverage[0].records_fetched == 2
     assert batch.diagnostics == ()
 
 
@@ -74,10 +85,16 @@ def test_ijcai_provider_parses_current_index_title_and_details_layout(
     fixture_server.serve_text(
         "/proceedings/2025/12", CURRENT_PAPER.read_text(encoding="utf-8")
     )
+    fixture_server.serve_text(
+        "/proceedings/2025/13", UNRELATED_PAPER.read_text(encoding="utf-8")
+    )
 
     batch = provider(fixture_server).discover(request())
 
-    assert [item.key for item in batch.candidates] == ["10.24963/ijcai.2025/12"]
+    assert [item.key for item in batch.candidates] == [
+        "10.24963/ijcai.2025/12",
+        "10.24963/ijcai.2025/13",
+    ]
     assert batch.candidates[0].abstract == (
         "We optimize a large language model with evolutionary search when N<Nr."
     )
@@ -109,6 +126,7 @@ def test_ijcai_provider_isolates_malformed_relevant_detail(fixture_server) -> No
 
     assert [item.key for item in batch.candidates] == ["10.24963/ijcai.2025/12"]
     assert len(batch.diagnostics) == 1
+    assert batch.coverage[0].state == "partial"
     assert batch.diagnostics[0].error_code == "page_contract_changed"
     assert batch.diagnostics[0].url.endswith("/proceedings/2025/11")
     assert "secret" not in batch.diagnostics[0].message
@@ -123,6 +141,7 @@ def test_ijcai_provider_reports_unrecognizable_index(fixture_server) -> None:
 
     assert batch.candidates == ()
     assert batch.covered_slices == ()
+    assert batch.coverage[0].state == "failed"
     assert len(batch.diagnostics) == 1
     assert batch.diagnostics[0].phase == "proceedings-index"
 
@@ -133,6 +152,9 @@ def test_ijcai_provider_uses_requested_year_specific_venue(fixture_server) -> No
     )
     fixture_server.serve_text(
         "/proceedings/2025/12", PAPER.read_text(encoding="utf-8")
+    )
+    fixture_server.serve_text(
+        "/proceedings/2025/13", UNRELATED_PAPER.read_text(encoding="utf-8")
     )
     venue_name = (
         "Proceedings of the Thirty-Fourth International Joint Conference "
@@ -153,7 +175,7 @@ def test_ijcai_provider_uses_requested_year_specific_venue(fixture_server) -> No
 
     batch = provider(fixture_server).discover(year_specific)
 
-    assert len(batch.candidates) == 1
+    assert len(batch.candidates) == 2
     assert batch.candidates[0].venue == venue_name
 
 
@@ -170,6 +192,9 @@ def test_ijcai_provider_keeps_published_year_when_new_year_is_unavailable(
     fixture_server.serve_text(
         "/proceedings/2025/12", PAPER.read_text(encoding="utf-8")
     )
+    fixture_server.serve_text(
+        "/proceedings/2025/13", UNRELATED_PAPER.read_text(encoding="utf-8")
+    )
     multi_year = DiscoveryRequest.from_spec(
         {
             "name": "ijcai",
@@ -185,7 +210,7 @@ def test_ijcai_provider_keeps_published_year_when_new_year_is_unavailable(
 
     batch = provider(fixture_server).discover(multi_year)
 
-    assert [item.year for item in batch.candidates] == [2025]
+    assert [item.year for item in batch.candidates] == [2025, 2025]
     assert batch.covered_slices == ("ijcai-proceedings:2025:Main Track",)
     assert len(batch.diagnostics) == 1
     assert batch.diagnostics[0].year == 2026

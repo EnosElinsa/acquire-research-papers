@@ -29,7 +29,9 @@ def request() -> DiscoveryRequest:
     )
 
 
-def test_acl_provider_emits_only_requested_long_papers(fixture_server) -> None:
+def test_acl_provider_emits_all_requested_long_papers_before_topic_screening(
+    fixture_server,
+) -> None:
     fixture_server.serve_text(
         "/events/acl-2025/",
         (FIXTURES / "event.html").read_text(encoding="utf-8"),
@@ -42,7 +44,11 @@ def test_acl_provider_emits_only_requested_long_papers(fixture_server) -> None:
 
     batch = provider.discover(request())
 
-    assert [item.key for item in batch.candidates] == ["2025.acl-long.1"]
+    assert [item.key for item in batch.candidates] == [
+        "2025.acl-long.1",
+        "2025.acl-long.2",
+        "2025.acl-long.3",
+    ]
     candidate = batch.candidates[0]
     assert candidate.abstract == "Multi-agent evolutionary collaboration."
     assert candidate.doi == "10.18653/v1/2025.acl-long.1"
@@ -54,6 +60,8 @@ def test_acl_provider_emits_only_requested_long_papers(fixture_server) -> None:
         "large language models",
     )
     assert batch.covered_slices == ("acl-anthology:2025",)
+    assert batch.coverage[0].state == "complete"
+    assert batch.coverage[0].records_fetched == 3
     assert batch.diagnostics == ()
 
 
@@ -72,6 +80,7 @@ def test_acl_provider_reports_page_drift_without_copying_page_body(fixture_serve
 
     assert batch.candidates == ()
     assert batch.covered_slices == ()
+    assert batch.coverage[0].state == "failed"
     assert len(batch.diagnostics) == 1
     assert batch.diagnostics[0].error_code == "page_contract_changed"
     assert batch.diagnostics[0].year == 2025
@@ -92,7 +101,10 @@ def test_acl_provider_parses_current_volume_list_structure(fixture_server) -> No
     batch = provider.discover(request())
 
     assert batch.diagnostics == ()
-    assert [item.key for item in batch.candidates] == ["2025.acl-long.1"]
+    assert [item.key for item in batch.candidates] == [
+        "2025.acl-long.1",
+        "2025.acl-long.2",
+    ]
     assert batch.candidates[0].authors == ("Ada Lovelace", "Alan Turing")
     assert batch.candidates[0].abstract == "Multi-agent evolutionary collaboration."
 
@@ -140,5 +152,23 @@ def test_acl_provider_uses_requested_year_specific_venue(fixture_server) -> None
 
     batch = provider.discover(year_specific)
 
-    assert len(batch.candidates) == 1
+    assert len(batch.candidates) == 2
     assert batch.candidates[0].venue == year_specific.venues[0].name
+
+
+def test_acl_provider_keeps_missing_abstract_for_metadata_enrichment(fixture_server) -> None:
+    fixture_server.serve_text(
+        "/events/acl-2025/",
+        (FIXTURES / "event.html").read_text(encoding="utf-8"),
+    )
+    provider = AclAnthologyDiscoveryProvider(
+        client=fixture_server.client,
+        event_template=fixture_server.url("/events/acl-{year}/"),
+        production_hosts={fixture_server.host},
+    )
+
+    batch = provider.discover(request())
+
+    missing = next(item for item in batch.candidates if item.key == "2025.acl-long.3")
+    assert missing.abstract == ""
+    assert "abstract" not in missing.evidence_fields
