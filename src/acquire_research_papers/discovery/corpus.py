@@ -9,7 +9,6 @@ import re
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, replace
 from datetime import date
-from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -222,31 +221,29 @@ class CorpusPlanner:
                 costs.append(costs[-1] + position)
             suffix_rank_costs[index] = tuple(costs)
 
-        @lru_cache(maxsize=None)
-        def search(
+        def state_is_reachable(
             index: int,
             selected_total: int,
             counts: tuple[int, ...],
-        ) -> tuple[int, ...] | None:
+        ) -> bool:
             if selected_total > target_size:
-                return None
+                return False
             if selected_total + remaining_total[index] < target_size:
-                return None
+                return False
             if any(
                 count + remaining_by_group[index][group_index] < minimum
                 for group_index, (count, minimum) in enumerate(
                     zip(counts, minimums, strict=True)
                 )
             ):
-                return None
-            if index == len(signatures):
-                if selected_total == target_size and all(
-                    count >= minimum
-                    for count, minimum in zip(counts, minimums, strict=True)
-                ):
-                    return ()
-                return None
+                return False
+            return True
 
+        def quantity_options(
+            index: int,
+            selected_total: int,
+            counts: tuple[int, ...],
+        ) -> tuple[int, ...]:
             signature = signatures[index]
             minimum_quantity = max(
                 0,
@@ -267,17 +264,39 @@ class CorpusPlanner:
                         minimum - count - remaining_by_group[index + 1][group_index],
                     )
             if minimum_quantity > maximum_quantity:
-                return None
+                return ()
 
             preferred = min(
                 maximum_quantity,
                 max(minimum_quantity, preferred_quantities[index]),
             )
-            quantities = sorted(
-                range(minimum_quantity, maximum_quantity + 1),
-                key=lambda quantity: (abs(quantity - preferred), -quantity),
+            return tuple(
+                sorted(
+                    range(minimum_quantity, maximum_quantity + 1),
+                    key=lambda quantity: (abs(quantity - preferred), -quantity),
+                )
             )
-            for quantity in quantities:
+
+        initial_state = (0, 0, tuple(0 for _ in groups))
+        stack = [initial_state]
+        parents: dict[
+            tuple[int, int, tuple[int, ...]],
+            tuple[tuple[int, int, tuple[int, ...]], int] | None,
+        ] = {initial_state: None}
+        solved_state: tuple[int, int, tuple[int, ...]] | None = None
+        while stack:
+            state = stack.pop()
+            index, selected_total, counts = state
+            if not state_is_reachable(index, selected_total, counts):
+                continue
+            if index == len(signatures):
+                if selected_total == target_size:
+                    solved_state = state
+                    break
+                continue
+            signature = signatures[index]
+            children = []
+            for quantity in quantity_options(index, selected_total, counts):
                 next_counts = tuple(
                     min(bound, count + quantity * int(matches))
                     for bound, count, matches in zip(
@@ -287,18 +306,26 @@ class CorpusPlanner:
                         strict=True,
                     )
                 )
-                suffix = search(
+                child = (
                     index + 1,
                     selected_total + quantity,
                     next_counts,
                 )
-                if suffix is not None:
-                    return (quantity, *suffix)
-            return None
+                if child in parents:
+                    continue
+                parents[child] = (state, quantity)
+                children.append(child)
+            stack.extend(reversed(children))
 
-        solution = search(0, 0, tuple(0 for _ in groups))
-        if solution is None:
+        if solved_state is None:
             return None
+        reversed_solution = []
+        cursor = solved_state
+        while parents[cursor] is not None:
+            parent, quantity = parents[cursor]
+            reversed_solution.append(quantity)
+            cursor = parent
+        solution = tuple(reversed(reversed_solution))
 
         def solution_key(quantities: tuple[int, ...]) -> tuple[int, tuple[int, ...]]:
             positions = tuple(
@@ -318,43 +345,38 @@ class CorpusPlanner:
         best_key = solution_key(solution)
         unconstrained_cost = suffix_rank_costs[0][target_size]
         if best_key[0] != unconstrained_cost:
-            used = [0] * len(signatures)
             lowest_state_cost: dict[tuple[int, int, tuple[int, ...]], int] = {}
-
-            def optimize(
-                index: int,
-                selected_total: int,
-                counts: tuple[int, ...],
-                cost: int,
-            ) -> None:
-                nonlocal best_key, best_solution
+            optimize_stack: list[
+                tuple[int, int, tuple[int, ...], int, tuple[int, ...]]
+            ] = [(0, 0, tuple(0 for _ in groups), 0, ())]
+            while optimize_stack:
+                index, selected_total, counts, cost, used = optimize_stack.pop()
                 needed = target_size - selected_total
                 if needed < 0 or needed >= len(suffix_rank_costs[index]):
-                    return
+                    continue
                 if cost + suffix_rank_costs[index][needed] > best_key[0]:
-                    return
+                    continue
                 if any(
                     count + remaining_by_group[index][group_index] < minimum
                     for group_index, (count, minimum) in enumerate(
                         zip(counts, minimums, strict=True)
                     )
                 ):
-                    return
+                    continue
                 state = (index, selected_total, counts)
                 previous_cost = lowest_state_cost.get(state)
                 if previous_cost is not None and cost > previous_cost:
-                    return
+                    continue
                 if previous_cost is None or cost < previous_cost:
                     lowest_state_cost[state] = cost
                 if index == len(signatures):
                     if selected_total != target_size:
-                        return
-                    quantities = tuple(used)
-                    key = solution_key(quantities)
+                        continue
+                    key = solution_key(used)
                     if key < best_key:
                         best_key = key
-                        best_solution = quantities
-                    return
+                        best_solution = used
+                    continue
 
                 signature = signatures[index]
                 minimum_quantity = max(
@@ -378,7 +400,7 @@ class CorpusPlanner:
                             - remaining_by_group[index + 1][group_index],
                         )
                 if minimum_quantity > maximum_quantity:
-                    return
+                    continue
 
                 preferred = min(
                     maximum_quantity,
@@ -393,6 +415,7 @@ class CorpusPlanner:
                     )
                     return (lower_cost, abs(quantity - preferred), -quantity)
 
+                children = []
                 for quantity in sorted(
                     range(minimum_quantity, maximum_quantity + 1),
                     key=branch_key,
@@ -406,16 +429,16 @@ class CorpusPlanner:
                             strict=True,
                         )
                     )
-                    used[index] = quantity
-                    optimize(
-                        index + 1,
-                        selected_total + quantity,
-                        next_counts,
-                        cost + prefix_costs[index][quantity],
+                    children.append(
+                        (
+                            index + 1,
+                            selected_total + quantity,
+                            next_counts,
+                            cost + prefix_costs[index][quantity],
+                            (*used, quantity),
+                        )
                     )
-                used[index] = 0
-
-            optimize(0, 0, tuple(0 for _ in groups), 0)
+                optimize_stack.extend(reversed(children))
 
         selected = [
             candidate

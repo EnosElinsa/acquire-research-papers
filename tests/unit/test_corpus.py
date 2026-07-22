@@ -407,6 +407,37 @@ def test_joint_quota_solver_scales_past_python_recursion_depth() -> None:
     assert plan.quota_shortfalls == ()
 
 
+def test_joint_quota_solver_uses_no_recursion_per_distinct_signature() -> None:
+    target = 1_001
+    venues = [f"V{index:04d}" for index in range(target)]
+    spec = {
+        "target": {"minimum": target, "preferred": target, "maximum": target},
+        "quotas": {
+            "groups": [
+                {
+                    "name": f"bit-{bit}",
+                    "minimum": 0,
+                    "venues": [
+                        venue
+                        for index, venue in enumerate(venues)
+                        if index & (1 << bit)
+                    ],
+                }
+                for bit in range(10)
+            ]
+        },
+    }
+    candidates = [
+        candidate(f"paper-{index:04d}", 2026, 0.99, venue=venue)
+        for index, venue in enumerate(venues)
+    ]
+
+    plan = CorpusPlanner(spec).select(candidates)
+
+    assert len(plan.auto_accepted) == target
+    assert plan.quota_shortfalls == ()
+
+
 def test_best_effort_selection_maximizes_size_before_reporting_quota_shortfall() -> None:
     spec = {
         "target": {"minimum": 2, "preferred": 2, "maximum": 2},
