@@ -1,7 +1,10 @@
+import json
+import math
 from dataclasses import replace
+from pathlib import Path
 
 from acquire_research_papers.discovery.contracts import CandidateMetadata
-from acquire_research_papers.discovery.evidence import EvidencePacket
+from acquire_research_papers.discovery.evidence import EvidencePacket, evaluate_prefilter
 
 
 def candidate(**changes) -> CandidateMetadata:
@@ -94,3 +97,124 @@ def test_evidence_metadata_state_requires_title_and_abstract_not_keywords() -> N
     assert without_keywords.metadata_state == "ready"
     assert without_abstract.metadata_state == "pending_abstract"
     assert without_title.metadata_state == "missing_title"
+
+
+def screening_spec() -> dict:
+    return {
+        "scope": {
+            "topics": {
+                "include": [
+                    "evolutionary optimization",
+                    "evolutionary algorithm",
+                    "multiobjective evolutionary optimization",
+                    "surrogate-assisted evolutionary optimization",
+                    "quality diversity",
+                    "neuroevolution",
+                    "population-based training",
+                    "genetic programming",
+                    "large language model multi-agent",
+                    "multi-agent collaboration",
+                    "algorithm configuration",
+                    "automated algorithm design",
+                ],
+                "synonyms": [
+                    "CMA-ES",
+                    "MOEA",
+                    "Pareto optimization",
+                    "quality-diversity",
+                    "LLM-guided search",
+                    "multi-agent system",
+                    "agent negotiation",
+                ],
+                "exclude": [
+                    "medical",
+                    "clinical",
+                    "tumor",
+                    "cancer",
+                    "demo",
+                    "autonomous driving",
+                ],
+            }
+        }
+    }
+
+
+def test_prefilter_handles_inflections_hyphens_and_unicode_separators() -> None:
+    item = candidate(
+        title="Surrogate–Assisted Multi-Objective Evolutionary Algorithms",
+        abstract="The optimizers collaborate across populations.",
+        keywords=("quality–diversity",),
+    )
+
+    result = evaluate_prefilter(item, screening_spec())
+
+    assert result.likely_relevant
+    assert "title:surrogate-assisted evolutionary optimization" in result.signals
+    assert "keywords:quality diversity" in result.signals
+
+
+def test_prefilter_uses_title_abstract_and_optional_keywords() -> None:
+    title_match = evaluate_prefilter(
+        candidate(title="A Multi-Agent System for Planning", abstract="General planning."),
+        screening_spec(),
+    )
+    abstract_match = evaluate_prefilter(
+        candidate(
+            title="Planning with Language Models",
+            abstract="We study multi agent systems that negotiate tasks.",
+        ),
+        screening_spec(),
+    )
+    keyword_match = evaluate_prefilter(
+        candidate(
+            title="Planning with Language Models",
+            abstract="General planning.",
+            keywords=("agent negotiations",),
+        ),
+        screening_spec(),
+    )
+
+    assert title_match.likely_relevant
+    assert abstract_match.likely_relevant
+    assert keyword_match.likely_relevant
+    assert title_match.signals[0].startswith("title:")
+    assert abstract_match.signals[0].startswith("abstract:")
+    assert keyword_match.signals[0].startswith("keywords:")
+
+
+def test_explicit_exclusion_overrides_positive_prefilter_signal() -> None:
+    result = evaluate_prefilter(
+        candidate(
+            title="Multi-Agent Systems for Autonomous Driving",
+            abstract="Agents collaborate in traffic.",
+        ),
+        screening_spec(),
+    )
+
+    assert not result.likely_relevant
+    assert result.exclusion_signals == ("title:autonomous driving",)
+    assert any(signal.startswith("title:multi-agent system") for signal in result.signals)
+
+
+def test_labeled_prefilter_fixture_meets_precision_and_recall_floor() -> None:
+    fixture = Path(__file__).parents[1] / "fixtures" / "discovery" / "screening-labeled.json"
+    records = json.loads(fixture.read_text(encoding="utf-8"))
+    true_positive = false_positive = false_negative = 0
+    for index, record in enumerate(records):
+        item = candidate(
+            key=f"fixture-{index}",
+            title=record["title"],
+            abstract=record.get("abstract", ""),
+            keywords=tuple(record.get("keywords", ())),
+        )
+        predicted = evaluate_prefilter(item, screening_spec()).likely_relevant
+        expected = bool(record["relevant"])
+        true_positive += int(predicted and expected)
+        false_positive += int(predicted and not expected)
+        false_negative += int(not predicted and expected)
+
+    precision = true_positive / (true_positive + false_positive)
+    recall = true_positive / (true_positive + false_negative)
+    assert math.isclose(precision, 1.0)
+    assert precision >= 0.95
+    assert recall >= 0.90

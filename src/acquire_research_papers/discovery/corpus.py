@@ -18,6 +18,7 @@ from acquire_research_papers.discovery.contracts import (
     DiscoveryBatch,
     DiscoveryRequest,
 )
+from acquire_research_papers.discovery.evidence import evaluate_prefilter
 from acquire_research_papers.models import PaperStatus
 from acquire_research_papers.selection import SelectionStore, build_selection_records
 
@@ -219,10 +220,6 @@ def _normalized(value: str) -> str:
     return " ".join(re.findall(r"\w+", value.casefold()))
 
 
-def _contains_term(text: str, term: str) -> bool:
-    return bool(term and f" {term} " in f" {text} ")
-
-
 class CorpusDiscoverer:
     """Conservative lexical gating over one or more candidate-only clients."""
 
@@ -244,23 +241,13 @@ class CorpusDiscoverer:
         included_types = {_normalized(value) for value in publication_types.get("include", [])}
         excluded_types = {_normalized(value) for value in publication_types.get("exclude", [])}
         topics = scope.get("topics", {})
-        include_terms = [
-            _normalized(value)
-            for value in [*topics.get("include", []), *topics.get("synonyms", [])]
-            if value
-        ]
-        exclude_terms = [_normalized(value) for value in topics.get("exclude", []) if value]
-
-        haystack = _normalized(f"{candidate.title} {candidate.abstract}")
-        title = _normalized(candidate.title)
-        topic_title = any(_contains_term(title, term) for term in include_terms)
-        topic_body = any(_contains_term(haystack, term) for term in include_terms)
-        excluded_topic = any(_contains_term(haystack, term) for term in exclude_terms)
+        include_terms = [*topics.get("include", []), *topics.get("synonyms", [])]
+        prefilter = evaluate_prefilter(candidate, spec)
         if not include_terms:
             score = max(candidate.relevance_score, 0.85)
-        elif topic_title:
+        elif any(signal.startswith("title:") for signal in prefilter.signals):
             score = max(candidate.relevance_score, 0.95)
-        elif topic_body:
+        elif prefilter.signals:
             score = max(candidate.relevance_score, 0.86)
         else:
             score = min(candidate.relevance_score, 0.64)
@@ -271,7 +258,7 @@ class CorpusDiscoverer:
         hard_gates &= not venue_names or _normalized(candidate.venue) in venue_names
         hard_gates &= not included_types or publication_type in included_types
         hard_gates &= publication_type not in excluded_types
-        hard_gates &= not excluded_topic
+        hard_gates &= not prefilter.exclusion_signals
         return replace(candidate, relevance_score=score, hard_gates_passed=hard_gates)
 
     def __call__(self, spec: dict[str, Any]) -> list[CandidateMetadata]:

@@ -1,0 +1,102 @@
+[
+  {
+    "title": "Surrogate-assisted multi-objective evolutionary algorithms for expensive optimization",
+    "abstract": "A surrogate reduces the evaluation budget.",
+    "relevant": true
+  },
+  {
+    "title": "Evolutionary Algorithms for Dynamic Search Spaces",
+    "abstract": "Populations adapt to changing objectives.",
+    "relevant": true
+  },
+  {
+    "title": "Coordination in Multi-Agent Systems",
+    "abstract": "Agents collaborate on task allocation.",
+    "relevant": true
+  },
+  {
+    "title": "Quality–Diversity Search with Learned Descriptors",
+    "abstract": "The archive contains diverse high-performing solutions.",
+    "relevant": true
+  },
+  {
+    "title": "Restart Strategies for CMA–ES",
+    "abstract": "We improve black-box optimization.",
+    "relevant": true
+  },
+  {
+    "title": "Neuro-evolution for Policy Learning",
+    "abstract": "Neural controllers evolve over generations.",
+    "relevant": true
+  },
+  {
+    "title": "Population Based Trainings for Foundation Models",
+    "abstract": "Hyperparameters evolve during training.",
+    "relevant": true
+  },
+  {
+    "title": "Scalable Genetic Programs for Symbolic Regression",
+    "abstract": "Program populations are selected and mutated.",
+    "relevant": true
+  },
+  {
+    "title": "Automatic Algorithm Configurations under Distribution Shift",
+    "abstract": "We configure optimizers from prior tasks.",
+    "relevant": true
+  },
+  {
+    "title": "Automated Algorithm Designs with Language Models",
+    "abstract": "Candidate algorithms are generated and evaluated.",
+    "relevant": true
+  },
+  {
+    "title": "Planning with Foundation Models",
+    "abstract": "The agents negotiate task ownership before execution.",
+    "relevant": true
+  },
+  {
+    "title": "Prompt Search for Code Generation",
+    "abstract": "An LLM guided search improves generated programs.",
+    "relevant": true
+  },
+  {
+    "title": "A New MOEA for Many Objectives",
+    "abstract": "The method maintains a diverse Pareto set.",
+    "relevant": true
+  },
+  {
+    "title": "Evolution of Tumor Cell Populations",
+    "abstract": "A clinical cancer model is evaluated.",
+    "relevant": false
+  },
+  {
+    "title": "Multi-Agent Systems for Autonomous Driving",
+    "abstract": "Agents coordinate at road intersections.",
+    "relevant": false
+  },
+  {
+    "title": "Multi-Agent Demo for Interactive Museums",
+    "abstract": "This system demonstration uses several agents.",
+    "relevant": false
+  },
+  {
+    "title": "Revolutionizing Wireless Sensor Charging",
+    "abstract": "A scheduling heuristic reduces energy cost.",
+    "relevant": false
+  },
+  {
+    "title": "Clinical Optimization of Cancer Treatment",
+    "abstract": "A medical study evaluates patient outcomes.",
+    "relevant": false
+  },
+  {
+    "title": "Agent-Based Economic Simulation",
+    "abstract": "Households exchange goods in a market.",
+    "relevant": false
+  },
+  {
+    "title": "Communication Protocols for Distributed Databases",
+    "abstract": "Replicas exchange consistency messages.",
+    "relevant": false
+  }
+]

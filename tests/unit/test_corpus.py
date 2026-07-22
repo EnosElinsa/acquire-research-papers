@@ -193,3 +193,28 @@ def test_topic_exclusion_uses_word_boundaries() -> None:
 
     assert CorpusDiscoverer._screen(research, spec).hard_gates_passed
     assert not CorpusDiscoverer._screen(demo, spec).hard_gates_passed
+
+
+def test_missing_lexical_signal_does_not_fail_hard_gates() -> None:
+    from acquire_research_papers.discovery.corpus import CorpusDiscoverer
+
+    spec = {
+        "target": {"minimum": 1, "preferred": 1, "maximum": 2},
+        "scope": {
+            "venues": [{"name": "Test"}],
+            "years": {"include": [2026]},
+            "publication_types": {"include": ["journal-article"]},
+            "topics": {"include": ["evolutionary optimization"]},
+        },
+    }
+    unrelated = replace(
+        candidate("semantic-review-needed", 2026, 0.99),
+        title="Learning Transferable Representations",
+        abstract="The method transfers knowledge between related tasks.",
+        publication_type="journal-article",
+    )
+
+    screened = CorpusDiscoverer._screen(unrelated, spec)
+
+    assert screened.hard_gates_passed
+    assert screened.relevance_score < ScreeningGate().auto_threshold

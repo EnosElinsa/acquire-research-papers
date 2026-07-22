@@ -7,7 +7,11 @@ from acquire_research_papers.discovery.contracts import (
     DiscoveryProvider,
     DiscoveryRequest,
 )
-from acquire_research_papers.discovery.evidence import EvidencePacket
+from acquire_research_papers.discovery.evidence import (
+    EvidencePacket,
+    PrefilterResult,
+    evaluate_prefilter,
+)
 
 __all__ = [
     "CandidateMetadata",
@@ -16,4 +20,6 @@ __all__ = [
     "DiscoveryProvider",
     "DiscoveryRequest",
     "EvidencePacket",
+    "PrefilterResult",
+    "evaluate_prefilter",
 ]
