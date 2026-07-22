@@ -221,6 +221,14 @@ class CorpusPlanner:
             quota_shortfalls=tuple(quota_shortfalls),
         )
 
+    def select_accepted(self, candidates: Iterable[CandidateMetadata]) -> CorpusPlan:
+        """Apply quotas to candidates already accepted by semantic review."""
+        accepted = (
+            replace(candidate, relevance_score=1.0)
+            for candidate in candidates
+        )
+        return self.select(accepted)
+
 
 def _normalized(value: str) -> str:
     return " ".join(re.findall(r"\w+", value.casefold()))

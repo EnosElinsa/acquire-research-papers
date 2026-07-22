@@ -49,6 +49,7 @@ from acquire_research_papers.discovery.contracts import (
 )
 from acquire_research_papers.discovery.coordinator import DiscoveryCoordinator
 from acquire_research_papers.discovery.corpus import CorpusDiscoveryWorkflow
+from acquire_research_papers.discovery.review import CorpusReviewWorkflow
 from acquire_research_papers.discovery.crossref import CrossrefClient
 from acquire_research_papers.discovery.openalex import OpenAlexClient
 from acquire_research_papers.discovery.official import (
@@ -648,8 +649,13 @@ def build_parser() -> argparse.ArgumentParser:
     resume = subparsers.add_parser("resume", help="resume an interrupted acquisition")
     resume.add_argument("--paper-id", required=True)
 
-    review = subparsers.add_parser("review", help="import or inspect review decisions")
-    review.add_argument("--input", type=Path, required=True)
+    review = subparsers.add_parser("review", help="validate semantic review decisions")
+    review_modes = review.add_subparsers(dest="review_mode", required=True)
+    review_corpus = review_modes.add_parser(
+        "corpus", help="import corpus decisions and freeze a selection"
+    )
+    review_corpus.add_argument("--run", type=Path, required=True)
+    review_corpus.add_argument("--decisions", type=Path, required=True)
 
     discover = subparsers.add_parser("discover", help="discover a corpus or research evidence")
     discover_modes = discover.add_subparsers(dest="discover_mode", required=True)
@@ -818,6 +824,29 @@ def run_cli(
                 }
             )
             return 0
+        if args.command == "review" and args.review_mode == "corpus":
+            try:
+                run_root = ensure_outside_repository(args.run, app.repository_root)
+                result = CorpusReviewWorkflow().run(run_root, args.decisions)
+            except ValueError as exc:
+                raise AmbiguousInput(str(exc)) from exc
+            _emit(
+                {
+                    "status": result.status,
+                    "reviewed_candidates": str(result.reviewed_path),
+                    "pending_review": str(result.pending_review_path),
+                    "selected_papers": str(result.selected_path),
+                    "selection_manifest": str(result.selection_manifest_path),
+                    "manifest": str(result.manifest_path),
+                    "accepted": result.accepted,
+                    "rejected": result.rejected,
+                    "pending": result.pending,
+                    "selected": result.selected,
+                    "shortfall_classes": list(result.shortfall_classes),
+                    "quota_shortfalls": list(result.quota_shortfalls),
+                }
+            )
+            return 0
         if args.command == "acquire" and args.acquire_mode == "corpus":
             if app.corpus_acquisition is None:
                 raise AmbiguousInput("corpus acquisition is not configured")
@@ -847,7 +876,7 @@ def run_cli(
                 }
             )
             return 0
-        if args.command in {"resume", "review"}:
+        if args.command == "resume":
             raise AmbiguousInput(f"{args.command} requires a task produced by discover")
         parser.print_help()
         return 0

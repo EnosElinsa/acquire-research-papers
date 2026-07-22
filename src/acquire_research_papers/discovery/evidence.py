@@ -225,3 +225,17 @@ class EvidencePacket:
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, object]) -> EvidencePacket:
+        values = dict(payload)
+        for field in ("keywords", "prefilter_signals", "evidence_fields"):
+            values[field] = tuple(values.get(field, ()))
+        values["field_provenance"] = {
+            str(field): tuple(sources)
+            for field, sources in dict(values.get("field_provenance", {})).items()
+        }
+        try:
+            return cls(**values)
+        except TypeError as exc:
+            raise ValueError("evidence packet does not match schema version 1") from exc
