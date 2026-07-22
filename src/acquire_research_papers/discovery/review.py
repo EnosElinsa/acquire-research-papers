@@ -199,15 +199,35 @@ class CorpusReviewWorkflow:
             selection.manifest.get("selected_sha256")
             != manifest.get("selected_sha256")
             or selection.manifest.get("spec_sha256") != request_sha256
+            or selection.manifest.get("review_decision_sha256") != decision_sha256
+            or selection.manifest.get("discovery_manifest_sha256")
+            != discovery_manifest_sha256
             or len(selection.records) != int(manifest.get("selected", -1))
         ):
             raise ReviewValidationError(
                 "existing frozen selection failed validation"
             )
+        reviewed_path = root / "reviewed-candidates.jsonl"
+        pending_review_path = root / "pending-review.csv"
+        try:
+            audit_hashes_match = (
+                sha256_file(reviewed_path)
+                == manifest.get("reviewed_candidates_sha256")
+                and sha256_file(pending_review_path)
+                == manifest.get("pending_review_sha256")
+            )
+        except OSError as exc:
+            raise ReviewValidationError(
+                "existing review audit artifact failed validation"
+            ) from exc
+        if not audit_hashes_match:
+            raise ReviewValidationError(
+                "existing review audit artifact failed validation"
+            )
         return CorpusReviewResult(
             status=str(manifest["status"]),
-            reviewed_path=root / str(manifest["reviewed_candidates"]),
-            pending_review_path=root / str(manifest["pending_review"]),
+            reviewed_path=reviewed_path,
+            pending_review_path=pending_review_path,
             selected_path=selection.selected_path,
             selection_manifest_path=selection.manifest_path,
             manifest_path=manifest_path,
@@ -410,6 +430,7 @@ class CorpusReviewWorkflow:
                 "provider_coverage": discovery_manifest.get("provider_coverage", []),
                 "discovery_errors": discovery_manifest.get("discovery_errors", 0),
                 "review_decision_sha256": decision_sha256,
+                "discovery_manifest_sha256": discovery_manifest_sha256,
                 "quota_shortfalls": list(plan.quota_shortfalls),
                 "shortfall_classes": shortfall_classes,
             },
@@ -456,7 +477,9 @@ class CorpusReviewWorkflow:
             "shortfall_classes": shortfall_classes,
             "quota_shortfalls": list(plan.quota_shortfalls),
             "reviewed_candidates": reviewed_path.name,
+            "reviewed_candidates_sha256": sha256_file(reviewed_path),
             "pending_review": pending_review_path.name,
+            "pending_review_sha256": sha256_file(pending_review_path),
             "selected_papers": selection.selected_path.name,
             "selection_manifest": selection.manifest_path.name,
         }

@@ -423,6 +423,23 @@ def test_cached_review_rejects_selection_and_manifest_rewritten_together(
         workflow.run(run, decisions)
 
 
+def test_cached_review_revalidates_review_audit_artifacts(tmp_path: Path) -> None:
+    run = create_run(
+        tmp_path / "run",
+        (candidate("one", "Conference"),),
+        corpus_spec(minimum=1, preferred=1),
+    )
+    packet = next(iter(packets(run).values()))
+    decisions = write_decisions(tmp_path / "decisions.jsonl", [decision(packet)])
+    workflow = CorpusReviewWorkflow()
+    result = workflow.run(run, decisions)
+    with result.reviewed_path.open("a", encoding="utf-8") as handle:
+        handle.write(" \n")
+
+    with pytest.raises(ReviewValidationError, match="audit artifact"):
+        workflow.run(run, decisions)
+
+
 def test_valid_spec_without_delivery_uses_generic_layout(tmp_path: Path) -> None:
     spec = corpus_spec(minimum=1, preferred=1)
     spec.pop("delivery")
