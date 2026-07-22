@@ -106,6 +106,58 @@ def test_ijcai_provider_parses_current_index_title_and_details_layout(
     assert batch.diagnostics == ()
 
 
+def test_ijcai_provider_decodes_nested_html_entities_in_metadata_title(
+    fixture_server,
+) -> None:
+    index = (
+        '<div class="section_title"><h3>Main Track</h3></div>'
+        '<div class="paper_wrapper">'
+        '<div class="title">MSCI: Addressing CLIP\'s Inherent Limitations</div>'
+        '<a href="/proceedings/2025/12">Details</a></div>'
+    )
+    paper = CURRENT_PAPER.read_text(encoding="utf-8").replace(
+        "Evolutionary Optimization for Large Language Models",
+        "MSCI: Addressing CLIP&amp;#039;s Inherent Limitations",
+    )
+    fixture_server.serve_text("/proceedings/2025/", index)
+    fixture_server.serve_text("/proceedings/2025/12", paper)
+
+    batch = provider(fixture_server).discover(request())
+
+    assert [item.title for item in batch.candidates] == [
+        "MSCI: Addressing CLIP's Inherent Limitations"
+    ]
+    assert batch.coverage[0].state == "complete"
+    assert batch.diagnostics == ()
+
+
+def test_ijcai_provider_treats_every_section_title_as_a_track_boundary(
+    fixture_server,
+) -> None:
+    index = (
+        '<div class="section" id="section0">'
+        '<div class="section_title"><h3>Main Track</h3></div>'
+        '<div class="paper_wrapper"><div class="title">Main Paper</div>'
+        '<a href="/proceedings/2025/12">Details</a></div></div>'
+        '<div class="section" id="section1">'
+        '<div class="section_title"><h3>AI4Tech: AI Enabling Technologies</h3></div>'
+        '<div class="paper_wrapper"><div class="title">AI4Tech Paper</div>'
+        '<a href="/proceedings/2025/1015">Details</a></div></div>'
+    )
+    main_paper = CURRENT_PAPER.read_text(encoding="utf-8").replace(
+        "Evolutionary Optimization for Large Language Models", "Main Paper"
+    )
+    fixture_server.serve_text("/proceedings/2025/", index)
+    fixture_server.serve_text("/proceedings/2025/12", main_paper)
+
+    batch = provider(fixture_server).discover(request())
+
+    assert [item.title for item in batch.candidates] == ["Main Paper"]
+    assert batch.coverage[0].pages_fetched == 2
+    assert batch.coverage[0].state == "complete"
+    assert batch.diagnostics == ()
+
+
 def test_ijcai_provider_isolates_malformed_relevant_detail(fixture_server) -> None:
     index = (
         "<h2>Main Track</h2>"

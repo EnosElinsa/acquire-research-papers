@@ -179,7 +179,11 @@ class IjcaiDiscoveryProvider:
         for node in soup.find_all(["h1", "h2", "h3", "h4", "div"]):
             if node.name in {"h1", "h2", "h3", "h4"}:
                 heading = node.get_text(" ", strip=True)
-                if "track" in heading.casefold():
+                parent_classes = {
+                    str(value).casefold()
+                    for value in (node.parent.get("class", ()) if node.parent else ())
+                }
+                if "section_title" in parent_classes or "track" in heading.casefold():
                     track = heading
                 continue
             classes = {str(value).casefold() for value in node.get("class", ())}
