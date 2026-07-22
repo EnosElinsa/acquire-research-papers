@@ -192,6 +192,47 @@ def test_overlapping_group_minima_choose_a_jointly_useful_candidate() -> None:
     assert plan.quota_shortfalls == ()
 
 
+def test_joint_quota_solver_preserves_scarce_maximum_capacity() -> None:
+    spec = {
+        "target": {"minimum": 2, "preferred": 2, "maximum": 2},
+        "quotas": {
+            "groups": [
+                {"name": "year-2025", "minimum": 1, "years": [2025]},
+                {"name": "venue-x", "minimum": 1, "venues": ["X"]},
+                {"name": "venue-z", "minimum": 1, "venues": ["Z"]},
+                {
+                    "name": "special",
+                    "minimum": 0,
+                    "maximum": 1,
+                    "publication_types": ["special"],
+                },
+            ]
+        },
+    }
+    candidates = [
+        replace(
+            candidate("bad-overlap", 2025, 0.99, venue="X"),
+            publication_type="special",
+        ),
+        replace(
+            candidate("good-overlap", 2025, 0.98, venue="X"),
+            publication_type="normal",
+        ),
+        replace(
+            candidate("scarce-z", 2024, 0.97, venue="Z"),
+            publication_type="special",
+        ),
+    ]
+
+    plan = CorpusPlanner(spec).select(candidates)
+
+    assert {item.key for item in plan.auto_accepted} == {
+        "good-overlap",
+        "scarce-z",
+    }
+    assert plan.quota_shortfalls == ()
+
+
 def test_recent_window_ratio_uses_publication_date() -> None:
     spec = {
         "target": {"minimum": 2, "preferred": 2, "maximum": 3},

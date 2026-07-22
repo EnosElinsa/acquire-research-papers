@@ -99,13 +99,20 @@ class CorpusPlanner:
             _normalized_publication_type(str(value))
             for value in group.get("publication_types", [])
         }
+        recent_from = group.get("_recent_from")
+        recent_matches = True
+        if recent_from:
+            recent_matches = CorpusPlanner._is_recent(
+                candidate,
+                date.fromisoformat(str(recent_from)),
+            )
         return (not venues or candidate.venue.casefold() in venues) and (
             not years or candidate.year in years
         ) and (
             not publication_types
             or _normalized_publication_type(candidate.publication_type or "")
             in publication_types
-        )
+        ) and recent_matches
 
     def _group_count(
         self,
@@ -126,6 +133,135 @@ class CorpusPlanner:
             if self._group_count(selected, group) >= int(group_maximum):
                 return False
         return True
+
+    def _joint_quota_seed(
+        self,
+        candidates: list[CandidateMetadata],
+        groups: list[dict[str, Any]],
+        goal: int,
+    ) -> tuple[CandidateMetadata, ...]:
+        """Find a ranked feasible seed for overlapping group constraints."""
+        minimums = tuple(int(group.get("minimum", 0)) for group in groups)
+        if not groups or not any(minimums) or goal <= 0:
+            return ()
+        maximums = tuple(
+            int(group["maximum"]) if group.get("maximum") is not None else None
+            for group in groups
+        )
+        bounds = tuple(
+            maximum if maximum is not None else minimum
+            for minimum, maximum in zip(minimums, maximums, strict=True)
+        )
+        buckets: dict[tuple[bool, ...], list[CandidateMetadata]] = {}
+        for candidate in candidates:
+            signature = tuple(
+                self._matches_group(candidate, group) for group in groups
+            )
+            if any(
+                matches and minimum > 0
+                for matches, minimum in zip(signature, minimums, strict=True)
+            ):
+                buckets.setdefault(signature, []).append(candidate)
+        signatures = tuple(
+            sorted(
+                buckets,
+                key=lambda signature: self._rank(buckets[signature][0]),
+            )
+        )
+        capacities = tuple(
+            min(len(buckets[signature]), goal) for signature in signatures
+        )
+        initial_counts = tuple(0 for _ in groups)
+        initial_used = tuple(0 for _ in signatures)
+        failed: set[tuple[tuple[int, ...], tuple[int, ...]]] = set()
+
+        def can_add_signature(
+            signature: tuple[bool, ...],
+            counts: tuple[int, ...],
+        ) -> bool:
+            return all(
+                not matches or maximum is None or count < maximum
+                for matches, maximum, count in zip(
+                    signature,
+                    maximums,
+                    counts,
+                    strict=True,
+                )
+            )
+
+        def search(
+            counts: tuple[int, ...],
+            used: tuple[int, ...],
+        ) -> tuple[int, ...] | None:
+            deficits = tuple(
+                max(0, minimum - count)
+                for minimum, count in zip(minimums, counts, strict=True)
+            )
+            if not any(deficits):
+                return used
+            state = (counts, used)
+            if state in failed:
+                return None
+            selected_total = sum(used)
+            if selected_total >= goal or selected_total + max(deficits) > goal:
+                failed.add(state)
+                return None
+
+            options_by_group: list[tuple[int, list[int]]] = []
+            for group_index, deficit in enumerate(deficits):
+                if not deficit:
+                    continue
+                options = [
+                    index
+                    for index, signature in enumerate(signatures)
+                    if signature[group_index]
+                    and used[index] < capacities[index]
+                    and can_add_signature(signature, counts)
+                ]
+                available = sum(capacities[index] - used[index] for index in options)
+                if available < deficit:
+                    failed.add(state)
+                    return None
+                options_by_group.append((available, options))
+            _, branch_options = min(options_by_group, key=lambda item: len(item[1]))
+
+            def branch_rank(index: int):
+                signature = signatures[index]
+                contribution = sum(
+                    bool(deficit and matches)
+                    for deficit, matches in zip(deficits, signature, strict=True)
+                )
+                candidate = buckets[signature][used[index]]
+                return (-contribution, self._rank(candidate))
+
+            for signature_index in sorted(branch_options, key=branch_rank):
+                signature = signatures[signature_index]
+                next_counts = tuple(
+                    min(bound, count + int(matches))
+                    for bound, count, matches in zip(
+                        bounds,
+                        counts,
+                        signature,
+                        strict=True,
+                    )
+                )
+                next_used = list(used)
+                next_used[signature_index] += 1
+                result = search(next_counts, tuple(next_used))
+                if result is not None:
+                    return result
+            failed.add(state)
+            return None
+
+        solution = search(initial_counts, initial_used)
+        if solution is None:
+            return ()
+        selected = [
+            candidate
+            for signature, count in zip(signatures, solution, strict=True)
+            for candidate in buckets[signature][:count]
+        ]
+        return tuple(sorted(selected, key=self._rank))
 
     @staticmethod
     def _is_recent(candidate: CandidateMetadata, start: date) -> bool:
@@ -180,59 +316,24 @@ class CorpusPlanner:
             selected_keys.add(candidate.key)
             return True
 
-        while len(selected) < goal:
-            unmet_groups = [
-                group
-                for group in groups
-                if self._group_count(selected, group)
-                < int(group.get("minimum", 0))
-            ]
-            if not unmet_groups:
-                break
-            feasible = [
-                candidate
-                for candidate in auto_pool
-                if candidate.key not in selected_keys
-                and self._can_add(selected, candidate)
-                and any(
-                    self._matches_group(candidate, group) for group in unmet_groups
-                )
-            ]
-            if not feasible:
-                break
-            availability = {
-                id(group): sum(
-                    self._matches_group(candidate, group) for candidate in feasible
-                )
-                for group in unmet_groups
-            }
-
-            def quota_rank(candidate: CandidateMetadata):
-                matched = [
-                    group
-                    for group in unmet_groups
-                    if self._matches_group(candidate, group)
-                ]
-                scarcity = sum(
-                    1.0 / max(1, availability[id(group)]) for group in matched
-                )
-                return (-len(matched), -scarcity, self._rank(candidate))
-
-            if not add(min(feasible, key=quota_rank)):
-                break
-
         recent_window = self.spec.get("quotas", {}).get("recent_window")
         recent_start: date | None = None
         recent_ratio = 0.0
+        quota_groups = list(groups)
         if recent_window:
             recent_start = date.fromisoformat(str(recent_window["from"]))
             recent_ratio = float(recent_window["minimum_ratio"])
             required_recent = math.ceil(planned_total * recent_ratio)
-            for candidate in auto_pool:
-                if sum(self._is_recent(item, recent_start) for item in selected) >= required_recent:
-                    break
-                if self._is_recent(candidate, recent_start):
-                    add(candidate)
+            quota_groups.append(
+                {
+                    "name": "__recent__",
+                    "minimum": required_recent,
+                    "_recent_from": recent_start.isoformat(),
+                }
+            )
+
+        for candidate in self._joint_quota_seed(auto_pool, quota_groups, goal):
+            add(candidate)
 
         for candidate in auto_pool:
             if len(selected) >= goal:
