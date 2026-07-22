@@ -189,16 +189,38 @@ class CorpusPlanner:
             sum(id(candidate) in preferred_candidates for candidate in buckets[signature])
             for signature in signatures
         )
+        rank_positions = {
+            id(candidate): index + 1 for index, candidate in enumerate(candidates)
+        }
+        prefix_costs: list[tuple[int, ...]] = []
+        for signature, capacity in zip(signatures, capacities, strict=True):
+            costs = [0]
+            for candidate in buckets[signature][:capacity]:
+                costs.append(costs[-1] + rank_positions[id(candidate)])
+            prefix_costs.append(tuple(costs))
         remaining_total = [0] * (len(signatures) + 1)
         remaining_by_group = [
             [0 for _ in groups] for _ in range(len(signatures) + 1)
         ]
+        suffix_rank_costs: list[tuple[int, ...]] = [()] * (len(signatures) + 1)
+        suffix_rank_costs[-1] = (0,)
+        suffix_positions: list[int] = []
         for index in range(len(signatures) - 1, -1, -1):
             remaining_total[index] = remaining_total[index + 1] + capacities[index]
             remaining_by_group[index] = remaining_by_group[index + 1].copy()
             for group_index, matches in enumerate(signatures[index]):
                 if matches:
                     remaining_by_group[index][group_index] += capacities[index]
+            suffix_positions.extend(
+                rank_positions[id(candidate)]
+                for candidate in buckets[signatures[index]][: capacities[index]]
+            )
+            suffix_positions.sort()
+            del suffix_positions[target_size:]
+            costs = [0]
+            for position in suffix_positions:
+                costs.append(costs[-1] + position)
+            suffix_rank_costs[index] = tuple(costs)
 
         @lru_cache(maxsize=None)
         def search(
@@ -277,9 +299,127 @@ class CorpusPlanner:
         solution = search(0, 0, tuple(0 for _ in groups))
         if solution is None:
             return None
+
+        def solution_key(quantities: tuple[int, ...]) -> tuple[int, tuple[int, ...]]:
+            positions = tuple(
+                sorted(
+                    rank_positions[id(candidate)]
+                    for signature, quantity in zip(
+                        signatures,
+                        quantities,
+                        strict=True,
+                    )
+                    for candidate in buckets[signature][:quantity]
+                )
+            )
+            return (sum(positions), positions)
+
+        best_solution = solution
+        best_key = solution_key(solution)
+        unconstrained_cost = suffix_rank_costs[0][target_size]
+        if best_key[0] != unconstrained_cost:
+            used = [0] * len(signatures)
+            lowest_state_cost: dict[tuple[int, int, tuple[int, ...]], int] = {}
+
+            def optimize(
+                index: int,
+                selected_total: int,
+                counts: tuple[int, ...],
+                cost: int,
+            ) -> None:
+                nonlocal best_key, best_solution
+                needed = target_size - selected_total
+                if needed < 0 or needed >= len(suffix_rank_costs[index]):
+                    return
+                if cost + suffix_rank_costs[index][needed] > best_key[0]:
+                    return
+                if any(
+                    count + remaining_by_group[index][group_index] < minimum
+                    for group_index, (count, minimum) in enumerate(
+                        zip(counts, minimums, strict=True)
+                    )
+                ):
+                    return
+                state = (index, selected_total, counts)
+                previous_cost = lowest_state_cost.get(state)
+                if previous_cost is not None and cost > previous_cost:
+                    return
+                if previous_cost is None or cost < previous_cost:
+                    lowest_state_cost[state] = cost
+                if index == len(signatures):
+                    if selected_total != target_size:
+                        return
+                    quantities = tuple(used)
+                    key = solution_key(quantities)
+                    if key < best_key:
+                        best_key = key
+                        best_solution = quantities
+                    return
+
+                signature = signatures[index]
+                minimum_quantity = max(
+                    0,
+                    target_size - selected_total - remaining_total[index + 1],
+                )
+                maximum_quantity = min(
+                    capacities[index],
+                    target_size - selected_total,
+                )
+                for group_index, (matches, minimum, maximum, count) in enumerate(
+                    zip(signature, minimums, maximums, counts, strict=True)
+                ):
+                    if matches and maximum is not None:
+                        maximum_quantity = min(maximum_quantity, maximum - count)
+                    if matches:
+                        minimum_quantity = max(
+                            minimum_quantity,
+                            minimum
+                            - count
+                            - remaining_by_group[index + 1][group_index],
+                        )
+                if minimum_quantity > maximum_quantity:
+                    return
+
+                preferred = min(
+                    maximum_quantity,
+                    max(minimum_quantity, preferred_quantities[index]),
+                )
+
+                def branch_key(quantity: int) -> tuple[int, int, int]:
+                    remaining_needed = target_size - selected_total - quantity
+                    lower_cost = (
+                        prefix_costs[index][quantity]
+                        + suffix_rank_costs[index + 1][remaining_needed]
+                    )
+                    return (lower_cost, abs(quantity - preferred), -quantity)
+
+                for quantity in sorted(
+                    range(minimum_quantity, maximum_quantity + 1),
+                    key=branch_key,
+                ):
+                    next_counts = tuple(
+                        min(bound, count + quantity * int(matches))
+                        for bound, count, matches in zip(
+                            bounds,
+                            counts,
+                            signature,
+                            strict=True,
+                        )
+                    )
+                    used[index] = quantity
+                    optimize(
+                        index + 1,
+                        selected_total + quantity,
+                        next_counts,
+                        cost + prefix_costs[index][quantity],
+                    )
+                used[index] = 0
+
+            optimize(0, 0, tuple(0 for _ in groups), 0)
+
         selected = [
             candidate
-            for signature, count in zip(signatures, solution, strict=True)
+            for signature, count in zip(signatures, best_solution, strict=True)
             for candidate in buckets[signature][:count]
         ]
         return tuple(sorted(selected, key=self._rank))

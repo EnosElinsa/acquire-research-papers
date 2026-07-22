@@ -233,6 +233,50 @@ def test_joint_quota_solver_preserves_scarce_maximum_capacity() -> None:
     assert plan.quota_shortfalls == ()
 
 
+def test_joint_quota_solver_keeps_the_globally_best_ranked_feasible_set() -> None:
+    spec = {
+        "target": {"minimum": 3, "preferred": 3, "maximum": 3},
+        "quotas": {
+            "groups": [
+                {
+                    "name": "journals",
+                    "minimum": 0,
+                    "maximum": 1,
+                    "publication_types": ["journal-article"],
+                },
+                {"name": "year-2025", "minimum": 1, "years": [2025]},
+            ]
+        },
+    }
+    candidates = [
+        replace(
+            candidate("2026-journal", 2026, 0.99),
+            publication_type="journal-article",
+        ),
+        replace(
+            candidate("2026-proceedings", 2026, 0.98),
+            publication_type="proceedings-article",
+        ),
+        replace(
+            candidate("2025-journal", 2025, 0.97),
+            publication_type="journal-article",
+        ),
+        replace(
+            candidate("2025-proceedings", 2025, 0.96),
+            publication_type="proceedings-article",
+        ),
+    ]
+
+    plan = CorpusPlanner(spec).select(candidates)
+
+    assert [item.key for item in plan.auto_accepted] == [
+        "2026-journal",
+        "2026-proceedings",
+        "2025-proceedings",
+    ]
+    assert plan.quota_shortfalls == ()
+
+
 def test_joint_quota_solver_handles_cross_cutting_minima() -> None:
     spec = {
         "target": {"minimum": 4, "preferred": 4, "maximum": 4},
