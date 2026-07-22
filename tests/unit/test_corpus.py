@@ -560,6 +560,33 @@ def test_joint_quota_solver_scales_across_twenty_four_signatures() -> None:
     assert plan.quota_shortfalls == ()
 
 
+def test_best_effort_solver_scales_when_large_group_minima_are_mutually_exclusive() -> None:
+    candidates = [
+        candidate(f"{venue}-{index:02d}", 2026, 0.90, venue=venue)
+        for venue in (f"V{number}" for number in range(6))
+        for index in range(50)
+    ]
+    spec = {
+        "target": {"minimum": 200, "preferred": 200, "maximum": 200},
+        "quotas": {
+            "groups": [
+                {
+                    "name": f"venue-v{number}",
+                    "minimum": 50,
+                    "maximum": 50,
+                    "venues": [f"V{number}"],
+                }
+                for number in range(6)
+            ]
+        },
+    }
+
+    plan = CorpusPlanner(spec).select(candidates)
+
+    assert len(plan.auto_accepted) == 200
+    assert sum(int(shortfall.rsplit(":", 1)[1]) for shortfall in plan.quota_shortfalls) == 100
+
+
 def test_recent_window_ratio_uses_publication_date() -> None:
     spec = {
         "target": {"minimum": 2, "preferred": 2, "maximum": 3},

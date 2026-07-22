@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import csv
-import heapq
 import io
 import json
 import math
@@ -453,73 +452,237 @@ class CorpusPlanner:
         groups: list[dict[str, Any]],
         target_size: int,
     ) -> tuple[CandidateMetadata, ...] | None:
-        """Minimize aggregate quota deficit at one fixed cardinality."""
+        """Minimize aggregate quota deficit, then rank, at one cardinality."""
         minimums = tuple(int(group.get("minimum", 0)) for group in groups)
-        maximum_only_groups = [{**group, "minimum": 0} for group in groups]
-        if (
-            self._solve_quota_selection(
-                candidates,
-                maximum_only_groups,
-                target_size,
-            )
-            is None
-        ):
-            return None
-        available = tuple(
-            min(
-                sum(self._matches_group(candidate, group) for candidate in candidates),
-                int(group["maximum"])
-                if group.get("maximum") is not None
-                else len(candidates),
-            )
+        maximums = tuple(
+            int(group["maximum"]) if group.get("maximum") is not None else None
             for group in groups
         )
-        initial = tuple(
-            min(minimum, capacity)
-            for minimum, capacity in zip(minimums, available, strict=True)
+        maximum_only_groups = [{**group, "minimum": 0} for group in groups]
+        incumbent = self._solve_quota_selection(
+            candidates,
+            maximum_only_groups,
+            target_size,
         )
-        pending = [
-            (
-                sum(
-                    minimum - value
-                    for minimum, value in zip(minimums, initial, strict=True)
-                ),
-                tuple(-value for value in initial),
-                initial,
+        if incumbent is None:
+            return None
+
+        bounds = tuple(
+            maximum if maximum is not None else minimum
+            for minimum, maximum in zip(minimums, maximums, strict=True)
+        )
+        buckets: dict[tuple[bool, ...], list[CandidateMetadata]] = {}
+        for candidate in candidates:
+            signature = tuple(
+                self._matches_group(candidate, group) for group in groups
             )
+            buckets.setdefault(signature, []).append(candidate)
+        signatures = tuple(
+            sorted(
+                buckets,
+                key=lambda signature: self._rank(buckets[signature][0]),
+            )
+        )
+        capacities = tuple(
+            min(len(buckets[signature]), target_size) for signature in signatures
+        )
+        rank_positions = {
+            id(candidate): index + 1 for index, candidate in enumerate(candidates)
+        }
+        prefix_costs: list[tuple[int, ...]] = []
+        for signature, capacity in zip(signatures, capacities, strict=True):
+            costs = [0]
+            for candidate in buckets[signature][:capacity]:
+                costs.append(costs[-1] + rank_positions[id(candidate)])
+            prefix_costs.append(tuple(costs))
+        preferred_candidates = {id(candidate) for candidate in candidates[:target_size]}
+        preferred_quantities = tuple(
+            sum(id(candidate) in preferred_candidates for candidate in buckets[signature])
+            for signature in signatures
+        )
+        remaining_total = [0] * (len(signatures) + 1)
+        remaining_by_group = [
+            [0 for _ in groups] for _ in range(len(signatures) + 1)
         ]
-        visited = {initial}
-        while pending:
-            _, _, relaxed_minimums = heapq.heappop(pending)
-            relaxed_groups = [
-                {**group, "minimum": minimum}
-                for group, minimum in zip(groups, relaxed_minimums, strict=True)
-            ]
-            solved = self._solve_quota_selection(
-                candidates,
-                relaxed_groups,
-                target_size,
+        suffix_rank_costs: list[tuple[int, ...]] = [()] * (len(signatures) + 1)
+        suffix_rank_costs[-1] = (0,)
+        suffix_positions: list[int] = []
+        for index in range(len(signatures) - 1, -1, -1):
+            remaining_total[index] = remaining_total[index + 1] + capacities[index]
+            remaining_by_group[index] = remaining_by_group[index + 1].copy()
+            for group_index, matches in enumerate(signatures[index]):
+                if matches:
+                    remaining_by_group[index][group_index] += capacities[index]
+            suffix_positions.extend(
+                rank_positions[id(candidate)]
+                for candidate in buckets[signatures[index]][: capacities[index]]
             )
-            if solved is not None:
-                return solved
-            for index, minimum in enumerate(relaxed_minimums):
-                if minimum <= 0:
+            suffix_positions.sort()
+            del suffix_positions[target_size:]
+            costs = [0]
+            for position in suffix_positions:
+                costs.append(costs[-1] + position)
+            suffix_rank_costs[index] = tuple(costs)
+
+        def deficit(counts: tuple[int, ...]) -> int:
+            return sum(
+                max(0, minimum - count)
+                for minimum, count in zip(minimums, counts, strict=True)
+            )
+
+        def deficit_lower_bound(
+            index: int,
+            counts: tuple[int, ...],
+            needed: int,
+        ) -> int:
+            current = tuple(
+                max(0, minimum - count)
+                for minimum, count in zip(minimums, counts, strict=True)
+            )
+            contributions = sorted(
+                (
+                    sum(
+                        matches and current[group_index] > 0
+                        for group_index, matches in enumerate(signature)
+                    )
+                    for signature, capacity in zip(
+                        signatures[index:],
+                        capacities[index:],
+                        strict=True,
+                    )
+                    for _ in range(capacity)
+                ),
+                reverse=True,
+            )
+            return max(0, sum(current) - sum(contributions[:needed]))
+
+        incumbent_counts = tuple(
+            sum(self._matches_group(candidate, group) for candidate in incumbent)
+            for group in groups
+        )
+        incumbent_positions = tuple(
+            sorted(rank_positions[id(candidate)] for candidate in incumbent)
+        )
+        best_key = (
+            deficit(incumbent_counts),
+            sum(incumbent_positions),
+            incumbent_positions,
+        )
+        initial_counts = tuple(0 for _ in groups)
+        if deficit_lower_bound(0, initial_counts, target_size) == best_key[0]:
+            return incumbent
+
+        best_solution: tuple[int, ...] | None = None
+        lowest_state_cost: dict[tuple[int, int, tuple[int, ...]], int] = {}
+        stack: list[tuple[int, int, tuple[int, ...], int, tuple[int, ...]]] = [
+            (0, 0, initial_counts, 0, ())
+        ]
+        while stack:
+            index, selected_total, counts, cost, used = stack.pop()
+            needed = target_size - selected_total
+            if needed < 0 or selected_total + remaining_total[index] < target_size:
+                continue
+            shortfall_bound = deficit_lower_bound(index, counts, needed)
+            if shortfall_bound > best_key[0]:
+                continue
+            if (
+                shortfall_bound == best_key[0]
+                and cost + suffix_rank_costs[index][needed] > best_key[1]
+            ):
+                continue
+            state = (index, selected_total, counts)
+            previous_cost = lowest_state_cost.get(state)
+            if previous_cost is not None and cost > previous_cost:
+                continue
+            if previous_cost is None or cost < previous_cost:
+                lowest_state_cost[state] = cost
+            if index == len(signatures):
+                if selected_total != target_size:
                     continue
-                neighbor = list(relaxed_minimums)
-                neighbor[index] -= 1
-                state = tuple(neighbor)
-                if state in visited:
-                    continue
-                visited.add(state)
-                shortfall = sum(
-                    required - value
-                    for required, value in zip(minimums, state, strict=True)
+                positions = tuple(
+                    sorted(
+                        rank_positions[id(candidate)]
+                        for signature, quantity in zip(
+                            signatures,
+                            used,
+                            strict=True,
+                        )
+                        for candidate in buckets[signature][:quantity]
+                    )
                 )
-                heapq.heappush(
-                    pending,
-                    (shortfall, tuple(-value for value in state), state),
+                key = (deficit(counts), sum(positions), positions)
+                if key < best_key:
+                    best_key = key
+                    best_solution = used
+                continue
+
+            signature = signatures[index]
+            minimum_quantity = max(
+                0,
+                target_size - selected_total - remaining_total[index + 1],
+            )
+            maximum_quantity = min(
+                capacities[index],
+                target_size - selected_total,
+            )
+            for matches, maximum, count in zip(
+                signature,
+                maximums,
+                counts,
+                strict=True,
+            ):
+                if matches and maximum is not None:
+                    maximum_quantity = min(maximum_quantity, maximum - count)
+            if minimum_quantity > maximum_quantity:
+                continue
+            preferred = min(
+                maximum_quantity,
+                max(minimum_quantity, preferred_quantities[index]),
+            )
+
+            children = []
+            for quantity in range(minimum_quantity, maximum_quantity + 1):
+                next_counts = tuple(
+                    min(bound, count + quantity * int(matches))
+                    for bound, count, matches in zip(
+                        bounds,
+                        counts,
+                        signature,
+                        strict=True,
+                    )
                 )
-        return None
+                remaining_needed = target_size - selected_total - quantity
+                child_shortfall = deficit_lower_bound(
+                    index + 1,
+                    next_counts,
+                    remaining_needed,
+                )
+                child = (
+                    index + 1,
+                    selected_total + quantity,
+                    next_counts,
+                    cost + prefix_costs[index][quantity],
+                    (*used, quantity),
+                )
+                order = (
+                    child_shortfall,
+                    prefix_costs[index][quantity]
+                    + suffix_rank_costs[index + 1][remaining_needed],
+                    abs(quantity - preferred),
+                    -quantity,
+                )
+                children.append((order, child))
+            children.sort(key=lambda item: item[0])
+            stack.extend(child for _, child in reversed(children))
+
+        if best_solution is None:
+            return incumbent
+        selected = [
+            candidate
+            for signature, quantity in zip(signatures, best_solution, strict=True)
+            for candidate in buckets[signature][:quantity]
+        ]
+        return tuple(sorted(selected, key=self._rank))
 
     @staticmethod
     def _is_recent(candidate: CandidateMetadata, start: date) -> bool:
