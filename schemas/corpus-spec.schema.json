@@ -35,6 +35,7 @@
               "kind": {"type": "string"},
               "short_name": {"type": "string"},
               "publisher": {"type": "string"},
+              "years": {"type": "array", "items": {"type": "integer"}},
               "issn": {"type": "array", "items": {"type": "string"}},
               "isbn": {"type": "array", "items": {"type": "string"}}
             }

@@ -60,10 +60,11 @@ def _clean_fragments(fragments: list[str], *, preserve_boundaries: bool = False)
 
 
 def _requested_venue(request: DiscoveryRequest, year: int) -> str:
-    if len(request.venues) == 1:
-        return request.venues[0].name
+    eligible = tuple(venue for venue in request.venues if venue.supports_year(year))
+    if len(eligible) == 1:
+        return eligible[0].name
     tokens = (str(year), str(year)[2:])
-    for venue in request.venues:
+    for venue in eligible or request.venues:
         if any(
             re.search(rf"(?<!\d){re.escape(token)}(?!\d)", value)
             for token in tokens
@@ -300,6 +301,10 @@ class AclAnthologyDiscoveryProvider:
         covered: list[str] = []
         coverage: list[CoverageSlice] = []
         for year in request.years:
+            if request.venues and not any(
+                venue.supports_year(year) for venue in request.venues
+            ):
+                continue
             if f"{_PROVIDER_ID}:{year}" in request.completed_slices:
                 continue
             event_url = self.event_template.format(year=year)

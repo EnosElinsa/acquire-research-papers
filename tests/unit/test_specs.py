@@ -96,3 +96,17 @@ def test_numbered_delivery_accepts_number_and_extension_tokens(tmp_path: Path) -
     spec = load_corpus_spec(path)
 
     assert spec["delivery"]["profile"] == "numbered"
+
+
+def test_corpus_spec_accepts_optional_venue_specific_years(tmp_path: Path) -> None:
+    path = tmp_path / "venue-years.yaml"
+    path.write_text(
+        "mode: corpus\nname: editions\ntarget:\n  minimum: 1\n  maximum: 2\n"
+        "scope:\n  venues:\n    - name: Conference 2025\n      years: [2025]\n"
+        "  years:\n    include: [2025, 2024]\n",
+        encoding="utf-8",
+    )
+
+    spec = load_corpus_spec(path)
+
+    assert spec["scope"]["venues"][0]["years"] == [2025]

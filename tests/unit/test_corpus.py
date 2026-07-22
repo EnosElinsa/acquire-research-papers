@@ -218,3 +218,23 @@ def test_missing_lexical_signal_does_not_fail_hard_gates() -> None:
 
     assert screened.hard_gates_passed
     assert screened.relevance_score < ScreeningGate().auto_threshold
+
+
+def test_venue_specific_year_is_a_hard_gate() -> None:
+    from acquire_research_papers.discovery.corpus import CorpusDiscoverer
+
+    spec = {
+        "scope": {
+            "venues": [
+                {"name": "Conference 2024", "years": [2024]},
+                {"name": "Conference 2025", "years": [2025]},
+            ],
+            "years": {"include": [2025, 2024]},
+        }
+    }
+    wrong_edition = replace(
+        candidate("wrong-edition", 2025, 0.0, venue="Conference 2024"),
+        publication_type="proceedings-article",
+    )
+
+    assert not CorpusDiscoverer._screen(wrong_edition, spec).hard_gates_passed

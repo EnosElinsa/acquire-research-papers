@@ -7,7 +7,7 @@ Use this reference for venue/topic/year/count collection tasks, including task f
 Create a `CorpusSpec` conforming to `schemas/corpus-spec.schema.json`. Capture:
 
 - minimum, preferred, and maximum totals;
-- exact venue names, aliases, type, and optional ISSN/ISBN;
+- exact venue names, aliases, type, optional venue-specific years, and optional ISSN/ISBN;
 - included and prioritized years;
 - included and excluded publication types or tracks;
 - positive topics, synonyms, and exclusion concepts;

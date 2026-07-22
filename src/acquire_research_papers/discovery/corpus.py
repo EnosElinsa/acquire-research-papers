@@ -245,12 +245,17 @@ class CorpusDiscoverer:
         scope = spec.get("scope", {})
         years = set(scope.get("years", {}).get("include", []))
         venue_records = scope.get("venues", [])
-        venue_names = {
-            _normalized(name)
+        normalized_venue = _normalized(candidate.venue)
+        matching_venues = [
+            record
             for record in venue_records
-            for name in [record.get("name", ""), *record.get("aliases", [])]
-            if name
-        }
+            if normalized_venue
+            in {
+                _normalized(name)
+                for name in [record.get("name", ""), *record.get("aliases", [])]
+                if name
+            }
+        ]
         publication_types = scope.get("publication_types", {})
         included_types = {_normalized(value) for value in publication_types.get("include", [])}
         excluded_types = {_normalized(value) for value in publication_types.get("exclude", [])}
@@ -269,7 +274,11 @@ class CorpusDiscoverer:
         publication_type = _normalized(candidate.publication_type or "")
         hard_gates = candidate.hard_gates_passed
         hard_gates &= not years or candidate.year in years
-        hard_gates &= not venue_names or _normalized(candidate.venue) in venue_names
+        hard_gates &= not venue_records or bool(matching_venues)
+        hard_gates &= not matching_venues or any(
+            not record.get("years") or candidate.year in set(record.get("years", ()))
+            for record in matching_venues
+        )
         hard_gates &= not included_types or publication_type in included_types
         hard_gates &= publication_type not in excluded_types
         hard_gates &= not prefilter.exclusion_signals

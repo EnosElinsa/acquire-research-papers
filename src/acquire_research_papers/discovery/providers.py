@@ -66,6 +66,8 @@ class CrossrefVenueDiscoveryProvider:
         page_size = max(1, min(self.page_size, 1000))
         for venue in request.venues:
             for year in request.years:
+                if not venue.supports_year(year):
+                    continue
                 slice_label = f"{self.provider_id}:{venue.name}:{year}"
                 if slice_label in request.completed_slices:
                     continue

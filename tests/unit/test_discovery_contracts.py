@@ -15,6 +15,7 @@ def test_discovery_request_preserves_generic_venue_scope() -> None:
                     {
                         "name": "Invented Proceedings",
                         "aliases": ["IP"],
+                        "years": [2026],
                         "kind": "conference",
                         "short_name": "IP",
                         "publisher": "Invented Society",
@@ -30,6 +31,9 @@ def test_discovery_request_preserves_generic_venue_scope() -> None:
     assert request.venues[0].all_names == ("Invented Proceedings", "IP")
     assert request.venues[0].short_name == "IP"
     assert request.venues[0].publisher == "Invented Society"
+    assert request.venues[0].years == (2026,)
+    assert request.venues[0].supports_year(2026)
+    assert not request.venues[0].supports_year(2025)
     assert request.queries == ("evolution", "genetic")
     assert request.maximum == 3
 

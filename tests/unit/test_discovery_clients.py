@@ -191,6 +191,34 @@ def test_crossref_provider_marks_network_failure_after_a_page_as_partial() -> No
     assert batch.diagnostics[0].retryable
 
 
+def test_crossref_provider_respects_venue_specific_year_scope() -> None:
+    request = DiscoveryRequest.from_spec(
+        {
+            "name": "year editions",
+            "target": {"minimum": 1, "maximum": 5},
+            "scope": {
+                "venues": [
+                    {"name": "Conference 2024", "years": [2024]},
+                    {"name": "Conference 2025", "years": [2025]},
+                ],
+                "years": {"include": [2025, 2024]},
+            },
+        }
+    )
+    calls: list[tuple[str, str]] = []
+
+    def searcher(query: str, **kwargs) -> CandidatePage:
+        calls.append((query, kwargs["filters"]["from-pub-date"]))
+        return CandidatePage(())
+
+    CrossrefVenueDiscoveryProvider(searcher=searcher).discover(request)
+
+    assert calls == [
+        ("Conference 2024", "2024-01-01"),
+        ("Conference 2025", "2025-01-01"),
+    ]
+
+
 def test_crossref_rate_limit_is_classified(fixture_server) -> None:
     fixture_server.server.expect_request("/works").respond_with_data("limited", status=429)
     client = CrossrefClient(client=fixture_server.client, endpoint=fixture_server.url("/works"))

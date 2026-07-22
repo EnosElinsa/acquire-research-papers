@@ -13,10 +13,14 @@ class VenueScope:
     isbn: tuple[str, ...] = ()
     short_name: str = ""
     publisher: str = ""
+    years: tuple[int, ...] = ()
 
     @property
     def all_names(self) -> tuple[str, ...]:
         return (self.name, *self.aliases)
+
+    def supports_year(self, year: int) -> bool:
+        return not self.years or year in self.years
 
 
 @dataclass(frozen=True)
@@ -70,6 +74,7 @@ class DiscoveryRequest:
                 isbn=tuple(str(value) for value in item.get("isbn", ())),
                 short_name=str(item.get("short_name", "")),
                 publisher=str(item.get("publisher", "")),
+                years=tuple(int(value) for value in item.get("years", ())),
             )
             for item in scope.get("venues", ())
         )
