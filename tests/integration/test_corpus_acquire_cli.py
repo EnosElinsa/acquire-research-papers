@@ -462,6 +462,21 @@ def test_acquire_corpus_rejects_unbound_reserved_artifacts(tmp_path: Path) -> No
     assert calls == []
 
 
+def test_acquire_corpus_rejects_disjoint_unbound_delivery_artifacts(
+    tmp_path: Path,
+) -> None:
+    selection = make_selection(tmp_path / "selection")
+    output = tmp_path / "delivery"
+    unrelated = output / "old-selection" / "paper.pdf"
+    unrelated.parent.mkdir(parents=True)
+    unrelated.write_bytes(b"unverified")
+
+    with pytest.raises(ValueError, match="unbound managed artifacts"):
+        CorpusAcquisitionWorkflow(acquirer=lambda *_: {}).run(
+            selection.manifest_path, output
+        )
+
+
 def test_acquire_corpus_rejects_a_corrupt_existing_ledger(tmp_path: Path) -> None:
     selection = make_selection(tmp_path / "selection")
     output = tmp_path / "delivery"

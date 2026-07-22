@@ -96,13 +96,15 @@ class CorpusPlanner:
         venues = {str(value).casefold() for value in group.get("venues", [])}
         years = set(group.get("years", []))
         publication_types = {
-            str(value).casefold() for value in group.get("publication_types", [])
+            _normalized_publication_type(str(value))
+            for value in group.get("publication_types", [])
         }
         return (not venues or candidate.venue.casefold() in venues) and (
             not years or candidate.year in years
         ) and (
             not publication_types
-            or (candidate.publication_type or "").casefold() in publication_types
+            or _normalized_publication_type(candidate.publication_type or "")
+            in publication_types
         )
 
     def _group_count(
@@ -178,13 +180,46 @@ class CorpusPlanner:
             selected_keys.add(candidate.key)
             return True
 
-        for group in groups:
-            required = int(group.get("minimum", 0))
-            for candidate in auto_pool:
-                if self._group_count(selected, group) >= required:
-                    break
-                if self._matches_group(candidate, group):
-                    add(candidate)
+        while len(selected) < goal:
+            unmet_groups = [
+                group
+                for group in groups
+                if self._group_count(selected, group)
+                < int(group.get("minimum", 0))
+            ]
+            if not unmet_groups:
+                break
+            feasible = [
+                candidate
+                for candidate in auto_pool
+                if candidate.key not in selected_keys
+                and self._can_add(selected, candidate)
+                and any(
+                    self._matches_group(candidate, group) for group in unmet_groups
+                )
+            ]
+            if not feasible:
+                break
+            availability = {
+                id(group): sum(
+                    self._matches_group(candidate, group) for candidate in feasible
+                )
+                for group in unmet_groups
+            }
+
+            def quota_rank(candidate: CandidateMetadata):
+                matched = [
+                    group
+                    for group in unmet_groups
+                    if self._matches_group(candidate, group)
+                ]
+                scarcity = sum(
+                    1.0 / max(1, availability[id(group)]) for group in matched
+                )
+                return (-len(matched), -scarcity, self._rank(candidate))
+
+            if not add(min(feasible, key=quota_rank)):
+                break
 
         recent_window = self.spec.get("quotas", {}).get("recent_window")
         recent_start: date | None = None
@@ -242,6 +277,13 @@ def _normalized(value: str) -> str:
     return " ".join(re.findall(r"\w+", value.casefold()))
 
 
+def _normalized_publication_type(value: str) -> str:
+    normalized = _normalized(value)
+    if normalized in {"full", "main"}:
+        return "proceedings article"
+    return normalized
+
+
 class CorpusDiscoverer:
     """Conservative lexical gating over one or more candidate-only clients."""
 
@@ -265,8 +307,14 @@ class CorpusDiscoverer:
             }
         ]
         publication_types = scope.get("publication_types", {})
-        included_types = {_normalized(value) for value in publication_types.get("include", [])}
-        excluded_types = {_normalized(value) for value in publication_types.get("exclude", [])}
+        included_types = {
+            _normalized_publication_type(value)
+            for value in publication_types.get("include", [])
+        }
+        excluded_types = {
+            _normalized_publication_type(value)
+            for value in publication_types.get("exclude", [])
+        }
         topics = scope.get("topics", {})
         include_terms = [*topics.get("include", []), *topics.get("synonyms", [])]
         prefilter = evaluate_prefilter(candidate, spec)
@@ -279,7 +327,7 @@ class CorpusDiscoverer:
         else:
             score = min(candidate.relevance_score, 0.64)
 
-        publication_type = _normalized(candidate.publication_type or "")
+        publication_type = _normalized_publication_type(candidate.publication_type or "")
         hard_gates = candidate.hard_gates_passed
         hard_gates &= not years or candidate.year in years
         hard_gates &= not venue_records or bool(matching_venues)
@@ -479,7 +527,7 @@ class CorpusDiscoveryWorkflow:
         else:
             resume_request = request.with_completed_slices(
                 completed_slices
-            ).with_seed_candidates(prior_candidates)
+            ).with_seed_candidates(prior_candidates).with_seed_coverage(prior_coverage)
             batch = self.discoverer(resume_request)
 
         merged: dict[str, CandidateMetadata] = {}

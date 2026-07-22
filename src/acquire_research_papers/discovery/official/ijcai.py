@@ -261,7 +261,7 @@ class IjcaiDiscoveryProvider:
             authors=document.metadata.authors,
             abstract=abstract,
             keywords=keywords,
-            publication_type="main",
+            publication_type="proceedings-article",
             track="Main Track",
             publication_date=publication_date,
             provenance={
@@ -409,6 +409,18 @@ class IjcaiDiscoveryProvider:
                     continue
                 detail_url = urljoin(index_url, href)
                 if detail_url in seen_urls:
+                    diagnostics.append(
+                        DiscoveryDiagnostic(
+                            provider_id=_PROVIDER_ID,
+                            phase="proceedings-index",
+                            error_code="page_contract_changed",
+                            message="IJCAI proceedings index repeats a paper detail URL",
+                            venue=requested_venue,
+                            year=year,
+                            url=index_url,
+                        )
+                    )
+                    slice_error_codes.append("page_contract_changed")
                     continue
                 seen_urls.add(detail_url)
                 detail_attempts += 1

@@ -149,6 +149,49 @@ def test_group_quota_can_match_publication_type() -> None:
     assert plan.quota_shortfalls == ()
 
 
+def test_overlapping_group_minima_choose_a_jointly_useful_candidate() -> None:
+    spec = {
+        "target": {"minimum": 3, "preferred": 3, "maximum": 3},
+        "quotas": {
+            "groups": [
+                {"name": "venue-x", "minimum": 1, "maximum": 1, "venues": ["X"]},
+                {
+                    "name": "journals",
+                    "minimum": 2,
+                    "publication_types": ["journal-article"],
+                },
+            ]
+        },
+    }
+    candidates = [
+        replace(
+            candidate("x-conference", 2026, 0.99, venue="X"),
+            publication_type="proceedings-article",
+        ),
+        replace(
+            candidate("x-journal", 2026, 0.98, venue="X"),
+            publication_type="journal-article",
+        ),
+        replace(
+            candidate("y-journal", 2026, 0.97, venue="Y"),
+            publication_type="journal-article",
+        ),
+        replace(
+            candidate("y-conference", 2026, 0.96, venue="Y"),
+            publication_type="proceedings-article",
+        ),
+    ]
+
+    plan = CorpusPlanner(spec).select(candidates)
+
+    assert {item.key for item in plan.auto_accepted} == {
+        "x-journal",
+        "y-journal",
+        "y-conference",
+    }
+    assert plan.quota_shortfalls == ()
+
+
 def test_recent_window_ratio_uses_publication_date() -> None:
     spec = {
         "target": {"minimum": 2, "preferred": 2, "maximum": 3},
@@ -274,3 +317,21 @@ def test_venue_specific_year_is_a_hard_gate() -> None:
     )
 
     assert not CorpusDiscoverer._screen(wrong_edition, spec).hard_gates_passed
+
+
+def test_official_track_type_aliases_match_canonical_proceedings_type() -> None:
+    from acquire_research_papers.discovery.corpus import CorpusDiscoverer
+
+    official = replace(
+        candidate("official", 2025, 0.0, venue="Conference"),
+        publication_type="proceedings-article",
+    )
+    for requested_type in ("proceedings-article", "full", "main"):
+        spec = {
+            "scope": {
+                "venues": [{"name": "Conference"}],
+                "years": {"include": [2025]},
+                "publication_types": {"include": [requested_type]},
+            }
+        }
+        assert CorpusDiscoverer._screen(official, spec).hard_gates_passed

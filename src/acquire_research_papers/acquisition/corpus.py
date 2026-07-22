@@ -146,6 +146,23 @@ def _has_unbound_managed_artifacts(
     )
     if any((destination / name).exists() for name in managed):
         return True
+    managed_endings = (
+        ".pdf",
+        ".bib",
+        ".provenance.json",
+        ".pdf.partial",
+        ".bib.partial",
+        ".json.partial",
+    )
+    if any(
+        path.is_file()
+        and (
+            path.name.casefold() == "provenance.json"
+            or path.name.casefold().endswith(managed_endings)
+        )
+        for path in destination.rglob("*")
+    ):
+        return True
     return any(
         path.exists()
         for record in records

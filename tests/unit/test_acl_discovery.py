@@ -53,7 +53,7 @@ def test_acl_provider_emits_all_requested_long_papers_before_topic_screening(
     assert candidate.abstract == "Multi-agent evolutionary collaboration."
     assert candidate.doi == "10.18653/v1/2025.acl-long.1"
     assert candidate.authors == ("Ada Lovelace", "Alan Turing")
-    assert candidate.publication_type == "full"
+    assert candidate.publication_type == "proceedings-article"
     assert candidate.track == "long"
     assert candidate.keywords == (
         "evolutionary computation",

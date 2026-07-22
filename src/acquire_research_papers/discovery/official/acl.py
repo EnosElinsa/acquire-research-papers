@@ -226,7 +226,7 @@ class AclAnthologyDiscoveryProvider:
             authors=authors,
             abstract=abstract,
             keywords=keywords,
-            publication_type="full",
+            publication_type="proceedings-article",
             track="long",
             provenance={"source": _PROVIDER_ID, "event_url": event_url},
             field_provenance=source_fields,

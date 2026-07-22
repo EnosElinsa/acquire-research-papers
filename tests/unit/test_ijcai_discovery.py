@@ -63,7 +63,7 @@ def test_ijcai_provider_fetches_every_main_track_detail_before_topic_screening(
     ]
     candidate = batch.candidates[0]
     assert candidate.track == "Main Track"
-    assert candidate.publication_type == "main"
+    assert candidate.publication_type == "proceedings-article"
     assert candidate.publication_date == "2025-08-01"
     assert "large language model" in candidate.abstract.casefold()
     assert candidate.keywords == (
@@ -85,6 +85,29 @@ def test_ijcai_provider_marks_malformed_index_record_as_partial(
         '<div class="paper_wrapper"><a href="/proceedings/2025/12">'
         "Evolutionary Optimization for Large Language Models</a></div>"
         '<div class="paper_wrapper"><div class="title">Missing Link</div></div>'
+    )
+    fixture_server.serve_text("/proceedings/2025/", index)
+    fixture_server.serve_text(
+        "/proceedings/2025/12", PAPER.read_text(encoding="utf-8")
+    )
+
+    batch = provider(fixture_server).discover(request())
+
+    assert len(batch.candidates) == 1
+    assert batch.coverage[0].state == "partial"
+    assert batch.coverage[0].records_recognized == 2
+    assert batch.coverage[0].records_fetched == 1
+    assert batch.diagnostics[0].error_code == "page_contract_changed"
+
+
+def test_ijcai_provider_marks_duplicate_detail_urls_as_partial(fixture_server) -> None:
+    index = (
+        "<h2>Main Track</h2>"
+        '<div class="paper_wrapper"><div class="title">'
+        "Evolutionary Optimization for Large Language Models</div>"
+        '<a href="/proceedings/2025/12">Details</a></div>'
+        '<div class="paper_wrapper"><div class="title">Duplicate Wrapper</div>'
+        '<a href="/proceedings/2025/12">Details</a></div>'
     )
     fixture_server.serve_text("/proceedings/2025/", index)
     fixture_server.serve_text(

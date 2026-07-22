@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from pathlib import Path
 
@@ -135,6 +136,25 @@ def test_selection_store_rejects_modified_jsonl(tmp_path: Path) -> None:
         SelectionStore.load(store.manifest_path)
 
 
+def test_selection_store_rejects_modified_embedded_spec(tmp_path: Path) -> None:
+    records = build_selection_records(
+        [candidate()],
+        venues=(
+            VenueScope(
+                "Invented Proceedings", short_name="IP", publisher="Invented Society"
+            ),
+        ),
+        delivery=numbered_delivery(),
+    )
+    store = SelectionStore.write(tmp_path, {"name": "test"}, records)
+    manifest = json.loads(store.manifest_path.read_text(encoding="utf-8"))
+    manifest["spec"]["name"] = "changed"
+    store.manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="specification SHA-256 mismatch"):
+        SelectionStore.load(store.manifest_path)
+
+
 def test_selection_ids_are_stable_across_discovery_keys() -> None:
     original = candidate()
     duplicate = replace(original, key="source-specific-key")
@@ -150,4 +170,3 @@ def test_selection_ids_are_stable_across_discovery_keys() -> None:
     )[0]
 
     assert first.selection_id == second.selection_id
-

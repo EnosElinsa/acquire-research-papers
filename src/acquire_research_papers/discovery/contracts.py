@@ -40,6 +40,7 @@ class DiscoveryRequest:
     maximum: int
     completed_slices: frozenset[str] = frozenset()
     seed_candidates: tuple[CandidateMetadata, ...] = ()
+    seed_coverage: tuple[CoverageSlice, ...] = ()
 
     @property
     def queries(self) -> tuple[str, ...]:
@@ -65,6 +66,12 @@ class DiscoveryRequest:
         values: tuple[CandidateMetadata, ...],
     ) -> DiscoveryRequest:
         return replace(self, seed_candidates=values)
+
+    def with_seed_coverage(
+        self,
+        values: tuple[CoverageSlice, ...],
+    ) -> DiscoveryRequest:
+        return replace(self, seed_coverage=values)
 
     @classmethod
     def from_spec(cls, spec: dict[str, Any]) -> DiscoveryRequest:

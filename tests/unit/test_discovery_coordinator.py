@@ -9,7 +9,10 @@ from acquire_research_papers.discovery.contracts import (
     DiscoveryCapabilities,
     DiscoveryRequest,
 )
-from acquire_research_papers.discovery.coordinator import DiscoveryCoordinator
+from acquire_research_papers.discovery.coordinator import (
+    DiscoveryCoordinator,
+    merge_candidates,
+)
 from acquire_research_papers.discovery.providers import (
     DoiBatchEnrichmentProvider,
     QueryApiProvider,
@@ -101,6 +104,26 @@ def test_coordinator_merges_official_abstract_into_api_identity() -> None:
     }
 
 
+def test_candidate_merge_deduplicates_identical_source_records() -> None:
+    item = CandidateMetadata(
+        "same",
+        "Same Paper",
+        2026,
+        "Venue A",
+        0.8,
+        True,
+        ("title", "abstract"),
+        doi="10.1000/same",
+        abstract="Evidence",
+        provenance={"source": "crossref", "record_id": "same"},
+        source_records=({"source": "crossref", "record_id": "same"},),
+    )
+
+    merged = merge_candidates(item, item)
+
+    assert merged.source_records == ({"source": "crossref", "record_id": "same"},)
+
+
 def test_coordinator_records_one_provider_failure_and_continues() -> None:
     class BrokenProvider(FakeProvider):
         def discover(self, request: DiscoveryRequest) -> DiscoveryBatch:
@@ -159,6 +182,31 @@ def test_coordinator_routes_official_venue_years_away_from_generic_enumerator() 
     assert official.received is not None
     assert [venue.name for venue in official.received.venues] == ["Venue A"]
     assert official.received.years == (2026,)
+    assert generic.received is not None
+    assert [(venue.name, venue.years) for venue in generic.received.venues] == [
+        ("Venue A", (2025,)),
+        ("Venue B", (2026, 2025)),
+    ]
+
+
+def test_coordinator_preserves_official_routing_from_seed_coverage() -> None:
+    official = FakeProvider(
+        "official-a",
+        DiscoveryBatch(),
+        venue_aliases=frozenset({"VA"}),
+        supported_years=frozenset({2026}),
+    )
+    generic = FakeProvider(
+        "generic",
+        DiscoveryBatch(),
+        source_class="venue_enumerator",
+    )
+    resumed = request().with_seed_coverage(
+        (CoverageSlice("official-a", "Venue A", 2026, "complete"),)
+    )
+
+    DiscoveryCoordinator([generic, official]).discover(resumed)
+
     assert generic.received is not None
     assert [(venue.name, venue.years) for venue in generic.received.venues] == [
         ("Venue A", (2025,)),
@@ -452,6 +500,28 @@ def test_coordinator_enriches_seed_candidates_when_enumeration_is_checkpointed()
 
     assert looked_up == ["10.1000/seed"]
     assert batch.candidates[0].abstract == "Recovered abstract"
+
+
+def test_coordinator_does_not_return_an_unchanged_seed_candidate() -> None:
+    seed = CandidateMetadata(
+        "seed",
+        "Already Known",
+        2026,
+        "Venue A",
+        0.8,
+        True,
+        ("title", "abstract", "venue"),
+        doi="10.1000/seed",
+        abstract="Complete abstract",
+        provenance={"source": "crossref"},
+        source_records=({"source": "crossref", "record_id": "seed"},),
+    )
+
+    batch = DiscoveryCoordinator(
+        [FakeProvider("crossref", DiscoveryBatch())]
+    ).discover(request().with_seed_candidates((seed,)))
+
+    assert batch.candidates == ()
 
 
 def test_doi_enricher_does_not_checkpoint_a_partially_failed_batch() -> None:

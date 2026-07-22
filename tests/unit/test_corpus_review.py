@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from acquire_research_papers.artifacts import sha256_bytes
 from acquire_research_papers.discovery.contracts import (
     CandidateMetadata,
     CoverageSlice,
@@ -390,6 +391,33 @@ def test_cached_review_revalidates_the_frozen_selection(tmp_path: Path) -> None:
     workflow = CorpusReviewWorkflow()
     result = workflow.run(run, decisions)
     result.selected_path.write_text("{}\n", encoding="utf-8")
+
+    with pytest.raises(ReviewValidationError, match="frozen selection"):
+        workflow.run(run, decisions)
+
+
+def test_cached_review_rejects_selection_and_manifest_rewritten_together(
+    tmp_path: Path,
+) -> None:
+    run = create_run(
+        tmp_path / "run",
+        (candidate("one", "Conference"),),
+        corpus_spec(minimum=1, preferred=1),
+    )
+    packet = next(iter(packets(run).values()))
+    decisions = write_decisions(tmp_path / "decisions.jsonl", [decision(packet)])
+    workflow = CorpusReviewWorkflow()
+    result = workflow.run(run, decisions)
+    replacement = b""
+    result.selected_path.write_bytes(replacement)
+    selection_manifest = json.loads(
+        result.selection_manifest_path.read_text(encoding="utf-8")
+    )
+    selection_manifest["selected_sha256"] = sha256_bytes(replacement)
+    selection_manifest["selected_count"] = 0
+    result.selection_manifest_path.write_text(
+        json.dumps(selection_manifest), encoding="utf-8"
+    )
 
     with pytest.raises(ReviewValidationError, match="frozen selection"):
         workflow.run(run, decisions)

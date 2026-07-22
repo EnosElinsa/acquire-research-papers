@@ -72,6 +72,17 @@ def _source_records(candidate: CandidateMetadata) -> tuple[dict[str, object], ..
     return ()
 
 
+def _merged_source_records(
+    previous: CandidateMetadata,
+    current: CandidateMetadata,
+) -> tuple[dict[str, object], ...]:
+    records: list[dict[str, object]] = []
+    for record in (*_source_records(previous), *_source_records(current)):
+        if record not in records:
+            records.append(record)
+    return tuple(records)
+
+
 def merge_candidates(
     previous: CandidateMetadata | None,
     current: CandidateMetadata,
@@ -123,7 +134,7 @@ def merge_candidates(
         citation_count=max(previous.citation_count, current.citation_count),
         provenance=(current.provenance if _is_official(current) else previous.provenance),
         field_provenance=field_provenance,
-        source_records=(*_source_records(previous), *_source_records(current)),
+        source_records=_merged_source_records(previous, current),
     )
 
 
@@ -138,10 +149,11 @@ class DiscoveryCoordinator:
         self.enrichers = tuple(enrichers)
 
     def discover(self, request: DiscoveryRequest) -> DiscoveryBatch:
-        merged: dict[str, CandidateMetadata] = {
+        seed_by_identity: dict[str, CandidateMetadata] = {
             candidate_identity(candidate): candidate
             for candidate in request.seed_candidates
         }
+        merged = dict(seed_by_identity)
         diagnostics: list[DiscoveryDiagnostic] = []
         covered: list[str] = []
         coverage: list[CoverageSlice] = []
@@ -155,14 +167,27 @@ class DiscoveryCoordinator:
                 key=lambda item: (priority.get(item[1][1].source_class, 2), item[0]),
             )
         )
-        official_complete: set[tuple[str, int]] = set()
-
         def requested_name(coverage_venue: str) -> str | None:
             normalized = coverage_venue.casefold()
             for venue in request.venues:
                 if normalized in {name.casefold() for name in venue.all_names}:
                     return venue.name
             return None
+
+        official_provider_ids = {
+            capability.provider_id
+            for _, capability in configured
+            if capability.source_class == "official_index"
+        }
+        official_complete: set[tuple[str, int]] = set()
+        for item in request.seed_coverage:
+            venue_name = requested_name(item.venue)
+            if (
+                item.provider_id in official_provider_ids
+                and item.state == "complete"
+                and venue_name is not None
+            ):
+                official_complete.add((venue_name, item.year))
 
         for _, (provider, capability) in ordered:
             if capability.source_class == "venue_enumerator" and request.venues:
@@ -315,7 +340,11 @@ class DiscoveryCoordinator:
                         )
                     )
         return DiscoveryBatch(
-            candidates=tuple(merged.values()),
+            candidates=tuple(
+                candidate
+                for identity, candidate in merged.items()
+                if seed_by_identity.get(identity) != candidate
+            ),
             diagnostics=tuple(diagnostics),
             covered_slices=tuple(dict.fromkeys(covered)),
             coverage=tuple(coverage),

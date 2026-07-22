@@ -167,6 +167,7 @@ class CorpusReviewWorkflow:
         root: Path,
         decision_sha256: str,
         discovery_manifest_sha256: str,
+        request_sha256: str,
     ) -> CorpusReviewResult | None:
         manifest_path = root / "review-manifest.json"
         if not manifest_path.is_file():
@@ -183,12 +184,26 @@ class CorpusReviewWorkflow:
             raise ReviewValidationError(
                 "review discovery lineage changed; start a new discovery run"
             )
+        selection_manifest_path = root / "selection-manifest.json"
         try:
-            selection = SelectionStore.load(root / "selection-manifest.json")
-        except ValueError as exc:
+            if sha256_file(selection_manifest_path) != manifest.get(
+                "selection_manifest_sha256"
+            ):
+                raise ValueError("selection manifest hash mismatch")
+            selection = SelectionStore.load(selection_manifest_path)
+        except (OSError, ValueError) as exc:
             raise ReviewValidationError(
                 "existing frozen selection failed validation"
             ) from exc
+        if (
+            selection.manifest.get("selected_sha256")
+            != manifest.get("selected_sha256")
+            or selection.manifest.get("spec_sha256") != request_sha256
+            or len(selection.records) != int(manifest.get("selected", -1))
+        ):
+            raise ReviewValidationError(
+                "existing frozen selection failed validation"
+            )
         return CorpusReviewResult(
             status=str(manifest["status"]),
             reviewed_path=root / str(manifest["reviewed_candidates"]),
@@ -255,6 +270,7 @@ class CorpusReviewWorkflow:
             root,
             decision_sha256,
             discovery_manifest_sha256,
+            request_sha256,
         )
         if existing is not None:
             return existing
@@ -429,6 +445,8 @@ class CorpusReviewWorkflow:
             "status": status,
             "decision_sha256": decision_sha256,
             "discovery_manifest_sha256": discovery_manifest_sha256,
+            "selection_manifest_sha256": sha256_file(selection.manifest_path),
+            "selected_sha256": selection.manifest["selected_sha256"],
             "accepted": accepted,
             "rejected": rejected,
             "pending": pending,
