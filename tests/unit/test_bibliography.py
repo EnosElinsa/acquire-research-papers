@@ -34,6 +34,29 @@ def test_official_bibtex_matches_metadata_and_preserves_raw() -> None:
     assert parsed.key == "verified2026"
 
 
+def test_title_verification_ignores_inline_markup_from_discovery_metadata() -> None:
+    metadata = PaperMetadata(
+        title=(
+            "Fast High-Diversity Subset Selection for Multiobjective Optimization "
+            "by Riesz <italic>s</italic>-Energy"
+        ),
+        authors=("Ada Lovelace",),
+        year=2025,
+        venue="IEEE Transactions on Evolutionary Computation",
+        doi="10.1109/tevc.2025.3570938",
+        publisher="IEEE",
+        landing_url="https://ieeexplore.ieee.org/document/11006112",
+    )
+    raw = (
+        "@article{k,title={Fast High-Diversity Subset Selection for Multiobjective "
+        "Optimization by Riesz s-Energy},author={Lovelace, Ada},year={2025},"
+        "journal={IEEE Transactions on Evolutionary Computation},"
+        "doi={10.1109/tevc.2025.3570938}}"
+    )
+
+    verify_bibliography(metadata, parse_bibtex(raw))
+
+
 def test_empty_bibtex_is_blocking() -> None:
     with pytest.raises(BibMissing):
         parse_bibtex("")

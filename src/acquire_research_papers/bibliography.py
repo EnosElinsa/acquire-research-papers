@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -29,7 +30,8 @@ class ParsedBibliography:
 
 
 def _normalized_text(value: str) -> str:
-    normalized = unicodedata.normalize("NFKC", value).casefold()
+    plain_text = html.unescape(re.sub(r"<[^>]*>", " ", value))
+    normalized = unicodedata.normalize("NFKC", plain_text).casefold()
     return " ".join(re.findall(r"\w+", normalized))
 
 

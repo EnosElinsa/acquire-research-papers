@@ -47,14 +47,22 @@ class FakeResponse {
 }
 
 class FakeRequestContext {
-  constructor({ pdfResponses = [], bibtex = "@article{k,title={A Synthetic IEEE Paper}}" } = {}) {
+  constructor({
+    pdfResponses = [],
+    pdfError = null,
+    citationError = null,
+    bibtex = "@article{k,title={A Synthetic IEEE Paper}}",
+  } = {}) {
     this.pdfResponses = [...pdfResponses];
+    this.pdfError = pdfError;
+    this.citationError = citationError;
     this.bibtex = bibtex;
     this.calls = [];
   }
 
   async get(url, options) {
     this.calls.push({ method: "GET", url, options });
+    if (this.pdfError) throw this.pdfError;
     const response = this.pdfResponses.shift();
     if (!response) throw new Error("Unexpected PDF request");
     return response;
@@ -62,6 +70,7 @@ class FakeRequestContext {
 
   async post(url, options) {
     this.calls.push({ method: "POST", url, options });
+    if (this.citationError) throw this.citationError;
     return new FakeResponse(JSON.stringify({ data: this.bibtex }), {
       contentType: "application/json",
     });
@@ -79,6 +88,10 @@ class FakeLocator {
     if (this.key === "pdf-primary") return 1;
     if (this.key === "iframe") {
       if (this.page.stampVisits <= this.page.missingPdfFrameVisits) return 0;
+      return this.page.currentUrl.includes("/stamp/stamp.jsp") ? 1 : 0;
+    }
+    if (this.key === "iframe-missing") return 0;
+    if (this.key === "iframe-direct") {
       return this.page.currentUrl.includes("/stamp/stamp.jsp") ? 1 : 0;
     }
     if (this.key === "institution") return this.page.institutionReady ? 1 : 0;
@@ -106,12 +119,16 @@ class FakeLocator {
 
   async getAttribute(name) {
     if (this.key === "pdf-primary" && name === "href") {
-      return "/stamp/stamp.jsp?tp=&arnumber=11014597";
+      return this.page.pdfStampHref;
     }
     if (this.key === "iframe" && name === "src") {
-      return "/stampPDF/getPDF.jsp?tp=&arnumber=11014597&ref=synthetic";
+      return this.page.pdfFrameSrc || "/stampPDF/getPDF.jsp?tp=&arnumber=11014597&ref=synthetic";
     }
-    if (this.key === "title-result" && name === "href") return "/document/11014597";
+    if (this.key === "iframe-direct" && name === "src") {
+      return this.page.pdfFrameSrc
+        || "/ielx8/4235/11466352/11014597.pdf?tp=&arnumber=11014597&ref=synthetic";
+    }
+    if (this.key === "title-result" && name === "href") return this.page.titleResultHref;
     return null;
   }
 
@@ -198,6 +215,12 @@ class FakePage {
     resourceGatewayRequiresLogin = true,
     resourceGatewayPortalVisits = 0,
     resourceGatewayNavigationFailures = 0,
+    directPdfFrame = false,
+    pdfStampHref = "/stamp/stamp.jsp?tp=&arnumber=11014597",
+    pdfFrameSrc = "",
+    canonicalUrl = "https://ieeexplore.ieee.org/document/11014597",
+    paperLandingUrl = "",
+    titleResultHref = "/document/11014597",
     xplMetadata = {},
   } = {}) {
     this.currentUrl = "about:blank";
@@ -225,6 +248,12 @@ class FakePage {
     this.resourceGatewayRequiresLogin = resourceGatewayRequiresLogin;
     this.resourceGatewayPortalVisits = resourceGatewayPortalVisits;
     this.resourceGatewayNavigationFailures = resourceGatewayNavigationFailures;
+    this.directPdfFrame = directPdfFrame;
+    this.pdfStampHref = pdfStampHref;
+    this.pdfFrameSrc = pdfFrameSrc;
+    this.canonicalUrl = canonicalUrl;
+    this.paperLandingUrl = paperLandingUrl;
+    this.titleResultHref = titleResultHref;
     this.resourceGatewayVisits = 0;
     this.attributeReleaseReady = false;
     this.attributeReleaseAccepted = false;
@@ -268,7 +297,9 @@ class FakePage {
           : "https://ds.carsi.edu.cn/ds/index.html";
       }
     } else {
-      this.currentUrl = url;
+      this.currentUrl = url.includes("/document/11014597") && this.paperLandingUrl
+        ? this.paperLandingUrl
+        : url;
     }
   }
 
@@ -310,8 +341,8 @@ class FakePage {
       },
       xpl: this.xplMetadata,
       h1Title: "A Synthetic IEEE Paper",
-      canonicalUrl: "https://ieeexplore.ieee.org/document/11014597",
-      locationUrl: "https://ieeexplore.ieee.org/document/11014597",
+      canonicalUrl: this.canonicalUrl,
+      locationUrl: this.currentUrl,
       userAgent: "Synthetic Chrome",
     };
   }
@@ -320,7 +351,15 @@ class FakePage {
     if (selector === "h1.document-title") return new FakeLocator(this, "document-title");
     if (selector === 'a[href*="/stamp/stamp.jsp"]') return new FakeLocator(this, "pdf");
     if (selector === 'a.xpl-btn-pdf[href*="/stamp/stamp.jsp"]') return new FakeLocator(this, "pdf-primary");
-    if (selector === 'iframe[src*="/stampPDF/getPDF.jsp"]') return new FakeLocator(this, "iframe");
+    if (selector === 'iframe[src*="/stampPDF/getPDF.jsp"]') {
+      return new FakeLocator(this, this.directPdfFrame ? "iframe-missing" : "iframe");
+    }
+    if (
+      selector.includes('iframe[src$=".pdf"]')
+      && selector.includes('iframe[src*=".pdf?"]')
+    ) {
+      return new FakeLocator(this, this.directPdfFrame ? "iframe-direct" : "iframe");
+    }
     if (selector === 'input[name="entityID"]') return new FakeLocator(this, "carsi-entity-id");
     if (selector === `button[name="${INSTITUTION_PROFILE.attributeReleaseAcceptControlName}"]`) {
       return new FakeLocator(this, "attribute-accept");
@@ -1113,6 +1152,59 @@ test("does not retry the PDF when the resource gateway fails to return to IEEE",
   }
 });
 
+test("reports a sanitized final PDF failure reason after successful institutional return", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "arp-ieee-pdf-diagnostic-"));
+  try {
+    await assert.rejects(
+      subject.retrieveIeeePaper({
+        page: new FakePage(),
+        browserContext: fakeContext({
+          pdfResponses: [
+            new FakeResponse("denied", { status: 403, contentType: "text/html" }),
+            new FakeResponse("denied", { status: 403, contentType: "text/html" }),
+            new FakeResponse("denied", { status: 403, contentType: "text/html" }),
+          ],
+        }),
+        reference: "https://ieeexplore.ieee.org/document/11014597",
+        workDir: root,
+        institutionProfile: INSTITUTION_PROFILE,
+        credentialReader: async () => ({ username: "user", password: "password" }),
+      }),
+      (error) => (
+        error?.phase === "download-after-auth"
+        && error.details?.lastPdfFailure?.reason === "http-status"
+        && error.details?.lastPdfFailure?.status === 403
+        && error.details?.lastPdfFailure?.contentType === "text/html"
+        && !JSON.stringify(error.details).includes("stampPDF")
+      ),
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("distinguishes a persistently missing IEEE PDF frame", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "arp-ieee-missing-frame-diagnostic-"));
+  try {
+    await assert.rejects(
+      subject.retrieveIeeePaper({
+        page: new FakePage({ missingPdfFrameVisits: 99 }),
+        browserContext: fakeContext(),
+        reference: "https://ieeexplore.ieee.org/document/11014597",
+        workDir: root,
+        institutionProfile: INSTITUTION_PROFILE,
+        credentialReader: async () => ({ username: "user", password: "password" }),
+      }),
+      (error) => (
+        error?.phase === "download-after-auth"
+        && error.details?.lastPdfFailure?.reason === "pdf-frame-unavailable"
+      ),
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("retries one transient metadata execution-context loss", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "arp-ieee-metadata-"));
   try {
@@ -1181,6 +1273,61 @@ test("redacts SAML query values from a real navigation failure payload", async (
   }
 });
 
+test("classifies an IEEE PDF request timeout as retryable publisher transport", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "arp-ieee-pdf-timeout-"));
+  try {
+    await assert.rejects(
+      subject.retrieveIeeePaper({
+        page: new FakePage(),
+        browserContext: fakeContext({
+          pdfError: Object.assign(new Error(
+            "apiRequestContext.get: Timeout 45000ms exceeded for "
+            + "https://ieeexplore.ieee.org/stampPDF/getPDF.jsp?token=SECRET",
+          ), { name: "TimeoutError" }),
+        }),
+        reference: "https://ieeexplore.ieee.org/document/11014597",
+        workDir: root,
+        credentialReader: async () => { throw new Error("credentials must not be read"); },
+      }),
+      (error) => (
+        error?.phase === "pdf-request-timeout"
+        && error.message === "IEEE PDF request timed out."
+        && !JSON.stringify(subject.toErrorPayload(error)).includes("SECRET")
+      ),
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("classifies an IEEE citation request timeout without leaking its URL", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "arp-ieee-citation-timeout-"));
+  try {
+    await assert.rejects(
+      subject.retrieveIeeePaper({
+        page: new FakePage(),
+        browserContext: fakeContext({
+          pdfResponses: [new FakeResponse("%PDF-1.7\ncitation timeout\n%%EOF\n")],
+          citationError: Object.assign(new Error(
+            "apiRequestContext.post: Timeout 45000ms exceeded for "
+            + "https://ieeexplore.ieee.org/rest/search/citation/format?token=SECRET",
+          ), { name: "TimeoutError" }),
+        }),
+        reference: "https://ieeexplore.ieee.org/document/11014597",
+        workDir: root,
+        credentialReader: async () => { throw new Error("credentials must not be read"); },
+      }),
+      (error) => (
+        error?.phase === "citation-request-timeout"
+        && error.message === "IEEE citation request timed out."
+        && !JSON.stringify(subject.toErrorPayload(error)).includes("SECRET")
+      ),
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("treats a missing pre-auth PDF iframe as an entitlement signal", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "arp-ieee-missing-frame-"));
   let reads = 0;
@@ -1202,6 +1349,111 @@ test("treats a missing pre-auth PDF iframe as an entitlement signal", async () =
     assert.equal(result.status, "downloaded");
     assert.equal(reads, 1);
     assert.equal(page.stampVisits, 2);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("downloads from an IEEE stamp page that embeds a direct PDF path", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "arp-ieee-direct-pdf-frame-"));
+  try {
+    const result = await subject.retrieveIeeePaper({
+      page: new FakePage({ directPdfFrame: true }),
+      browserContext: fakeContext({
+        pdfResponses: [new FakeResponse("%PDF-1.7\ndirect iframe\n%%EOF\n")],
+      }),
+      reference: "https://ieeexplore.ieee.org/document/11014597",
+      workDir: root,
+      institutionProfile: INSTITUTION_PROFILE,
+      credentialReader: async () => ({ username: "user", password: "password" }),
+    });
+    assert.equal(result.status, "downloaded");
+    assert.match(result.pdfUrl, /\/ielx8\/.*\.pdf\?/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects same-host HTTP stamp and direct PDF URLs", async () => {
+  const cases = [
+    {
+      page: new FakePage({
+        pdfStampHref: "http://ieeexplore.ieee.org/stamp/stamp.jsp?token=SECRET",
+      }),
+      phase: "pdf-link",
+    },
+    {
+      page: new FakePage({
+        directPdfFrame: true,
+        pdfFrameSrc: "http://ieeexplore.ieee.org/ielx8/1/2/11014597.pdf?token=SECRET",
+      }),
+      phase: "pdf-frame",
+    },
+  ];
+  for (const [index, scenario] of cases.entries()) {
+    const root = await mkdtemp(path.join(os.tmpdir(), `arp-ieee-http-url-${index}-`));
+    try {
+      await assert.rejects(
+        subject.retrieveIeeePaper({
+          page: scenario.page,
+          browserContext: fakeContext({
+            pdfResponses: [new FakeResponse("%PDF-1.7\ninsecure\n%%EOF\n")],
+          }),
+          reference: "https://ieeexplore.ieee.org/document/11014597",
+          workDir: root,
+          credentialReader: async () => { throw new Error("credentials must not be read"); },
+        }),
+        (error) => (
+          error?.phase === scenario.phase
+          && !JSON.stringify(subject.toErrorPayload(error)).includes("SECRET")
+        ),
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test("ignores same-host HTTP canonical metadata", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "arp-ieee-http-canonical-"));
+  try {
+    const page = new FakePage({
+      canonicalUrl: "http://ieeexplore.ieee.org/document/11014597?token=SECRET",
+    });
+    const result = await subject.retrieveIeeePaper({
+      page,
+      browserContext: fakeContext({
+        pdfResponses: [new FakeResponse("%PDF-1.7\ncanonical fallback\n%%EOF\n")],
+      }),
+      reference: "https://ieeexplore.ieee.org/document/11014597",
+      workDir: root,
+      credentialReader: async () => { throw new Error("credentials must not be read"); },
+    });
+    assert.equal(result.status, "downloaded");
+    assert.equal(page.navigations.some((url) => url.startsWith("http://")), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects a same-host HTTP final paper landing", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "arp-ieee-http-landing-"));
+  try {
+    await assert.rejects(
+      subject.retrieveIeeePaper({
+        page: new FakePage({
+          paperLandingUrl: "http://ieeexplore.ieee.org/document/11014597?token=SECRET",
+        }),
+        browserContext: fakeContext(),
+        reference: "https://ieeexplore.ieee.org/document/11014597",
+        workDir: root,
+        credentialReader: async () => { throw new Error("credentials must not be read"); },
+      }),
+      (error) => (
+        error?.phase === "resolve-paper"
+        && !JSON.stringify(subject.toErrorPayload(error)).includes("SECRET")
+      ),
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }

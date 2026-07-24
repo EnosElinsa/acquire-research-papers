@@ -17,6 +17,7 @@ from acquire_research_papers.acquisition.base import (
 )
 from acquire_research_papers.artifacts import validate_pdf
 from acquire_research_papers.bibliography import BibMissing
+from acquire_research_papers.http import NetworkTransient
 from acquire_research_papers.models import PaperMetadata
 
 
@@ -128,7 +129,7 @@ class IeeeBridge:
             raise IeeeBridgeError("dependency-install", "integrity-pinned Playwright installation failed")
 
     @staticmethod
-    def _failure(stderr: str) -> IeeeBridgeError:
+    def _failure(stderr: str) -> RuntimeError:
         for line in reversed(stderr.splitlines()):
             try:
                 payload = json.loads(line)
@@ -136,6 +137,8 @@ class IeeeBridge:
                 continue
             phase = str(payload.get("phase") or "automation")
             message = str(payload.get("message") or "IEEE browser automation failed")
+            if phase in {"pdf-request-timeout", "citation-request-timeout"}:
+                return NetworkTransient(message)
             return IeeeBridgeError(phase, message)
         return IeeeBridgeError("automation", "IEEE browser automation failed")
 
@@ -143,16 +146,19 @@ class IeeeBridge:
         self._ensure_dependency()
         run_dir = self.work_root / f"ieee-{uuid.uuid4().hex}"
         run_dir.mkdir(parents=True, exist_ok=False)
-        process = subprocess.run(
-            self.command(reference, run_dir=run_dir),
-            check=False,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=self.timeout_seconds + 30,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
+        try:
+            process = subprocess.run(
+                self.command(reference, run_dir=run_dir),
+                check=False,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=self.timeout_seconds + 30,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise NetworkTransient("IEEE browser automation timed out.") from exc
         if process.returncode != 0:
             raise self._failure(process.stderr)
         lines = [line for line in process.stdout.splitlines() if line.strip()]
@@ -198,8 +204,12 @@ class IeeeXploreAdapter:
         self._pairs: dict[str, AcquiredPair] = {}
 
     def supports(self, landing_url: str) -> bool:
-        hostname = urlsplit(landing_url).hostname
-        return bool(hostname and hostname.casefold().rstrip(".") == IEEE_HOST)
+        parsed = urlsplit(landing_url)
+        return bool(
+            parsed.scheme == "https"
+            and parsed.hostname
+            and parsed.hostname.casefold() == IEEE_HOST
+        )
 
     @staticmethod
     def _require_ieee_url(value: str, label: str) -> None:

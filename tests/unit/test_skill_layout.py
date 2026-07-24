@@ -124,6 +124,18 @@ def test_repository_contains_no_built_in_institution_identity() -> None:
     assert not offenders
 
 
+def test_ieee_policy_covers_direct_pdf_frames_and_retryable_timeouts() -> None:
+    policy = (ROOT / "references/source-policies.md").read_text(encoding="utf-8")
+
+    for required in (
+        "direct `.pdf` iframe",
+        "exact `ieeexplore.ieee.org` hostname",
+        "retryable",
+        "query values",
+    ):
+        assert required in policy
+
+
 def test_release_version_is_synchronized_at_0_3_0() -> None:
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     package_init = (ROOT / "src/acquire_research_papers/__init__.py").read_text(

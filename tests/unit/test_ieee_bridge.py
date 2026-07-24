@@ -1,3 +1,4 @@
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,7 @@ from acquire_research_papers.acquisition.adapters.ieee import (
 )
 from acquire_research_papers.bibliography import BibMissing
 from acquire_research_papers.cli import build_parser
+from acquire_research_papers.http import NetworkTransient
 
 
 def bridge_result(*, bibtex: str | None = None) -> IeeeBridgeResult:
@@ -68,6 +70,38 @@ def test_ieee_bridge_uses_dedicated_runtime_paths(tmp_path: Path) -> None:
     assert manual_command[-2:] == ["--accept-attribute-release", "false"]
 
 
+def test_ieee_bridge_classifies_child_timeout_as_network_transient(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    bridge = IeeeBridge(
+        script=tmp_path / "ieee-playwright.mjs",
+        profile_root=tmp_path / "profiles" / "ieee",
+        dependency_root=tmp_path / "deps",
+        work_root=tmp_path / "runs",
+        secret_path=tmp_path / "secrets" / "secrets.clixml",
+        node_path="node",
+    )
+    monkeypatch.setattr(bridge, "_ensure_dependency", lambda: None)
+
+    def time_out(*args, **kwargs):
+        raise subprocess.TimeoutExpired(args[0], timeout=210)
+
+    monkeypatch.setattr(subprocess, "run", time_out)
+
+    with pytest.raises(NetworkTransient, match="timed out"):
+        bridge.retrieve("https://ieeexplore.ieee.org/document/1")
+
+
+def test_ieee_bridge_classifies_publisher_request_timeout_as_network_transient() -> None:
+    error = IeeeBridge._failure(
+        '{"status":"error","phase":"pdf-request-timeout",'
+        '"message":"IEEE PDF request timed out."}'
+    )
+
+    assert isinstance(error, NetworkTransient)
+
+
 def test_ieee_attribute_release_is_automatic_with_an_explicit_opt_out(tmp_path: Path) -> None:
     parser = build_parser()
     ordinary = parser.parse_args(
@@ -114,4 +148,5 @@ def test_ieee_adapter_requires_official_bibtex() -> None:
 def test_ieee_adapter_rejects_lookalike_hostname() -> None:
     adapter = IeeeXploreAdapter(StubBridge(bridge_result()))
     assert adapter.supports("https://ieeexplore.ieee.org/document/1")
+    assert not adapter.supports("http://ieeexplore.ieee.org/document/1")
     assert not adapter.supports("https://ieeexplore.ieee.org.evil.example/document/1")

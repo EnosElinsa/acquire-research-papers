@@ -19,7 +19,10 @@ export const SELECTORS = Object.freeze({
   documentTitle: "h1.document-title",
   pdfHref: 'a[href*="/stamp/stamp.jsp"]',
   pdfPrimaryHref: 'a.xpl-btn-pdf[href*="/stamp/stamp.jsp"]',
-  pdfFrame: 'iframe[src*="/stampPDF/getPDF.jsp"]',
+  pdfFrame: (
+    'iframe[src*="/stampPDF/getPDF.jsp"], '
+    + 'iframe[src$=".pdf"], iframe[src*=".pdf?"]'
+  ),
 });
 
 export class IeeeFlowError extends Error {
@@ -206,6 +209,22 @@ function hostnameOf(value, phase) {
   } catch {
     throw new IeeeFlowError(phase, "The browser returned an invalid URL.");
   }
+}
+
+function isExactIeeeHttps(value, phase) {
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new IeeeFlowError(phase, "The browser returned an invalid URL.");
+  }
+  return (
+    url.protocol === "https:"
+    && url.hostname.toLowerCase() === IEEE_HOST
+    && !url.port
+    && !url.username
+    && !url.password
+  );
 }
 
 export function sanitizeTransitionUrl(value) {
@@ -486,7 +505,7 @@ async function readPaperMetadata(page, timeoutMs) {
       metadata = null;
     }
     if (attempt === 2) break;
-    if (hostnameOf(page.url(), "paper-metadata") !== IEEE_HOST) {
+    if (!isExactIeeeHttps(page.url(), "paper-metadata")) {
       throw new IeeeFlowError("paper-metadata", "IEEE metadata navigation left the expected host.");
     }
     await waitForDocument(page, timeoutMs);
@@ -508,7 +527,7 @@ async function readPaperMetadata(page, timeoutMs) {
   const currentUrl = page.url();
   const canonicalCandidate = String(metadata.canonicalUrl ?? "").trim();
   const canonicalUrl = canonicalCandidate
-    && hostnameOf(canonicalCandidate, "paper-metadata") === IEEE_HOST
+    && isExactIeeeHttps(canonicalCandidate, "paper-metadata")
     ? canonicalCandidate
     : currentUrl;
   return {
@@ -548,26 +567,29 @@ async function resolvePaper(page, reference, timeoutMs) {
     const href = await result.getAttribute("href");
     if (!href) throw new IeeeFlowError("title-search-result", "The exact title result has no target URL.");
     const target = new URL(href, searchUrl);
-    if (target.hostname.toLowerCase() !== IEEE_HOST) {
+    if (!isExactIeeeHttps(target.href, "title-search-result")) {
       throw new IeeeFlowError("title-search-result", "The exact title result points outside IEEE Xplore.");
     }
     await navigateWithTransientRetry(page, target.href, timeoutMs, "paper-navigation");
   }
   await waitForDocument(page, timeoutMs);
   const hostname = hostnameOf(page.url(), "resolve-paper");
-  if (hostname !== IEEE_HOST) {
+  if (!isExactIeeeHttps(page.url(), "resolve-paper")) {
     throw new IeeeFlowError("resolve-paper", `Expected IEEE Xplore, received host ${hostname}.`);
   }
   return readPaperMetadata(page, timeoutMs);
 }
 
-async function resolvePdfUrls(page, paperUrl, timeoutMs, fallbackStampUrl = "") {
+async function resolvePdfUrls(page, paperUrl, timeoutMs, fallbackStampUrl = "", diagnostic) {
   let pdfLink = page.locator(SELECTORS.pdfHref);
   const count = await pdfLink.count();
   let href = "";
   if (count === 0) {
     href = fallbackStampUrl;
-    if (!href) return null;
+    if (!href) {
+      if (diagnostic) diagnostic.lastPdfFailure = { reason: "pdf-link-unavailable" };
+      return null;
+    }
   } else if (count > 1) {
     const primary = page.locator(SELECTORS.pdfPrimaryHref);
     const primaryCount = await primary.count();
@@ -579,26 +601,33 @@ async function resolvePdfUrls(page, paperUrl, timeoutMs, fallbackStampUrl = "") 
   if (!href) href = await pdfLink.getAttribute("href");
   if (!href) throw new IeeeFlowError("pdf-link", "The IEEE PDF action has no target URL.");
   const stampUrl = new URL(href, paperUrl);
-  if (stampUrl.hostname.toLowerCase() !== IEEE_HOST) {
+  if (!isExactIeeeHttps(stampUrl.href, "pdf-link")) {
     throw new IeeeFlowError("pdf-link", "The IEEE PDF action points outside IEEE Xplore.");
   }
   await navigateWithTransientRetry(page, stampUrl.href, timeoutMs, "pdf-frame");
   await waitForDocument(page, timeoutMs);
   const landed = new URL(page.url());
-  if (landed.hostname.toLowerCase() !== IEEE_HOST) {
+  if (!isExactIeeeHttps(landed.href, "pdf-frame")) {
     throw new IeeeFlowError("pdf-frame", "IEEE PDF navigation left the expected host.");
   }
-  if (!landed.pathname.startsWith("/stamp/") || landed.searchParams.has("denied")) return null;
+  if (!landed.pathname.startsWith("/stamp/") || landed.searchParams.has("denied")) {
+    if (diagnostic) diagnostic.lastPdfFailure = { reason: "pdf-navigation-denied" };
+    return null;
+  }
   const frame = page.locator(SELECTORS.pdfFrame);
   if (typeof frame.waitFor === "function") {
     try {
       await frame.waitFor({ state: "attached", timeout: Math.min(timeoutMs, 10_000) });
     } catch {
+      if (diagnostic) diagnostic.lastPdfFailure = { reason: "pdf-frame-unavailable" };
       return null;
     }
   }
   const frameCount = await frame.count();
-  if (frameCount === 0) return null;
+  if (frameCount === 0) {
+    if (diagnostic) diagnostic.lastPdfFailure = { reason: "pdf-frame-unavailable" };
+    return null;
+  }
   if (frameCount !== 1) {
     throw new IeeeFlowError(
       "pdf-frame",
@@ -609,7 +638,7 @@ async function resolvePdfUrls(page, paperUrl, timeoutMs, fallbackStampUrl = "") 
   const src = await frame.getAttribute("src");
   if (!src) throw new IeeeFlowError("pdf-frame", "The IEEE PDF frame has no source URL.");
   const pdfUrl = new URL(src, stampUrl.href);
-  if (pdfUrl.hostname.toLowerCase() !== IEEE_HOST) {
+  if (!isExactIeeeHttps(pdfUrl.href, "pdf-frame")) {
     throw new IeeeFlowError("pdf-frame", "The IEEE PDF frame points outside IEEE Xplore.");
   }
   return { stampUrl: stampUrl.href, pdfUrl: pdfUrl.href };
@@ -632,23 +661,59 @@ async function assertPdfFile(pdfPath) {
   }
 }
 
-async function tryFetchPdf({ page, browserContext, paper, workDir, timeoutMs }) {
+function isRequestTimeout(error) {
+  return (
+    error?.name === "TimeoutError"
+    || /Timeout \d+ms exceeded/iu.test(String(error?.message ?? error))
+  );
+}
+
+async function tryFetchPdf({ page, browserContext, paper, workDir, timeoutMs, diagnostic }) {
   await navigateWithTransientRetry(page, paper.url, timeoutMs, "paper-navigation");
   await waitForDocument(page, timeoutMs);
-  const urls = await resolvePdfUrls(page, paper.url, timeoutMs, paper.pdfStampUrl);
-  if (!urls) return null;
-  const response = await browserContext.request.get(urls.pdfUrl, {
-    failOnStatusCode: false,
-    maxRedirects: 0,
-    timeout: timeoutMs,
-    headers: {
-      accept: "application/pdf,application/octet-stream;q=0.9,*/*;q=0.8",
-      referer: urls.stampUrl,
-      ...(paper.userAgent ? { "user-agent": paper.userAgent } : {}),
-    },
-  });
+  const urls = await resolvePdfUrls(
+    page,
+    paper.url,
+    timeoutMs,
+    paper.pdfStampUrl,
+    diagnostic,
+  );
+  if (!urls) {
+    if (diagnostic && !diagnostic.lastPdfFailure) {
+      diagnostic.lastPdfFailure = { reason: "pdf-location-unavailable" };
+    }
+    return null;
+  }
+  let response;
+  try {
+    response = await browserContext.request.get(urls.pdfUrl, {
+      failOnStatusCode: false,
+      maxRedirects: 0,
+      timeout: timeoutMs,
+      headers: {
+        accept: "application/pdf,application/octet-stream;q=0.9,*/*;q=0.8",
+        referer: urls.stampUrl,
+        ...(paper.userAgent ? { "user-agent": paper.userAgent } : {}),
+      },
+    });
+  } catch (error) {
+    if (isRequestTimeout(error)) {
+      throw new IeeeFlowError("pdf-request-timeout", "IEEE PDF request timed out.");
+    }
+    throw error;
+  }
   const bytes = await response.body();
   if (!response.ok() || bytes.length < 5 || bytes.subarray(0, 5).toString("ascii") !== "%PDF-") {
+    if (diagnostic) {
+      diagnostic.lastPdfFailure = {
+        reason: response.ok() ? "non-pdf-response" : "http-status",
+        status: response.status(),
+        contentType: String(response.headers()["content-type"] ?? "")
+          .split(";", 1)[0]
+          .trim()
+          .toLowerCase(),
+      };
+    }
     return null;
   }
   await mkdir(workDir, { recursive: true });
@@ -666,21 +731,29 @@ async function tryFetchPdf({ page, browserContext, paper, workDir, timeoutMs }) 
 }
 
 async function exportOfficialBibtex({ browserContext, paper, timeoutMs }) {
-  const response = await browserContext.request.post(CITATION_URL, {
-    failOnStatusCode: false,
-    maxRedirects: 0,
-    timeout: timeoutMs,
-    headers: {
-      accept: "application/x-bibtex,text/plain;q=0.9,*/*;q=0.8",
-      referer: paper.url,
-      ...(paper.userAgent ? { "user-agent": paper.userAgent } : {}),
-    },
-    data: {
-      recordIds: [paper.articleNumber],
-      "download-format": "download-bibtex",
-      lite: true,
-    },
-  });
+  let response;
+  try {
+    response = await browserContext.request.post(CITATION_URL, {
+      failOnStatusCode: false,
+      maxRedirects: 0,
+      timeout: timeoutMs,
+      headers: {
+        accept: "application/x-bibtex,text/plain;q=0.9,*/*;q=0.8",
+        referer: paper.url,
+        ...(paper.userAgent ? { "user-agent": paper.userAgent } : {}),
+      },
+      data: {
+        recordIds: [paper.articleNumber],
+        "download-format": "download-bibtex",
+        lite: true,
+      },
+    });
+  } catch (error) {
+    if (isRequestTimeout(error)) {
+      throw new IeeeFlowError("citation-request-timeout", "IEEE citation request timed out.");
+    }
+    throw error;
+  }
   const raw = await response.text();
   let bibtex = "";
   try {
@@ -1158,6 +1231,7 @@ export async function retrieveIeeePaper(options) {
   const acceptAttributeRelease = options.acceptAttributeRelease !== false;
   const secretPath = options.secretPath ? path.resolve(String(options.secretPath)) : "";
   await mkdir(workDir, { recursive: true });
+  const pdfDiagnostic = { lastPdfFailure: null };
 
   const paper = await resolvePaper(
     options.page,
@@ -1170,6 +1244,7 @@ export async function retrieveIeeePaper(options) {
     paper,
     workDir,
     timeoutMs,
+    diagnostic: pdfDiagnostic,
   });
   if (!downloaded && (paper.isFreeDocument || paper.isOpenAccess)) {
     if (typeof options.page.waitForTimeout === "function") {
@@ -1181,6 +1256,7 @@ export async function retrieveIeeePaper(options) {
       paper,
       workDir,
       timeoutMs,
+      diagnostic: pdfDiagnostic,
     });
   }
   if (!downloaded) {
@@ -1237,6 +1313,7 @@ export async function retrieveIeeePaper(options) {
       paper,
       workDir,
       timeoutMs,
+      diagnostic: pdfDiagnostic,
     });
     if (!downloaded) {
       if (typeof options.page.waitForTimeout === "function") {
@@ -1248,6 +1325,7 @@ export async function retrieveIeeePaper(options) {
         paper,
         workDir,
         timeoutMs,
+        diagnostic: pdfDiagnostic,
       });
     }
   }
@@ -1255,6 +1333,7 @@ export async function retrieveIeeePaper(options) {
     throw new IeeeFlowError(
       "download-after-auth",
       "IEEE did not return a PDF after CARSI authentication; entitlement may not cover the item.",
+      { lastPdfFailure: pdfDiagnostic.lastPdfFailure },
     );
   }
   const bibtex = await exportOfficialBibtex({
