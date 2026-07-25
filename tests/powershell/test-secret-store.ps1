@@ -35,6 +35,9 @@ $ieeeRouteUpdatePath = Join-Path $root "scripts\update-ieee-institution-route.ps
 $mineruSetupPath = Join-Path $root "scripts\setup-mineru-token.ps1"
 $elsevierBridgePath = Join-Path $root "scripts\read-elsevier-api-key.ps1"
 $elsevierSetupPath = Join-Path $root "scripts\setup-elsevier-api-key.ps1"
+$discoveryBridgePath = Join-Path $root "scripts\read-discovery-api-key.ps1"
+$discoverySetupPath = Join-Path $root "scripts\setup-discovery-api-keys.ps1"
+$credentialStatusPath = Join-Path $root "scripts\credential-status.ps1"
 $mineruPath = Join-Path $root "scripts\read-mineru-token.ps1"
 $migrationPath = Join-Path $root "scripts\migrate-legacy-secrets.ps1"
 foreach ($required in @(
@@ -47,6 +50,9 @@ foreach ($required in @(
   $mineruSetupPath,
   $elsevierBridgePath,
   $elsevierSetupPath,
+  $discoveryBridgePath,
+  $discoverySetupPath,
+  $credentialStatusPath,
   $mineruPath,
   $migrationPath
 )) {
@@ -66,6 +72,8 @@ try {
   $token = New-TestSecureString "synthetic-token"
   $credential = [Management.Automation.PSCredential]::new("synthetic-user", $password)
   $elsevierKey = New-TestSecureString "synthetic-elsevier-key"
+  $semanticScholarKey = New-TestSecureString "synthetic-semantic-key"
+  $openAlexKey = New-TestSecureString "synthetic-openalex-key"
   $institution = [ordered]@{
     Organization = "Example University"
     CarsiSchoolPlaceholder = "Institution name"
@@ -124,12 +132,75 @@ try {
   Assert-Equal (ConvertFrom-AcquisitionSecureString $payload.Scopes.mineru.Token) "synthetic-token" "token"
 
   Set-ElsevierApiKey -ApiKey $elsevierKey -Path $secretPath
+  Set-DiscoveryApiKey -Provider "semantic_scholar" -ApiKey $semanticScholarKey -Path $secretPath
+  Set-DiscoveryApiKey -Provider "openalex" -ApiKey $openAlexKey -Path $secretPath
   $withElsevier = Import-AcquisitionSecrets -Path $secretPath
   $serialized = Get-Content -Raw -LiteralPath $secretPath
   Assert-True (-not $serialized.Contains("synthetic-elsevier-key")) "Elsevier key must stay encrypted"
   Assert-Equal $withElsevier.Scopes.ieee_institution.Credential.UserName "synthetic-user" "IEEE scope preserved after Elsevier update"
   Assert-Equal (ConvertFrom-AcquisitionSecureString $withElsevier.Scopes.mineru.Token) "synthetic-token" "MinerU scope preserved after Elsevier update"
   Assert-Equal (ConvertFrom-AcquisitionSecureString $withElsevier.Scopes.api_keys.elsevier) "synthetic-elsevier-key" "Elsevier API key"
+  Assert-Equal (ConvertFrom-AcquisitionSecureString $withElsevier.Scopes.api_keys.semantic_scholar) "synthetic-semantic-key" "Semantic Scholar API key"
+  Assert-Equal (ConvertFrom-AcquisitionSecureString $withElsevier.Scopes.api_keys.openalex) "synthetic-openalex-key" "OpenAlex API key"
+  Assert-Equal $withElsevier.Scopes.ieee_institution.Credential.UserName "synthetic-user" "IEEE scope preserved after discovery API updates"
+
+  foreach ($providerHost in @(
+    @("semantic_scholar", "api.semanticscholar.org", "synthetic-semantic-key"),
+    @("openalex", "api.openalex.org", "synthetic-openalex-key"),
+    @("elsevier", "api.elsevier.com", "synthetic-elsevier-key")
+  )) {
+    $released = & $discoveryBridgePath `
+      -Provider $providerHost[0] `
+      -ExpectedHost $providerHost[1] `
+      -SecretPath $secretPath
+    Assert-Equal $released $providerHost[2] "exact-host discovery API key release"
+  }
+  foreach ($rejected in @(
+    @("openalex", "api.openalex.org.evil.example"),
+    @("openalex", "API.OPENALEX.ORG."),
+    @("openalex", "https://api.openalex.org"),
+    @("openalex", "api.openalex.org:443"),
+    @("openalex", "api.openalex.org/works"),
+    @("openalex", "*.openalex.org"),
+    @("openalex", "api.semanticscholar.org")
+  )) {
+    Assert-Throws {
+      & $discoveryBridgePath `
+        -Provider $rejected[0] `
+        -ExpectedHost $rejected[1] `
+        -SecretPath $secretPath | Out-Null
+    } "discovery API host boundary: $($rejected[1])"
+  }
+
+  $statusJson = & $credentialStatusPath -SecretPath $secretPath
+  $status = $statusJson | ConvertFrom-Json
+  Assert-True $status.ieee "IEEE capability status"
+  Assert-True $status.mineru "MinerU capability status"
+  Assert-True $status.elsevier "Elsevier capability status"
+  Assert-True $status.semantic_scholar "Semantic Scholar capability status"
+  Assert-True $status.openalex "OpenAlex capability status"
+  foreach ($secret in @(
+    "synthetic-password",
+    "synthetic-token",
+    "synthetic-elsevier-key",
+    "synthetic-semantic-key",
+    "synthetic-openalex-key"
+  )) {
+    Assert-True (-not $statusJson.Contains($secret)) "credential status must not reveal $secret"
+  }
+  $statusScriptText = Get-Content -Raw -LiteralPath $credentialStatusPath
+  Assert-True (-not $statusScriptText.Contains("ConvertFrom-AcquisitionSecureString")) "credential status must not decrypt API keys"
+
+  $emptyStatusPath = Join-Path $tempRoot "missing\secrets.clixml"
+  $emptyStatus = (& $credentialStatusPath -SecretPath $emptyStatusPath) | ConvertFrom-Json
+  Assert-True (-not $emptyStatus.ieee) "missing IEEE status"
+  Assert-True (-not $emptyStatus.openalex) "missing OpenAlex status"
+  $missingValue = & $discoveryBridgePath `
+    -Provider "openalex" `
+    -ExpectedHost "api.openalex.org" `
+    -SecretPath $emptyStatusPath `
+    -AllowMissing
+  Assert-True ($null -eq $missingValue) "optional missing discovery API key"
 
   Assert-Throws {
     & $bridgePath -ExpectedHost "login.example.edu.evil.example" -SecretPath $secretPath | Out-Null
@@ -274,6 +345,9 @@ try {
         "Institution username" { "setup-user" }
         "Institution password" { "setup-password" }
         "MinerU API token" { "setup-token" }
+        "Semantic Scholar API key" { "setup-semantic-key" }
+        "OpenAlex API key" { "setup-openalex-key" }
+        "Elsevier API key" { "setup-elsevier-key" }
         default { "setup-value" }
       }
       return New-TestSecureString $value
@@ -300,6 +374,15 @@ try {
   Assert-Equal $updatedSetupPayload.Scopes.ieee_institution.Credential.UserName "setup-user" "route update preserves DPAPI credential"
   & $mineruSetupPath -Path $setupPath -Force | Out-Null
   Assert-Equal (ConvertFrom-AcquisitionSecureString (Import-AcquisitionSecrets -Path $setupPath).Scopes.mineru.Token) "setup-token" "interactive MinerU setup"
+  $discoverySetupOnlyPath = Join-Path $tempRoot "discovery-setup\secrets.clixml"
+  $discoverySetupOutput = & $discoverySetupPath `
+    -Provider @("semantic_scholar", "openalex") `
+    -Path $discoverySetupOnlyPath `
+    -Force
+  $discoverySetupPayload = Import-AcquisitionSecrets -Path $discoverySetupOnlyPath
+  Assert-Equal (ConvertFrom-AcquisitionSecureString $discoverySetupPayload.Scopes.api_keys.semantic_scholar) "setup-semantic-key" "interactive Semantic Scholar setup"
+  Assert-Equal (ConvertFrom-AcquisitionSecureString $discoverySetupPayload.Scopes.api_keys.openalex) "setup-openalex-key" "interactive OpenAlex setup"
+  Assert-True (($discoverySetupOutput -join "`n").Contains('"status":"stored"')) "interactive setup reports completion"
   Remove-Item Function:\global:Read-Host -ErrorAction SilentlyContinue
 
   Write-Output "PASS scoped DPAPI secret storage"
@@ -308,6 +391,8 @@ try {
   Write-Output "PASS standalone Elsevier API key setup"
   Write-Output "PASS legacy ciphertext migration"
   Write-Output "PASS independent interactive institution setup"
+  Write-Output "PASS provider-neutral discovery API scopes"
+  Write-Output "PASS capability-only credential status"
 }
 finally {
   if (Test-Path -LiteralPath $tempRoot) {

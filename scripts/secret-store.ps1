@@ -275,30 +275,46 @@ function Set-MineruToken(
   Save-AcquisitionSecretPayload -Payload $payload -Path $Path
 }
 
-function Set-ElsevierApiKey(
+function Get-DiscoveryApiProviderHost([string]$Provider) {
+  if ([string]::IsNullOrWhiteSpace($Provider)) {
+    throw "Discovery API provider is missing."
+  }
+  switch ($Provider.Trim().ToLowerInvariant()) {
+    "semantic_scholar" { return "api.semanticscholar.org" }
+    "openalex" { return "api.openalex.org" }
+    "elsevier" { return "api.elsevier.com" }
+    default { throw "Unsupported discovery API provider." }
+  }
+}
+
+function Set-DiscoveryApiKey(
+  [string]$Provider,
   [Security.SecureString]$ApiKey,
   [string]$Path = (Get-AcquisitionSecretPath)
 ) {
   if ($null -eq $ApiKey -or $ApiKey.Length -eq 0) {
-    throw "Elsevier API key is missing."
+    throw "Discovery API key is missing."
   }
-  if (Test-Path -LiteralPath $Path -PathType Leaf) {
-    $payload = Import-AcquisitionSecrets -Path $Path
-  }
-  else {
-    $payload = New-AcquisitionSecretPayload
-  }
+  [void](Get-DiscoveryApiProviderHost -Provider $Provider)
+  $name = $Provider.Trim().ToLowerInvariant()
+  $payload = Get-OrCreateAcquisitionSecretPayload -Path $Path
   if ($payload.Scopes.PSObject.Properties.Name -notcontains "api_keys") {
     $payload.Scopes | Add-Member -NotePropertyName api_keys -NotePropertyValue ([pscustomobject]@{})
   }
-  if ($payload.Scopes.api_keys.PSObject.Properties.Name -contains "elsevier") {
-    $payload.Scopes.api_keys.elsevier = $ApiKey
+  if ($payload.Scopes.api_keys.PSObject.Properties.Name -contains $name) {
+    $payload.Scopes.api_keys.$name = $ApiKey
   }
   else {
-    $payload.Scopes.api_keys |
-      Add-Member -NotePropertyName elsevier -NotePropertyValue $ApiKey
+    $payload.Scopes.api_keys | Add-Member -NotePropertyName $name -NotePropertyValue $ApiKey
   }
   Save-AcquisitionSecretPayload -Payload $payload -Path $Path
+}
+
+function Set-ElsevierApiKey(
+  [Security.SecureString]$ApiKey,
+  [string]$Path = (Get-AcquisitionSecretPath)
+) {
+  Set-DiscoveryApiKey -Provider "elsevier" -ApiKey $ApiKey -Path $Path
 }
 
 function Import-AcquisitionSecretPayload([string]$Path = (Get-AcquisitionSecretPath)) {
@@ -327,11 +343,13 @@ function Import-AcquisitionSecrets([string]$Path = (Get-AcquisitionSecretPath)) 
       throw "MinerU token scope is invalid."
     }
   }
-  if ($payload.Scopes.PSObject.Properties.Name -contains "api_keys" -and
-      $payload.Scopes.api_keys.PSObject.Properties.Name -contains "elsevier") {
-    if ($payload.Scopes.api_keys.elsevier -isnot [Security.SecureString] -or
-        $payload.Scopes.api_keys.elsevier.Length -eq 0) {
-      throw "Elsevier API key scope is invalid."
+  if ($payload.Scopes.PSObject.Properties.Name -contains "api_keys") {
+    foreach ($property in $payload.Scopes.api_keys.PSObject.Properties) {
+      [void](Get-DiscoveryApiProviderHost -Provider $property.Name)
+      if ($property.Value -isnot [Security.SecureString] -or
+          $property.Value.Length -eq 0) {
+        throw "Discovery API key scope is invalid."
+      }
     }
   }
   return $payload
