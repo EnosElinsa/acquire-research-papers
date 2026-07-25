@@ -353,6 +353,84 @@ def test_openalex_reconstructs_abstract_and_related_ids(fixture_server) -> None:
     assert page.next_cursor == "next-openalex"
 
 
+def test_openalex_batches_normalized_dois_without_key_provenance(fixture_server) -> None:
+    observed: dict[str, str] = {}
+
+    def handler(request):
+        observed.update(request.args)
+        assert request.args["api_key"] == "synthetic-key"
+        return Response(
+            json.dumps(
+                {
+                    "results": [
+                        {
+                            "id": "https://openalex.org/W1",
+                            "title": "First DOI",
+                            "publication_year": 2026,
+                            "doi": "https://doi.org/10.1000/one",
+                            "abstract_inverted_index": {"Recovered": [0], "one": [1]},
+                        },
+                        {
+                            "id": "https://openalex.org/W2",
+                            "title": "Second DOI",
+                            "publication_year": 2025,
+                            "doi": "https://doi.org/10.1000/two",
+                            "abstract_inverted_index": {"Recovered": [0], "two": [1]},
+                        },
+                    ]
+                }
+            ),
+            content_type="application/json",
+        )
+
+    fixture_server.server.expect_request("/works").respond_with_handler(handler)
+    client = OpenAlexClient(
+        client=SafeHttpClient(allowed_hosts={fixture_server.host}),
+        endpoint=fixture_server.url("/works"),
+        api_key="synthetic-key",
+    )
+
+    candidates = client.lookup_dois(
+        ["https://doi.org/10.1000/ONE", "10.1000/one", "10.1000/two"]
+    )
+
+    assert [candidate.doi for candidate in candidates] == ["10.1000/one", "10.1000/two"]
+    assert [candidate.abstract for candidate in candidates] == ["Recovered one", "Recovered two"]
+    assert observed["filter"] == (
+        "doi:https://doi.org/10.1000/one|https://doi.org/10.1000/two"
+    )
+    assert observed["per-page"] == "100"
+    serialized = json.dumps([candidate.provenance for candidate in candidates])
+    assert "synthetic-key" not in serialized
+    assert "?" not in candidates[0].provenance["query_url"]
+
+
+def test_openalex_doi_batch_rejects_more_than_one_hundred_unique_values() -> None:
+    client = OpenAlexClient(
+        client=SafeHttpClient(allowed_hosts={"api.openalex.org"}),
+        api_key="synthetic-key",
+    )
+
+    with pytest.raises(ValueError, match="100"):
+        client.lookup_dois([f"10.1000/{index}" for index in range(101)])
+
+
+def test_openalex_doi_failure_does_not_expose_key_or_signed_query(fixture_server) -> None:
+    fixture_server.server.expect_request("/works").respond_with_data("denied", status=403)
+    client = OpenAlexClient(
+        client=SafeHttpClient(allowed_hosts={fixture_server.host}, retries=0),
+        endpoint=fixture_server.url("/works"),
+        api_key="synthetic-key",
+    )
+
+    with pytest.raises(Exception) as caught:
+        client.lookup_dois(["10.1000/one"])
+    message = str(caught.value)
+    assert "synthetic-key" not in message
+    assert "filter=" not in message
+    assert "?" not in message
+
+
 def test_semantic_scholar_posts_positive_and_negative_seeds_without_logging_key(
     fixture_server,
 ) -> None:

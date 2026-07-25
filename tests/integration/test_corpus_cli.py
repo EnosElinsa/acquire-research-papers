@@ -217,3 +217,26 @@ def test_production_registry_uses_keyless_doi_enrichment() -> None:
     assert [enricher.capabilities().provider_id for enricher in enrichers] == [
         "semantic-scholar"
     ]
+
+
+def test_production_registry_adds_openalex_as_second_keyed_enricher() -> None:
+    enrichers = _production_discovery_enrichers(
+        environment={},
+        api_keys={"semantic_scholar": "semantic-key", "openalex": "openalex-key"},
+    )
+
+    assert [enricher.capabilities().provider_id for enricher in enrichers] == [
+        "semantic-scholar",
+        "openalex",
+    ]
+    assert enrichers[1].batch_size == 100
+
+
+def test_environment_key_is_an_explicit_compatibility_override() -> None:
+    enrichers = _production_discovery_enrichers(
+        environment={"OPENALEX_API_KEY": "environment-key"},
+        api_keys={"openalex": "dpapi-key"},
+    )
+
+    openalex_client = enrichers[1].lookup.__self__
+    assert openalex_client.api_key == "environment-key"

@@ -646,3 +646,56 @@ def test_doi_enricher_stops_after_explicit_rate_limit() -> None:
     assert calls == [["10.1000/a"], ["10.1000/b"]]
     assert batch.covered_slices == ()
     assert batch.diagnostics[0].error_code == "rate_limited"
+
+
+def test_coordinator_continues_to_openalex_after_semantic_scholar_rate_limit() -> None:
+    seed = CandidateMetadata(
+        "seed",
+        "Recoverable Paper",
+        2026,
+        "Venue A",
+        0.8,
+        True,
+        ("title", "venue"),
+        doi="10.1000/recoverable",
+        provenance={"source": "crossref"},
+    )
+    calls: list[tuple[str, list[str]]] = []
+
+    def semantic(dois: list[str]):
+        calls.append(("semantic-scholar", dois))
+        raise RateLimited(429, "https://api.semanticscholar.org/graph/v1/paper/batch")
+
+    def openalex(dois: list[str]):
+        calls.append(("openalex", dois))
+        return (
+            CandidateMetadata(
+                "W1",
+                "Recoverable Paper",
+                2026,
+                "Venue A",
+                0.5,
+                True,
+                ("title", "abstract", "venue"),
+                doi="10.1000/recoverable",
+                abstract="Recovered through OpenAlex",
+                provenance={"source": "openalex"},
+            ),
+        )
+
+    batch = DiscoveryCoordinator(
+        [FakeProvider("crossref", DiscoveryBatch((seed,)))],
+        enrichers=[
+            DoiBatchEnrichmentProvider("semantic-scholar", semantic),
+            DoiBatchEnrichmentProvider("openalex", openalex, batch_size=100),
+        ],
+    ).discover(request())
+
+    assert calls == [
+        ("semantic-scholar", ["10.1000/recoverable"]),
+        ("openalex", ["10.1000/recoverable"]),
+    ]
+    assert batch.candidates[0].abstract == "Recovered through OpenAlex"
+    assert [diagnostic.provider_id for diagnostic in batch.diagnostics] == [
+        "semantic-scholar"
+    ]

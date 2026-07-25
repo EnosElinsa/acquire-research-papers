@@ -4,7 +4,12 @@ from typing import Any
 from urllib.parse import urlencode
 
 from acquire_research_papers.discovery.contracts import CandidateMetadata, CandidatePage
-from acquire_research_papers.http import HttpStatusError, RateLimited, SafeHttpClient
+from acquire_research_papers.http import (
+    HttpStatusError,
+    NetworkTransient,
+    RateLimited,
+    SafeHttpClient,
+)
 from acquire_research_papers.models import normalize_doi
 
 
@@ -105,6 +110,8 @@ class OpenAlexClient:
             raise RateLimited(exc.status_code, self.endpoint) from exc
         except HttpStatusError as exc:
             raise DiscoveryUnavailable(f"OpenAlex request failed with HTTP {exc.status_code}") from exc
+        except NetworkTransient as exc:
+            raise NetworkTransient("OpenAlex request is temporarily unavailable") from exc
         candidates = tuple(
             self._candidate(item, self.endpoint) for item in payload.get("results") or []
         )
@@ -116,3 +123,46 @@ class OpenAlexClient:
 
     def corpus_searcher(self, query: str, rows: int) -> tuple[CandidateMetadata, ...]:
         return self.search(query, per_page=rows).candidates
+
+    def lookup_dois(self, dois: list[str]) -> tuple[CandidateMetadata, ...]:
+        normalized = list(
+            dict.fromkeys(
+                value
+                for doi in dois
+                if (value := normalize_doi(doi)) is not None
+            )
+        )
+        if not normalized:
+            return ()
+        if len(normalized) > 100:
+            raise ValueError("OpenAlex DOI lookup accepts at most 100 unique values.")
+        if not self.api_key:
+            raise DiscoveryUnavailable("OpenAlex API key is not configured")
+        parameters = {
+            "filter": "doi:"
+            + "|".join(f"https://doi.org/{doi}" for doi in normalized),
+            "per-page": "100",
+            "api_key": self.api_key,
+        }
+        query_url = f"{self.endpoint}?{urlencode(parameters)}"
+        try:
+            payload = self.client.get(query_url).json()
+        except RateLimited as exc:
+            raise RateLimited(exc.status_code, self.endpoint) from exc
+        except HttpStatusError as exc:
+            raise DiscoveryUnavailable(
+                f"OpenAlex request failed with HTTP {exc.status_code}"
+            ) from exc
+        except NetworkTransient as exc:
+            raise NetworkTransient("OpenAlex request is temporarily unavailable") from exc
+        results = payload.get("results") if isinstance(payload, dict) else None
+        if not isinstance(results, list):
+            return ()
+        by_doi: dict[str, CandidateMetadata] = {}
+        for item in results:
+            if not isinstance(item, dict):
+                continue
+            candidate = self._candidate(item, self.endpoint)
+            if candidate.doi:
+                by_doi.setdefault(normalize_doi(candidate.doi) or "", candidate)
+        return tuple(by_doi[doi] for doi in normalized if doi in by_doi)

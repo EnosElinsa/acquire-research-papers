@@ -62,6 +62,11 @@ from acquire_research_papers.discovery.providers import (
     QueryApiProvider,
 )
 from acquire_research_papers.discovery.semantic_scholar import SemanticScholarClient
+from acquire_research_papers.credentials import (
+    API_PROVIDER_HOSTS,
+    ApiKeyLoadError,
+    DpapiApiKeyProvider,
+)
 from acquire_research_papers.http import NetworkTransient, RateLimited, SafeHttpClient
 from acquire_research_papers.mineru import (
     DpapiMineruTokenProvider,
@@ -92,6 +97,8 @@ _RUNTIME_SCRIPT_NAMES = frozenset(
         "read-institution-profile.ps1",
         "read-mineru-token.ps1",
         "read-elsevier-api-key.ps1",
+        "read-discovery-api-key.ps1",
+        "credential-status.ps1",
         "secret-store.ps1",
     }
 )
@@ -133,6 +140,7 @@ def _production_discovery_providers(
     acl_client: SafeHttpClient,
     ijcai_client: SafeHttpClient,
     environment: Mapping[str, str] | None = None,
+    api_keys: Mapping[str, str] | None = None,
 ) -> list[DiscoveryProvider]:
     providers: list[DiscoveryProvider] = [
         CrossrefVenueDiscoveryProvider(crossref.search),
@@ -140,14 +148,21 @@ def _production_discovery_providers(
         IjcaiDiscoveryProvider(client=ijcai_client),
     ]
     configured = os.environ if environment is None else environment
-    openalex_key = configured.get("OPENALEX_API_KEY", "").strip()
+    stored = api_keys or {}
+    openalex_key = (
+        configured.get("OPENALEX_API_KEY", "").strip()
+        or stored.get("openalex", "").strip()
+    )
     if openalex_key:
         openalex = OpenAlexClient(
             client=SafeHttpClient(allowed_hosts={"api.openalex.org"}),
             api_key=openalex_key,
         )
         providers.append(QueryApiProvider("openalex", openalex.corpus_searcher))
-    semantic_key = configured.get("SEMANTIC_SCHOLAR_API_KEY", "").strip()
+    semantic_key = (
+        configured.get("SEMANTIC_SCHOLAR_API_KEY", "").strip()
+        or stored.get("semantic_scholar", "").strip()
+    )
     if semantic_key:
         semantic = SemanticScholarClient(
             client=SafeHttpClient(allowed_hosts={"api.semanticscholar.org"}),
@@ -162,19 +177,72 @@ def _production_discovery_providers(
 def _production_discovery_enrichers(
     *,
     environment: Mapping[str, str] | None = None,
+    api_keys: Mapping[str, str] | None = None,
 ) -> list[DiscoveryEnricher]:
     configured = os.environ if environment is None else environment
+    stored = api_keys or {}
+    semantic_key = (
+        configured.get("SEMANTIC_SCHOLAR_API_KEY", "").strip()
+        or stored.get("semantic_scholar", "").strip()
+    )
+    openalex_key = (
+        configured.get("OPENALEX_API_KEY", "").strip()
+        or stored.get("openalex", "").strip()
+    )
     semantic = SemanticScholarClient(
         client=SafeHttpClient(allowed_hosts={"api.semanticscholar.org"}),
-        api_key=configured.get("SEMANTIC_SCHOLAR_API_KEY", "").strip() or None,
+        api_key=semantic_key or None,
     )
-    return [
+    enrichers: list[DiscoveryEnricher] = [
         DoiBatchEnrichmentProvider(
             "semantic-scholar",
             semantic.lookup_dois,
             pause_seconds=1.0,
         )
     ]
+    if openalex_key:
+        openalex = OpenAlexClient(
+            client=SafeHttpClient(allowed_hosts={"api.openalex.org"}),
+            api_key=openalex_key,
+        )
+        enrichers.append(
+            DoiBatchEnrichmentProvider(
+                "openalex",
+                openalex.lookup_dois,
+                batch_size=100,
+                pause_seconds=0.1,
+            )
+        )
+    return enrichers
+
+
+def _load_optional_discovery_api_keys(
+    *,
+    script_root: Path,
+    secret_path: Path,
+    environment: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    configured = os.environ if environment is None else environment
+    overrides = {
+        "semantic_scholar": "SEMANTIC_SCHOLAR_API_KEY",
+        "openalex": "OPENALEX_API_KEY",
+    }
+    keys: dict[str, str] = {}
+    for provider, variable in overrides.items():
+        if configured.get(variable, "").strip():
+            continue
+        try:
+            value = DpapiApiKeyProvider(
+                provider=provider,
+                expected_host=API_PROVIDER_HOSTS[provider],
+                script=script_root / "read-discovery-api-key.ps1",
+                secret_path=secret_path,
+            ).optional()
+        except ApiKeyLoadError:
+            value = None
+        if value:
+            keys[provider] = value
+    return keys
 
 
 @dataclass
@@ -252,12 +320,19 @@ class Application:
         crossref = CrossrefClient(
             client=SafeHttpClient(allowed_hosts={"api.crossref.org"}),
         )
+        discovery_api_keys = _load_optional_discovery_api_keys(
+            script_root=script_root,
+            secret_path=paths.secrets / "secrets.clixml",
+        )
         discovery_providers = _production_discovery_providers(
             crossref=crossref,
             acl_client=acl.client,
             ijcai_client=ijcai.client,
+            api_keys=discovery_api_keys,
         )
-        discovery_enrichers = _production_discovery_enrichers()
+        discovery_enrichers = _production_discovery_enrichers(
+            api_keys=discovery_api_keys,
+        )
         mineru_runner = MineruCliRunner(
             token_provider=DpapiMineruTokenProvider(
                 script=script_root / "read-mineru-token.ps1",
@@ -266,7 +341,7 @@ class Application:
         )
         mineru_cache = MineruCache(paths.cache, runner=mineru_runner)
         elsevier_key = DpapiElsevierApiKeyProvider(
-            script=script_root / "read-elsevier-api-key.ps1",
+            script=script_root / "read-discovery-api-key.ps1",
             secret_path=paths.secrets / "secrets.clixml",
         )
         manual_handoff = ManualHandoffWorkflow(
