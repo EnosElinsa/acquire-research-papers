@@ -11,6 +11,7 @@ from typing import Any
 from urllib.parse import urlencode, urlsplit
 
 from acquire_research_papers.acquisition.base import SourceDocument
+from acquire_research_papers.credentials import ApiKeyLoadError, DpapiApiKeyProvider
 from acquire_research_papers.http import HttpStatusError, RateLimited, SafeHttpClient
 from acquire_research_papers.models import PaperMetadata, normalize_doi
 
@@ -44,43 +45,23 @@ class DpapiElsevierApiKeyProvider:
         process_runner: Callable[..., CompletedProcess[str]] = subprocess.run,
         timeout_seconds: int = 30,
     ) -> None:
-        self.script = script.resolve()
-        self.secret_path = secret_path.resolve()
-        self.process_runner = process_runner
-        self.timeout_seconds = timeout_seconds
+        self._provider = DpapiApiKeyProvider(
+            provider="elsevier",
+            expected_host=ELSEVIER_API_HOST,
+            script=script,
+            secret_path=secret_path,
+            process_runner=process_runner,
+            timeout_seconds=timeout_seconds,
+        )
 
     def __call__(self) -> str:
         try:
-            process = self.process_runner(
-                [
-                    "powershell",
-                    "-NoProfile",
-                    "-ExecutionPolicy",
-                    "Bypass",
-                    "-File",
-                    str(self.script),
-                    "-ExpectedHost",
-                    ELSEVIER_API_HOST,
-                    "-SecretPath",
-                    str(self.secret_path),
-                ],
-                check=False,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=self.timeout_seconds,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
-        except (OSError, subprocess.SubprocessError) as exc:
+            return self._provider()
+        except ApiKeyLoadError as exc:
             raise ElsevierApiError(
                 "api-key",
                 "Encrypted Elsevier API key could not be loaded.",
             ) from exc
-        lines = [line.strip() for line in process.stdout.splitlines() if line.strip()]
-        if process.returncode != 0 or len(lines) != 1:
-            raise ElsevierApiError("api-key", "Encrypted Elsevier API key could not be loaded.")
-        return lines[0]
 
 
 def _raise_search_access_error(error: HttpStatusError) -> None:

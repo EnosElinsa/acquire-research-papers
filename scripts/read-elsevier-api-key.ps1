@@ -1,10 +1,16 @@
 param(
   [Parameter(Mandatory)][string]$ExpectedHost,
-  [string]$SecretPath = ""
+  [string]$SecretPath = "",
+  [string]$Provider = "elsevier",
+  [switch]$AllowMissing
 )
 
 $ErrorActionPreference = "Stop"
+if ($Provider -cne "elsevier") {
+  throw "Unsupported discovery API provider."
+}
 & (Join-Path $PSScriptRoot "read-discovery-api-key.ps1") `
   -Provider "elsevier" `
   -ExpectedHost $ExpectedHost `
-  -SecretPath $SecretPath
+  -SecretPath $SecretPath `
+  -AllowMissing:$AllowMissing

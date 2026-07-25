@@ -31,6 +31,7 @@ def test_dpapi_provider_reads_one_key_for_exact_api_host(tmp_path: Path) -> None
     )
 
     assert provider() == "synthetic-key"
+    assert calls[0][calls[0].index("-Provider") + 1] == "elsevier"
     assert calls[0][calls[0].index("-ExpectedHost") + 1] == ELSEVIER_API_HOST
     assert "synthetic-key" not in calls[0]
 
