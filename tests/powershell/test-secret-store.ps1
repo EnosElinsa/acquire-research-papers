@@ -16,6 +16,15 @@ function Assert-Throws([scriptblock]$Action, [string]$Message) {
   if (-not $threw) { throw "ASSERT THROWS FAILED: $Message" }
 }
 
+function New-TestSecureString([string]$Value) {
+  $secure = [Security.SecureString]::new()
+  foreach ($character in $Value.ToCharArray()) {
+    $secure.AppendChar($character)
+  }
+  $secure.MakeReadOnly()
+  return $secure
+}
+
 $root = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..\..")).Path
 $storePath = Join-Path $root "scripts\secret-store.ps1"
 $bridgePath = Join-Path $root "scripts\read-browser-credential.ps1"
@@ -53,10 +62,10 @@ try {
   New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
   $localAppData = Join-Path $tempRoot "LocalAppData"
   $secretPath = Join-Path $localAppData "Codex\secrets\acquire-research-papers\secrets.clixml"
-  $password = ConvertTo-SecureString "synthetic-password" -AsPlainText -Force
-  $token = ConvertTo-SecureString "synthetic-token" -AsPlainText -Force
+  $password = New-TestSecureString "synthetic-password"
+  $token = New-TestSecureString "synthetic-token"
   $credential = [Management.Automation.PSCredential]::new("synthetic-user", $password)
-  $elsevierKey = ConvertTo-SecureString "synthetic-elsevier-key" -AsPlainText -Force
+  $elsevierKey = New-TestSecureString "synthetic-elsevier-key"
   $institution = [ordered]@{
     Organization = "Example University"
     CarsiSchoolPlaceholder = "Institution name"
@@ -267,7 +276,7 @@ try {
         "MinerU API token" { "setup-token" }
         default { "setup-value" }
       }
-      return ConvertTo-SecureString $value -AsPlainText -Force
+      return New-TestSecureString $value
     }
     return $setupValues[$Prompt]
   }

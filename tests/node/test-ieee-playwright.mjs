@@ -465,7 +465,9 @@ test("preserves Unicode across the PowerShell profile and credential bridges", a
     const setup = `
 $ErrorActionPreference = "Stop"
 . '${secretStore}'
-$password = ConvertTo-SecureString "测试密码" -AsPlainText -Force
+$password = [Security.SecureString]::new()
+foreach ($character in "测试密码".ToCharArray()) { $password.AppendChar($character) }
+$password.MakeReadOnly()
 $credential = [Management.Automation.PSCredential]::new("测试用户", $password)
 $institution = [pscustomobject]@{
   Organization = "测试大学"
