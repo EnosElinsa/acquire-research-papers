@@ -17,10 +17,15 @@ if (Test-Path -LiteralPath $SecretPath -PathType Leaf) {
   $payload = Import-AcquisitionSecretPayload -Path $SecretPath
   if ($payload.Scopes.PSObject.Properties.Name -contains "ieee_institution") {
     $scope = $payload.Scopes.ieee_institution
-    $status.ieee = (
-      $null -ne $scope.Profile -and
-      $scope.Credential -is [Management.Automation.PSCredential]
-    )
+    if ($scope.Credential -is [Management.Automation.PSCredential]) {
+      try {
+        ConvertTo-IeeeInstitutionProfile -Institution $scope.Profile | Out-Null
+        $status.ieee = $true
+      }
+      catch {
+        $status.ieee = $false
+      }
+    }
   }
   if ($payload.Scopes.PSObject.Properties.Name -contains "mineru") {
     $status.mineru = (

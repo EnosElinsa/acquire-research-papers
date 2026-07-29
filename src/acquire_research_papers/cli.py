@@ -233,15 +233,12 @@ def _load_optional_discovery_api_keys(
     for provider, variable in overrides.items():
         if configured.get(variable, "").strip():
             continue
-        try:
-            value = DpapiApiKeyProvider(
-                provider=provider,
-                expected_host=API_PROVIDER_HOSTS[provider],
-                script=script_root / "read-discovery-api-key.ps1",
-                secret_path=secret_path,
-            ).optional()
-        except ApiKeyLoadError:
-            value = None
+        value = DpapiApiKeyProvider(
+            provider=provider,
+            expected_host=API_PROVIDER_HOSTS[provider],
+            script=script_root / "read-discovery-api-key.ps1",
+            secret_path=secret_path,
+        ).optional()
         if value:
             keys[provider] = value
     return keys
@@ -319,6 +316,7 @@ class Application:
         *,
         accept_ieee_attribute_release: bool = True,
         discovery_progress: Callable[[str, Mapping[str, object]], None] | None = None,
+        load_discovery_api_keys: bool = True,
     ) -> Application:
         paths = AppPaths.default()
         paths.create_directories()
@@ -341,9 +339,13 @@ class Application:
         crossref = CrossrefClient(
             client=SafeHttpClient(allowed_hosts={"api.crossref.org"}),
         )
-        discovery_api_keys = _load_optional_discovery_api_keys(
-            script_root=script_root,
-            secret_path=paths.secrets / "secrets.clixml",
+        discovery_api_keys = (
+            _load_optional_discovery_api_keys(
+                script_root=script_root,
+                secret_path=paths.secrets / "secrets.clixml",
+            )
+            if load_discovery_api_keys
+            else {}
         )
         discovery_providers = _production_discovery_providers(
             crossref=crossref,
@@ -385,6 +387,7 @@ class Application:
                     enrichers=discovery_enrichers,
                     progress=discovery_progress,
                 ).discover,
+                progress=discovery_progress,
             ),
             corpus_acquisition=None,
             research_workflow=ResearchWorkflow(
@@ -836,12 +839,26 @@ def run_cli(
     discovery_progress = (
         _stderr_discovery_progress if bool(getattr(args, "progress", False)) else None
     )
-    app = application or Application.default(
-        accept_ieee_attribute_release=bool(
-            getattr(args, "accept_ieee_attribute_release", True)
-        ),
-        discovery_progress=discovery_progress,
-    )
+    try:
+        app = application or Application.default(
+            accept_ieee_attribute_release=bool(
+                getattr(args, "accept_ieee_attribute_release", True)
+            ),
+            discovery_progress=discovery_progress,
+            load_discovery_api_keys=(
+                args.command == "discover"
+                and getattr(args, "discover_mode", None) == "corpus"
+            ),
+        )
+    except ApiKeyLoadError as exc:
+        _emit(
+            {
+                "status": "error",
+                "error_code": "configuration_error",
+                "message": str(exc),
+            }
+        )
+        return 78
     try:
         if args.command == "fetch":
             result = app.fetch(args.input, args.output)

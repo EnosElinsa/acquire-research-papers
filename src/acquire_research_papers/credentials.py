@@ -34,6 +34,32 @@ CAPABILITY_NAMES = (
 )
 
 
+def _run_powershell_bridge(
+    command: list[str],
+    *,
+    process_runner: Callable[..., CompletedProcess[str]],
+    timeout_seconds: int,
+    error_type: type[RuntimeError],
+    error_message: str,
+) -> list[str]:
+    try:
+        process = process_runner(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout_seconds,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except (OSError, subprocess.SubprocessError):
+        raise error_type(error_message) from None
+    if process.returncode != 0:
+        raise error_type(error_message)
+    return [line.strip() for line in process.stdout.splitlines() if line.strip()]
+
+
 class DpapiApiKeyProvider:
     def __init__(
         self,
@@ -75,21 +101,14 @@ class DpapiApiKeyProvider:
         ]
         if allow_missing:
             command.append("-AllowMissing")
-        try:
-            process = self.process_runner(
-                command,
-                check=False,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=self.timeout_seconds,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
-        except (OSError, subprocess.SubprocessError) as exc:
-            raise ApiKeyLoadError("Encrypted API key could not be loaded.") from exc
-        lines = [line.strip() for line in process.stdout.splitlines() if line.strip()]
-        if process.returncode != 0 or len(lines) > 1:
+        lines = _run_powershell_bridge(
+            command,
+            process_runner=self.process_runner,
+            timeout_seconds=self.timeout_seconds,
+            error_type=ApiKeyLoadError,
+            error_message="Encrypted API key could not be loaded.",
+        )
+        if len(lines) > 1:
             raise ApiKeyLoadError("Encrypted API key could not be loaded.")
         if not lines:
             if allow_missing:
@@ -132,26 +151,20 @@ class DpapiCredentialStatusProvider:
             "-SecretPath",
             str(self.secret_path),
         ]
-        try:
-            process = self.process_runner(
-                command,
-                check=False,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=self.timeout_seconds,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
-        except (OSError, subprocess.SubprocessError) as exc:
-            raise CredentialStatusError("Credential capability status is unavailable.") from exc
-        lines = [line.strip() for line in process.stdout.splitlines() if line.strip()]
-        if process.returncode != 0 or len(lines) != 1:
+        message = "Credential capability status is unavailable."
+        lines = _run_powershell_bridge(
+            command,
+            process_runner=self.process_runner,
+            timeout_seconds=self.timeout_seconds,
+            error_type=CredentialStatusError,
+            error_message=message,
+        )
+        if len(lines) != 1:
             raise CredentialStatusError("Credential capability status is unavailable.")
         try:
             payload = json.loads(lines[0])
-        except (json.JSONDecodeError, TypeError) as exc:
-            raise CredentialStatusError("Credential capability status is unavailable.") from exc
+        except (json.JSONDecodeError, TypeError):
+            raise CredentialStatusError(message) from None
         if (
             not isinstance(payload, dict)
             or set(payload) != set(CAPABILITY_NAMES)

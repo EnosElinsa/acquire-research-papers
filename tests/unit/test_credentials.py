@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import traceback
 from pathlib import Path
 
 import pytest
@@ -96,6 +97,13 @@ def test_bridge_wraps_process_failures_without_secret_text(tmp_path: Path, failu
     with pytest.raises(ApiKeyLoadError) as caught:
         provider.optional()
     assert "TOPSECRET" not in str(caught.value)
+    assert caught.value.__cause__ is None
+    formatted = "".join(
+        traceback.format_exception(
+            type(caught.value), caught.value, caught.value.__traceback__
+        )
+    )
+    assert "TOPSECRET" not in formatted
 
 
 def test_provider_host_mapping_is_closed(tmp_path: Path) -> None:
@@ -167,3 +175,24 @@ def test_status_provider_rejects_malformed_or_secret_shaped_output(
         provider()
     assert "TOPSECRET" not in str(caught.value)
     assert "token=" not in str(caught.value)
+
+
+def test_status_provider_suppresses_process_failure_context(tmp_path: Path) -> None:
+    def run(command, **kwargs):
+        raise OSError("token=TOPSECRET")
+
+    provider = DpapiCredentialStatusProvider(
+        script=tmp_path / "credential-status.ps1",
+        secret_path=tmp_path / "secrets.clixml",
+        process_runner=run,
+    )
+
+    with pytest.raises(CredentialStatusError) as caught:
+        provider()
+    assert caught.value.__cause__ is None
+    formatted = "".join(
+        traceback.format_exception(
+            type(caught.value), caught.value, caught.value.__traceback__
+        )
+    )
+    assert "TOPSECRET" not in formatted

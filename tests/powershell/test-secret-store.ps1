@@ -226,6 +226,8 @@ try {
   $incompletePayload = Import-Clixml -LiteralPath $secretPath
   $incompletePayload.Scopes.ieee_institution.Profile.PSObject.Properties.Remove("CarsiEntityId")
   Save-AcquisitionSecretPayload -Payload $incompletePayload -Path $incompletePath
+  $incompleteStatus = (& $credentialStatusPath -SecretPath $incompletePath) | ConvertFrom-Json
+  Assert-True (-not $incompleteStatus.ieee) "malformed IEEE profile must not report configured"
   $entityUpdate = & $ieeeEntityUpdatePath `
     -Path $incompletePath `
     -CarsiEntityId "https://login.example.edu/idp/shibboleth" | ConvertFrom-Json

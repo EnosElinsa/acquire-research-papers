@@ -122,6 +122,26 @@ def test_discovery_writes_evidence_artifacts_without_freezing_selection(
     )
 
 
+def test_workflow_progress_covers_validation_merge_and_artifact_writes(
+    tmp_path: Path,
+) -> None:
+    events: list[tuple[str, dict[str, object]]] = []
+    workflow = CorpusDiscoveryWorkflow(
+        discoverer=StaticDiscoverer(),
+        progress=lambda event, details: events.append((event, dict(details))),
+    )
+
+    workflow.run(spec(), tmp_path)
+
+    assert [event for event, _ in events] == [
+        "request_validated",
+        "candidates_merged",
+        "artifacts_written",
+    ]
+    assert events[1][1] == {"candidates": 2}
+    assert events[2][1] == {"candidates": 2, "diagnostics": 0}
+
+
 def test_complete_discovery_rerun_is_idempotent_and_keeps_evidence_hashes(
     tmp_path: Path,
 ) -> None:

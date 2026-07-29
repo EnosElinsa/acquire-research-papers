@@ -20,6 +20,8 @@ Authenticated browser adapters and API-key readers fail closed:
 
 - An IEEE credential may be released only when the current hostname exactly matches the identity-provider hostname in the current user's institution profile.
 - The Elsevier metadata API key may be released only to exact host `api.elsevier.com`.
+- The Semantic Scholar API key may be released only to exact host `api.semanticscholar.org`.
+- The OpenAlex API key may be released only to exact host `api.openalex.org`.
 - Publisher artifacts must remain on the exact hosts defined in [`references/source-policies.md`](references/source-policies.md).
 - CAPTCHA, OTP, an unexpected host, an incomplete login, or a metadata mismatch stops the run.
 

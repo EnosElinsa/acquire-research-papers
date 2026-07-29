@@ -17,6 +17,24 @@ class DiscoveryUnavailable(RuntimeError):
     """An optional metadata source cannot be used in the current configuration."""
 
 
+_WORK_SELECT = ",".join(
+    (
+        "id",
+        "title",
+        "publication_year",
+        "doi",
+        "primary_location",
+        "authorships",
+        "abstract_inverted_index",
+        "related_works",
+        "relevance_score",
+        "type",
+        "publication_date",
+        "cited_by_count",
+    )
+)
+
+
 def _abstract(index: dict[str, list[int]] | None) -> str:
     if not index:
         return ""
@@ -144,6 +162,7 @@ class OpenAlexClient:
             "filter": "doi:"
             + "|".join(f"https://doi.org/{doi}" for doi in normalized),
             "per-page": "100",
+            "select": _WORK_SELECT,
             "api_key": self.api_key,
         }
         query_url = f"{self.endpoint}?{urlencode(parameters)}"

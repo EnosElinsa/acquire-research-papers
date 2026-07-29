@@ -5,7 +5,7 @@ import io
 import json
 import math
 import re
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import asdict, dataclass, replace
 from datetime import date
 from pathlib import Path
@@ -925,8 +925,18 @@ class CorpusDiscoveryResult:
 class CorpusDiscoveryWorkflow:
     """Enumerate and prepare immutable evidence without freezing a selection."""
 
-    def __init__(self, *, discoverer: Callable[[DiscoveryRequest], DiscoveryBatch]) -> None:
+    def __init__(
+        self,
+        *,
+        discoverer: Callable[[DiscoveryRequest], DiscoveryBatch],
+        progress: Callable[[str, Mapping[str, object]], None] | None = None,
+    ) -> None:
         self.discoverer = discoverer
+        self.progress = progress
+
+    def _report(self, event: str, **details: object) -> None:
+        if self.progress is not None:
+            self.progress(event, details)
 
     @staticmethod
     def _write_jsonl(path: Path, records: Iterable[dict[str, Any]]) -> None:
@@ -1021,6 +1031,7 @@ class CorpusDiscoveryWorkflow:
             self._write_json(request_path, spec)
 
         request = DiscoveryRequest.from_spec(spec)
+        self._report("request_validated")
         candidates_path = destination / "candidates.jsonl"
         coverage_path = destination / "coverage.jsonl"
         diagnostics_path = destination / "discovery-errors.jsonl"
@@ -1084,6 +1095,7 @@ class CorpusDiscoveryWorkflow:
             safe = self._safe_candidate(candidate)
             identity = candidate_identity(safe)
             merged[identity] = merge_candidates(merged.get(identity), safe)
+        self._report("candidates_merged", candidates=len(merged))
 
         coverage_by_key = {
             self._coverage_key(item): item for item in prior_coverage
@@ -1301,6 +1313,11 @@ class CorpusDiscoveryWorkflow:
             "discovery_errors_file": diagnostics_path.name,
         }
         self._write_json(manifest_path, manifest)
+        self._report(
+            "artifacts_written",
+            candidates=len(candidate_records),
+            diagnostics=len(diagnostics),
+        )
         return CorpusDiscoveryResult(
             status=run_status,
             candidates_path=candidates_path,

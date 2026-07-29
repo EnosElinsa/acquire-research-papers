@@ -5,13 +5,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 
+import acquire_research_papers.cli as cli_module
+import pytest
 from acquire_research_papers.cli import (
     Application,
+    _load_optional_discovery_api_keys,
     _production_discovery_enrichers,
     _production_discovery_providers,
     run_cli,
 )
-from acquire_research_papers.credentials import CredentialStatusError
+from acquire_research_papers.credentials import ApiKeyLoadError, CredentialStatusError
 from acquire_research_papers.discovery.contracts import (
     CandidateMetadata,
     DiscoveryBatch,
@@ -241,6 +244,83 @@ def test_environment_key_is_an_explicit_compatibility_override() -> None:
 
     openalex_client = enrichers[1].lookup.__self__
     assert openalex_client.api_key == "environment-key"
+
+
+def test_invalid_dpapi_payload_is_not_silently_treated_as_missing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    class BrokenProvider:
+        def __init__(self, **kwargs):
+            pass
+
+        def optional(self):
+            raise ApiKeyLoadError("Encrypted API key could not be loaded.")
+
+    monkeypatch.setattr(cli_module, "DpapiApiKeyProvider", BrokenProvider)
+
+    with pytest.raises(ApiKeyLoadError, match="could not be loaded"):
+        _load_optional_discovery_api_keys(
+            script_root=tmp_path,
+            secret_path=tmp_path / "secrets.clixml",
+            environment={},
+        )
+
+
+def test_discovery_reports_sanitized_dpapi_configuration_failure(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    def default(cls, **kwargs):
+        assert kwargs["load_discovery_api_keys"] is True
+        raise ApiKeyLoadError("Encrypted API key could not be loaded.")
+
+    monkeypatch.setattr(Application, "default", classmethod(default))
+
+    assert run_cli(
+        [
+            "discover",
+            "corpus",
+            "--spec",
+            str(tmp_path / "spec.yaml"),
+            "--output",
+            str(tmp_path / "run"),
+        ]
+    ) == 78
+    assert json.loads(capsys.readouterr().out) == {
+        "status": "error",
+        "error_code": "configuration_error",
+        "message": "Encrypted API key could not be loaded.",
+    }
+
+
+def test_unrelated_command_does_not_load_discovery_api_keys(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    observed: dict[str, object] = {}
+
+    def default(cls, **kwargs):
+        observed.update(kwargs)
+        return SimpleNamespace(
+            fetch=lambda _reference, _output: SimpleNamespace(
+                status="complete",
+                pdf=tmp_path / "paper.pdf",
+                bibtex=tmp_path / "paper.bib",
+                provenance=tmp_path / "provenance.json",
+            )
+        )
+
+    monkeypatch.setattr(Application, "default", classmethod(default))
+
+    assert run_cli(
+        [
+            "fetch",
+            "--input",
+            "10.1000/example",
+            "--output",
+            str(tmp_path / "paper"),
+        ]
+    ) == 0
+    assert observed["load_discovery_api_keys"] is False
+    assert json.loads(capsys.readouterr().out)["status"] == "complete"
 
 
 def test_config_status_skips_application_construction(monkeypatch, capsys) -> None:

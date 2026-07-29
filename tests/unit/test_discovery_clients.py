@@ -401,6 +401,20 @@ def test_openalex_batches_normalized_dois_without_key_provenance(fixture_server)
         "doi:https://doi.org/10.1000/one|https://doi.org/10.1000/two"
     )
     assert observed["per-page"] == "100"
+    assert set(observed["select"].split(",")) == {
+        "id",
+        "title",
+        "publication_year",
+        "doi",
+        "primary_location",
+        "authorships",
+        "abstract_inverted_index",
+        "related_works",
+        "relevance_score",
+        "type",
+        "publication_date",
+        "cited_by_count",
+    }
     serialized = json.dumps([candidate.provenance for candidate in candidates])
     assert "synthetic-key" not in serialized
     assert "?" not in candidates[0].provenance["query_url"]
