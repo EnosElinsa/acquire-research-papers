@@ -14,6 +14,8 @@ def test_runtime_script_root_falls_back_to_wheel_bundled_scripts(tmp_path: Path)
         "read-institution-profile.ps1",
         "read-mineru-token.ps1",
         "read-elsevier-api-key.ps1",
+        "read-discovery-api-key.ps1",
+        "credential-status.ps1",
         "secret-store.ps1",
     ):
         (bundled / name).touch()

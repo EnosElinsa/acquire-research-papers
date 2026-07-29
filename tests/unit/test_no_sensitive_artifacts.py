@@ -23,12 +23,17 @@ def test_repository_contains_no_runtime_or_delivery_artifacts() -> None:
         ".venv",
         "browser-profiles",
         "downloads",
-        "docs",
         "runs",
     }
     tracked = tracked_files()
     assert not [path for path in tracked if Path(path).suffix.casefold() in forbidden_suffixes]
     assert not [path for path in tracked if forbidden_parts.intersection(Path(path).parts)]
+    approved_design_docs = {
+        "docs/superpowers/plans/2026-07-25-discovery-api-credentials-implementation.md",
+        "docs/superpowers/specs/2026-07-25-discovery-api-credentials-design.md",
+    }
+    tracked_docs = {path for path in tracked if "docs" in Path(path).parts}
+    assert tracked_docs <= approved_design_docs
 
 
 def test_skill_routes_all_three_modes_and_explicit_markdown_policy() -> None:
