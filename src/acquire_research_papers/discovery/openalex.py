@@ -107,11 +107,13 @@ class OpenAlexClient:
         try:
             payload = self.client.get(query_url).json()
         except RateLimited as exc:
-            raise RateLimited(exc.status_code, self.endpoint) from exc
+            raise RateLimited(exc.status_code, self.endpoint) from None
         except HttpStatusError as exc:
-            raise DiscoveryUnavailable(f"OpenAlex request failed with HTTP {exc.status_code}") from exc
-        except NetworkTransient as exc:
-            raise NetworkTransient("OpenAlex request is temporarily unavailable") from exc
+            raise DiscoveryUnavailable(
+                f"OpenAlex request failed with HTTP {exc.status_code}"
+            ) from None
+        except NetworkTransient:
+            raise NetworkTransient("OpenAlex request is temporarily unavailable") from None
         candidates = tuple(
             self._candidate(item, self.endpoint) for item in payload.get("results") or []
         )
@@ -148,13 +150,13 @@ class OpenAlexClient:
         try:
             payload = self.client.get(query_url).json()
         except RateLimited as exc:
-            raise RateLimited(exc.status_code, self.endpoint) from exc
+            raise RateLimited(exc.status_code, self.endpoint) from None
         except HttpStatusError as exc:
             raise DiscoveryUnavailable(
                 f"OpenAlex request failed with HTTP {exc.status_code}"
-            ) from exc
-        except NetworkTransient as exc:
-            raise NetworkTransient("OpenAlex request is temporarily unavailable") from exc
+            ) from None
+        except NetworkTransient:
+            raise NetworkTransient("OpenAlex request is temporarily unavailable") from None
         results = payload.get("results") if isinstance(payload, dict) else None
         if not isinstance(results, list):
             return ()

@@ -33,8 +33,15 @@ foreach ($requestedProvider in $Provider) {
   }
 
   $label = $labels[$name]
-  Write-Host "Configuring optional $label access. Input is hidden; press Enter once after pasting the key."
+  Write-Host "Configuring optional $label access. Input is hidden; paste the key and press Enter, or press Enter on an empty prompt to skip."
   $apiKey = Read-Host "$label API key" -AsSecureString
+  if ($null -eq $apiKey -or $apiKey.Length -eq 0) {
+    $status = if ($alreadyConfigured) { "unchanged" } else { "skipped" }
+    Write-Host "$label configuration was not changed."
+    [ordered]@{ status = $status; capability = $name } | ConvertTo-Json -Compress
+    $apiKey = $null
+    continue
+  }
   try {
     Set-DiscoveryApiKey -Provider $name -ApiKey $apiKey -Path $Path
     Write-Host "$label configuration stored in the local DPAPI secret file."

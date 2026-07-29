@@ -1,4 +1,5 @@
 import json
+import traceback
 from pathlib import Path
 
 import pytest
@@ -429,6 +430,14 @@ def test_openalex_doi_failure_does_not_expose_key_or_signed_query(fixture_server
     assert "synthetic-key" not in message
     assert "filter=" not in message
     assert "?" not in message
+    assert caught.value.__cause__ is None
+    formatted = "".join(
+        traceback.format_exception(
+            type(caught.value), caught.value, caught.value.__traceback__
+        )
+    )
+    assert "synthetic-key" not in formatted
+    assert "filter=" not in formatted
 
 
 def test_semantic_scholar_posts_positive_and_negative_seeds_without_logging_key(

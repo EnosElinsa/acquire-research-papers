@@ -383,6 +383,17 @@ try {
   Assert-Equal (ConvertFrom-AcquisitionSecureString $discoverySetupPayload.Scopes.api_keys.semantic_scholar) "setup-semantic-key" "interactive Semantic Scholar setup"
   Assert-Equal (ConvertFrom-AcquisitionSecureString $discoverySetupPayload.Scopes.api_keys.openalex) "setup-openalex-key" "interactive OpenAlex setup"
   Assert-True (($discoverySetupOutput -join "`n").Contains('"status":"stored"')) "interactive setup reports completion"
+  function global:Read-Host {
+    param([string]$Prompt, [switch]$AsSecureString)
+    if ($AsSecureString) { return New-TestSecureString "" }
+    return ""
+  }
+  $skippedSetupPath = Join-Path $tempRoot "discovery-skipped\secrets.clixml"
+  $skippedSetupOutput = & $discoverySetupPath `
+    -Provider "openalex" `
+    -Path $skippedSetupPath
+  Assert-True (($skippedSetupOutput -join "`n").Contains('"status":"skipped"')) "blank optional API key reports skipped"
+  Assert-True (-not (Test-Path -LiteralPath $skippedSetupPath)) "skipped optional API key must not create a secret file"
   Remove-Item Function:\global:Read-Host -ErrorAction SilentlyContinue
 
   Write-Output "PASS scoped DPAPI secret storage"
