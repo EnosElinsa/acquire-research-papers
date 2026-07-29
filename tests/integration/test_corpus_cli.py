@@ -25,6 +25,9 @@ from acquire_research_papers.discovery.contracts import (
 from acquire_research_papers.discovery.coordinator import DiscoveryCoordinator
 from acquire_research_papers.discovery.corpus import CorpusDiscoveryWorkflow
 from acquire_research_papers.discovery.providers import CrossrefVenueDiscoveryProvider
+from acquire_research_papers.discovery.semantic_scholar import (
+    SemanticScholarRequestPacer,
+)
 
 
 def test_discover_corpus_writes_review_evidence_without_acquiring(
@@ -234,6 +237,32 @@ def test_production_registry_adds_openalex_as_second_keyed_enricher() -> None:
         "openalex",
     ]
     assert enrichers[1].batch_size == 100
+
+
+def test_semantic_scholar_search_and_enrichment_share_one_request_pacer() -> None:
+    crossref = SimpleNamespace(search=lambda *_args, **_kwargs: None)
+    pacer = SemanticScholarRequestPacer(
+        minimum_interval_seconds=0,
+        sleeper=lambda _seconds: None,
+    )
+    providers = _production_discovery_providers(
+        crossref=crossref,
+        acl_client=None,
+        ijcai_client=None,
+        environment={},
+        api_keys={"semantic_scholar": "semantic-key"},
+        semantic_request_pacer=pacer,
+    )
+    enrichers = _production_discovery_enrichers(
+        environment={},
+        api_keys={"semantic_scholar": "semantic-key"},
+        semantic_request_pacer=pacer,
+    )
+
+    search_client = providers[-1].searcher.__self__
+    enrichment_client = enrichers[0].lookup.__self__
+    assert search_client.request_pacer is pacer
+    assert enrichment_client.request_pacer is pacer
 
 
 def test_environment_key_is_an_explicit_compatibility_override() -> None:

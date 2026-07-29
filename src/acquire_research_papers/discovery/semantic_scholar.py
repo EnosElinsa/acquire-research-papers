@@ -1,11 +1,42 @@
 from __future__ import annotations
 
+import threading
+import time
+from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlencode
 
 from acquire_research_papers.discovery.contracts import CandidateMetadata
-from acquire_research_papers.http import SafeHttpClient
+from acquire_research_papers.http import RateLimited, SafeHttpClient
 from acquire_research_papers.models import normalize_doi
+
+
+class SemanticScholarRequestPacer:
+    """Serialize requests against Semantic Scholar's cross-endpoint rate limit."""
+
+    def __init__(
+        self,
+        *,
+        minimum_interval_seconds: float = 1.1,
+        clock: Callable[[], float] = time.monotonic,
+        sleeper: Callable[[float], None] = time.sleep,
+    ) -> None:
+        self.minimum_interval_seconds = max(0.0, minimum_interval_seconds)
+        self.clock = clock
+        self.sleeper = sleeper
+        self._next_request_at = 0.0
+        self._lock = threading.Lock()
+
+    def wait(self) -> None:
+        with self._lock:
+            now = self.clock()
+            delay = self._next_request_at - now
+            if delay > 0:
+                self.sleeper(delay)
+                now = self.clock()
+            self._next_request_at = max(now, self._next_request_at) + (
+                self.minimum_interval_seconds
+            )
 
 
 class SemanticScholarClient:
@@ -17,12 +48,38 @@ class SemanticScholarClient:
         search_endpoint: str = "https://api.semanticscholar.org/graph/v1/paper/search",
         batch_endpoint: str = "https://api.semanticscholar.org/graph/v1/paper/batch",
         api_key: str | None = None,
+        request_pacer: SemanticScholarRequestPacer | None = None,
+        rate_limit_retries: int = 2,
+        rate_limit_backoff_seconds: float = 2.0,
+        sleeper: Callable[[float], None] = time.sleep,
     ) -> None:
         self.client = client
         self.endpoint = endpoint
         self.search_endpoint = search_endpoint
         self.batch_endpoint = batch_endpoint
         self.api_key = api_key
+        self.request_pacer = request_pacer or SemanticScholarRequestPacer(
+            sleeper=sleeper
+        )
+        self.rate_limit_retries = max(0, rate_limit_retries)
+        self.rate_limit_backoff_seconds = max(0.0, rate_limit_backoff_seconds)
+        self.sleeper = sleeper
+
+    def _request(
+        self,
+        operation: Callable[[], Any],
+        *,
+        endpoint: str,
+    ) -> Any:
+        for attempt in range(self.rate_limit_retries + 1):
+            self.request_pacer.wait()
+            try:
+                return operation()
+            except RateLimited:
+                if attempt == self.rate_limit_retries:
+                    raise RateLimited(429, endpoint) from None
+                self.sleeper(self.rate_limit_backoff_seconds * (2**attempt))
+        raise AssertionError("Semantic Scholar retry loop escaped its bound")
 
     @staticmethod
     def _candidate(item: dict[str, Any], query_url: str = "") -> CandidateMetadata:
@@ -80,7 +137,10 @@ class SemanticScholarClient:
             "positivePaperIds": positive_ids,
             "negativePaperIds": negative_ids or [],
         }
-        response = self.client.post_json(url, payload, headers=headers)
+        response = self._request(
+            lambda: self.client.post_json(url, payload, headers=headers),
+            endpoint=self.endpoint,
+        )
         return tuple(self._candidate(item) for item in response.json().get("recommendedPapers") or [])
 
     def corpus_searcher(self, query: str, rows: int) -> tuple[CandidateMetadata, ...]:
@@ -95,7 +155,10 @@ class SemanticScholarClient:
         }
         query_url = f"{self.search_endpoint}?{urlencode(parameters)}"
         headers = {"x-api-key": self.api_key} if self.api_key else None
-        payload = self.client.get(query_url, headers=headers).json()
+        payload = self._request(
+            lambda: self.client.get(query_url, headers=headers),
+            endpoint=self.search_endpoint,
+        ).json()
         return tuple(
             self._candidate(item, query_url) for item in payload.get("data") or ()
         )
@@ -109,10 +172,13 @@ class SemanticScholarClient:
         )
         url = f"{self.batch_endpoint}?{urlencode({'fields': fields})}"
         headers = {"x-api-key": self.api_key} if self.api_key else None
-        payload = self.client.post_json(
-            url,
-            {"ids": [f"DOI:{normalize_doi(doi)}" for doi in dois]},
-            headers=headers,
+        payload = self._request(
+            lambda: self.client.post_json(
+                url,
+                {"ids": [f"DOI:{normalize_doi(doi)}" for doi in dois]},
+                headers=headers,
+            ),
+            endpoint=self.batch_endpoint,
         ).json()
         if not isinstance(payload, list):
             return ()

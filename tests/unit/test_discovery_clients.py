@@ -13,7 +13,10 @@ from acquire_research_papers.discovery.contracts import (
 from acquire_research_papers.discovery.crossref import CrossrefClient
 from acquire_research_papers.discovery.openalex import OpenAlexClient
 from acquire_research_papers.discovery.providers import CrossrefVenueDiscoveryProvider
-from acquire_research_papers.discovery.semantic_scholar import SemanticScholarClient
+from acquire_research_papers.discovery.semantic_scholar import (
+    SemanticScholarClient,
+    SemanticScholarRequestPacer,
+)
 from acquire_research_papers.http import NetworkTransient, RateLimited, SafeHttpClient
 
 
@@ -540,3 +543,81 @@ def test_semantic_scholar_batches_doi_lookup_without_requiring_a_key(
 
     assert [candidate.doi for candidate in candidates] == ["10.1234/s2.1"]
     assert candidates[0].abstract == "A batch lookup abstract."
+
+
+def test_semantic_scholar_request_pacer_enforces_the_shared_interval() -> None:
+    current = [10.0]
+    sleeps: list[float] = []
+
+    def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        current[0] += seconds
+
+    pacer = SemanticScholarRequestPacer(
+        minimum_interval_seconds=1.1,
+        clock=lambda: current[0],
+        sleeper=sleep,
+    )
+
+    pacer.wait()
+    pacer.wait()
+
+    assert sleeps == [pytest.approx(1.1)]
+
+
+def test_semantic_scholar_retries_429_with_pacing_and_sanitized_endpoint() -> None:
+    class Pacer:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def wait(self) -> None:
+            self.calls += 1
+
+    class ResponsePayload:
+        @staticmethod
+        def json() -> dict[str, object]:
+            return {"data": []}
+
+    class Client:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def get(self, url: str, *, headers=None):
+            self.calls += 1
+            if self.calls == 1:
+                raise RateLimited(429, f"{url}&token=TOPSECRET")
+            return ResponsePayload()
+
+    pacer = Pacer()
+    backoffs: list[float] = []
+    client = SemanticScholarClient(
+        client=Client(),
+        api_key="synthetic-key",
+        request_pacer=pacer,
+        rate_limit_retries=2,
+        rate_limit_backoff_seconds=2.0,
+        sleeper=backoffs.append,
+    )
+
+    assert client.corpus_searcher("evolutionary optimization", 10) == ()
+    assert pacer.calls == 2
+    assert backoffs == [2.0]
+
+
+def test_semantic_scholar_final_429_drops_query_and_exception_context() -> None:
+    class Client:
+        @staticmethod
+        def get(url: str, *, headers=None):
+            raise RateLimited(429, f"{url}&token=TOPSECRET")
+
+    client = SemanticScholarClient(
+        client=Client(),
+        request_pacer=type("Pacer", (), {"wait": lambda self: None})(),
+        rate_limit_retries=0,
+    )
+
+    with pytest.raises(RateLimited) as caught:
+        client.corpus_searcher("secret query", 10)
+    assert caught.value.__cause__ is None
+    assert "?" not in str(caught.value)
+    assert "TOPSECRET" not in str(caught.value)

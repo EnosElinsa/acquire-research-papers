@@ -61,7 +61,10 @@ from acquire_research_papers.discovery.providers import (
     DoiBatchEnrichmentProvider,
     QueryApiProvider,
 )
-from acquire_research_papers.discovery.semantic_scholar import SemanticScholarClient
+from acquire_research_papers.discovery.semantic_scholar import (
+    SemanticScholarClient,
+    SemanticScholarRequestPacer,
+)
 from acquire_research_papers.credentials import (
     API_PROVIDER_HOSTS,
     ApiKeyLoadError,
@@ -143,6 +146,7 @@ def _production_discovery_providers(
     ijcai_client: SafeHttpClient,
     environment: Mapping[str, str] | None = None,
     api_keys: Mapping[str, str] | None = None,
+    semantic_request_pacer: SemanticScholarRequestPacer | None = None,
 ) -> list[DiscoveryProvider]:
     providers: list[DiscoveryProvider] = [
         CrossrefVenueDiscoveryProvider(crossref.search),
@@ -169,6 +173,7 @@ def _production_discovery_providers(
         semantic = SemanticScholarClient(
             client=SafeHttpClient(allowed_hosts={"api.semanticscholar.org"}),
             api_key=semantic_key,
+            request_pacer=semantic_request_pacer,
         )
         providers.append(
             QueryApiProvider("semantic-scholar", semantic.corpus_searcher)
@@ -180,6 +185,7 @@ def _production_discovery_enrichers(
     *,
     environment: Mapping[str, str] | None = None,
     api_keys: Mapping[str, str] | None = None,
+    semantic_request_pacer: SemanticScholarRequestPacer | None = None,
 ) -> list[DiscoveryEnricher]:
     configured = os.environ if environment is None else environment
     stored = api_keys or {}
@@ -194,6 +200,7 @@ def _production_discovery_enrichers(
     semantic = SemanticScholarClient(
         client=SafeHttpClient(allowed_hosts={"api.semanticscholar.org"}),
         api_key=semantic_key or None,
+        request_pacer=semantic_request_pacer,
     )
     enrichers: list[DiscoveryEnricher] = [
         DoiBatchEnrichmentProvider(
@@ -347,14 +354,17 @@ class Application:
             if load_discovery_api_keys
             else {}
         )
+        semantic_request_pacer = SemanticScholarRequestPacer()
         discovery_providers = _production_discovery_providers(
             crossref=crossref,
             acl_client=acl.client,
             ijcai_client=ijcai.client,
             api_keys=discovery_api_keys,
+            semantic_request_pacer=semantic_request_pacer,
         )
         discovery_enrichers = _production_discovery_enrichers(
             api_keys=discovery_api_keys,
+            semantic_request_pacer=semantic_request_pacer,
         )
         mineru_runner = MineruCliRunner(
             token_provider=DpapiMineruTokenProvider(
