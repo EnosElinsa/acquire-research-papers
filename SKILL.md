@@ -27,6 +27,26 @@ uv run --project $skill arp --help
 
 Runtime state belongs under `%LOCALAPPDATA%\Codex`; delivery directories must be outside this public repository.
 
+### First use and optional configuration
+
+Start every task by checking capabilities without reading or decrypting any key value:
+
+```powershell
+uv run --project $skill arp config status
+```
+
+`arp credentials status` is a compatibility alias. IEEE, MinerU, Elsevier, Semantic Scholar, and OpenAlex are optional and independent. Configure only the missing capability required by the current task; never require a full setup wizard before an unrelated workflow can run. Crossref, ACL Anthology, and IJCAI discovery do not require these credentials.
+
+| Capability | Configure when the task needs | Setup |
+| --- | --- | --- |
+| IEEE | automatic access to subscribed IEEE PDFs through the user's institution | `scripts/setup-ieee-institution.ps1` |
+| MinerU | optional full-text parsing or an explicit Markdown export | `scripts/setup-mineru-token.ps1` |
+| Elsevier | official ScienceDirect metadata resolution for manual handoff | `scripts/setup-discovery-api-keys.ps1 -Provider elsevier` |
+| Semantic Scholar | higher-rate candidate search and first DOI abstract enrichment | `scripts/setup-discovery-api-keys.ps1 -Provider semantic_scholar` |
+| OpenAlex | candidate search and second DOI abstract enrichment | `scripts/setup-discovery-api-keys.ps1 -Provider openalex` |
+
+All prompts are interactive and non-echoing. Do not ask the user to paste a secret into chat, an agent message, a command argument, or a repository file. After setup, rerun `arp config status` and continue with the capabilities that report `true`; missing optional capabilities remain valid and use available fallbacks.
+
 ### Automatic fetch
 
 ```powershell
@@ -39,6 +59,8 @@ For subscribed IEEE content, use only the institution profile configured by the 
 If the profile is absent or the page contract does not match it, classify the paper as `access_required`, add it to the corpus manual-download list, and continue; never guess an institution or selector.
 
 After the unauthenticated PDF attempt fails, enter the profile's exact `ResourceAccessUrl` before institution selection so the IEEE SAML return target survives login. Write and verify the configured CARSI IdP entity ID before submitting discovery. Re-enter only that same URL after CARSI or an accepted attribute-release page returns without IEEE entitlement; never click a portal card. Allow at most three total gateway visits for initial discovery, post-login authorization, and one post-release/post-portal recovery. If a configured institutional continuation page appears, require exactly one accept/continue control and allow at most one reject control, because some IdPs expose only a continue button. Never click reject. The configured accept/continue control is automatic by default; use `--no-accept-ieee-attribute-release` to keep the headful page visible for manual action instead. After either path, report `access_required` if the page remains incomplete. A PDF request is forbidden until the same browser context has returned to the exact `ieeexplore.ieee.org` host.
+
+When IEEE access fails for a previously untested institution, retain the visible browser and use the returned error payload to report only the sanitized stage and hostname. Adapt the institution profile first: correct its exact CARSI option, entity ID, IdP hostname, accessible form labels, resource gateway, and continuation controls, then retry one representative paper. Do not add a school-name branch or selector to the generic script. Change `ieee-playwright.mjs` only when observation proves a new generic page shape that cannot be expressed by the profile; add a regression test for that page shape before the implementation change. Preserve the exact-host credential boundary, one credential submission, shared persistent context, three-visit gateway limit, reject-button prohibition, visible manual continuation, and query-value redaction throughout adaptation.
 
 ### ScienceDirect manual handoff
 
@@ -60,7 +82,8 @@ The command opens only the canonical article page. The user completes organizati
 ### Corpus discovery, corpus acquisition, and research
 
 ```powershell
-uv run --project $skill arp discover corpus --spec <job.yaml> --output <discovery-run>
+uv run --project $skill arp discover corpus --progress `
+  --spec <job.yaml> --output <discovery-run>
 uv run --project $skill arp review corpus `
   --run <discovery-run> --decisions <review-decisions.jsonl>
 uv run --project $skill arp acquire corpus `

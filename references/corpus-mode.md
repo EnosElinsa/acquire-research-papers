@@ -35,8 +35,11 @@ Discovery and selection are separate phases. Discovery prepares immutable eviden
 Run discovery as its own phase:
 
 ```powershell
-uv run --project $skill arp discover corpus --spec <job.yaml> --output <discovery-run>
+uv run --project $skill arp discover corpus --progress `
+  --spec <job.yaml> --output <discovery-run>
 ```
+
+`--progress` writes sanitized JSON lines to stderr with closed phase names, provider slugs, and integer counts. The final result remains the only JSON object on stdout. DOI abstract enrichment runs Semantic Scholar first and, when its independent key is configured, OpenAlex second; a Semantic Scholar rate limit does not prevent the OpenAlex pass.
 
 Discovery produces:
 

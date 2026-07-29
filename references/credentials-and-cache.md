@@ -2,6 +2,10 @@
 
 Load this reference before institutional access, API-key setup, or MinerU parsing.
 
+## Task-scoped first use
+
+Run `arp config status` before asking for configuration. It inspects only whether each encrypted scope has the expected object shape and returns booleans; it does not convert a `SecureString` to plaintext. `arp credentials status` is a compatibility alias. IEEE, MinerU, Elsevier, Semantic Scholar, and OpenAlex are optional and independent. Configure only a capability required by the current task, and never ask a user to paste a key into chat, a command argument, an environment file, or the repository.
+
 ## Global runtime paths
 
 Runtime state is outside the Git repository under `%LOCALAPPDATA%\Codex`:
@@ -22,11 +26,13 @@ Profiles created before the CARSI entity-ID contract can be upgraded with `scrip
 
 Use `scripts/update-ieee-institution-route.ps1` to add or change only the non-secret resource gateway and attribute-release contract on an existing profile. It preserves the existing DPAPI credential. The resource URL must use exact HTTPS host `ds.carsi.edu.cn`; accept and reject control names are stored separately so automation can prove it never selected rejection.
 
+For an untested institution, keep the visible browser open and retain only the sanitized stage and hostname transition evidence. Update the institution profile first and retry one paper. Do not add school-specific code. Change the generic browser flow only when the visible evidence establishes a new generic page shape that cannot be expressed by the profile; add a regression test before the implementation. Never store query values, SAML state, signed URLs, cookies, or credentials in the adaptation report.
+
 The `ieee_institution` scope contains the current user's profile and credential. The non-secret profile bridge may return only the configured organization and page contract, including the CARSI IdP entity ID. The browser writes and verifies that exact entity ID before CARSI discovery submission so a delayed typeahead script cannot silently submit an empty institution route. The credential bridge releases the username and password only after the current hostname exactly equals the profile's `CredentialHost`; lookalikes, trailing-dot forms, schemes, ports, paths, and wildcards are rejected. The browser enters the configured resource before institution selection, submits credentials once, clears in-memory strings, and stops on CAPTCHA, OTP, an unknown host, or an incomplete login. The resource transition may revisit only the same configured `ResourceAccessUrl`, with three total visits at most; it never discovers or clicks a portal card. If an institution's page does not match the configured labels, defer the paper instead of guessing selectors.
 
 The `mineru` scope contains the MinerU API token. It is read through a child-process bridge and injected only into the precision CLI child's `MINERU_TOKEN` environment. Do not export it in the parent shell.
 
-The optional `api_keys.elsevier` scope contains the Elsevier API key used for official metadata resolution. Add or replace it with `scripts/setup-elsevier-api-key.ps1`; the update preserves `ieee_institution`, `mineru`, and unknown legacy scopes. The exact-host reader releases it only for `api.elsevier.com`. The key is never sent to ScienceDirect or exposed in a URL, command line, log, or provenance record.
+The optional `api_keys` scope can contain independent `elsevier`, `semantic_scholar`, and `openalex` secure values. Add or replace selected providers with `scripts/setup-discovery-api-keys.ps1 -Provider <provider>`; the update preserves `ieee_institution`, `mineru`, other API providers, and unknown legacy scopes. The compatibility script `setup-elsevier-api-key.ps1` delegates to the same store. Exact-host readers release a value only for `api.elsevier.com`, `api.semanticscholar.org`, or `api.openalex.org` as mapped to that provider. Keys never appear in command arguments, logs, provenance, or persisted request URLs.
 
 The manual ScienceDirect workflow stores no university credential. Organization login remains inside the user's normal browser, and the CLI receives only the PDF and raw BibTeX files the user downloads. Article Retrieval or Authentication API entitlement is optional and is not inferred from a working Search API key.
 

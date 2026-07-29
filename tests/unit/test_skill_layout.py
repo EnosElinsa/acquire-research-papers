@@ -19,7 +19,10 @@ def test_required_skill_and_package_files_exist() -> None:
         "scripts/setup-ieee-institution.ps1",
         "scripts/setup-mineru-token.ps1",
         "scripts/setup-elsevier-api-key.ps1",
+        "scripts/setup-discovery-api-keys.ps1",
         "scripts/read-elsevier-api-key.ps1",
+        "scripts/read-discovery-api-key.ps1",
+        "scripts/credential-status.ps1",
         "scripts/read-institution-profile.ps1",
     ]
     assert all((ROOT / relative).is_file() for relative in required)
@@ -163,3 +166,47 @@ def test_skill_documents_evidence_review_before_selection_and_acquisition() -> N
         assert required in combined
     assert "Discovery writes `candidates.jsonl`, `selected-papers.jsonl`" not in skill
     assert "Auto-accept only when" not in corpus_reference
+
+
+def test_public_docs_explain_task_scoped_optional_first_use() -> None:
+    skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    chinese = (ROOT / "README.zh-CN.md").read_text(encoding="utf-8")
+    credentials = (ROOT / "references/credentials-and-cache.md").read_text(
+        encoding="utf-8"
+    )
+    combined = "\n".join((skill, readme, chinese, credentials))
+
+    for required in (
+        "arp config status",
+        "setup-discovery-api-keys.ps1",
+        "--progress",
+        "Semantic Scholar",
+        "OpenAlex",
+        "Elsevier",
+        "MinerU",
+        "IEEE",
+        "optional and independent",
+        "configure only",
+    ):
+        assert required in combined
+
+
+def test_public_docs_define_safe_ieee_institution_adaptation() -> None:
+    combined = "\n".join(
+        (ROOT / relative).read_text(encoding="utf-8")
+        for relative in (
+            "SKILL.md",
+            "README.md",
+            "README.zh-CN.md",
+            "references/credentials-and-cache.md",
+        )
+    )
+    for required in (
+        "visible browser",
+        "sanitized stage and hostname",
+        "institution profile first",
+        "new generic page shape",
+        "regression test",
+    ):
+        assert required in combined

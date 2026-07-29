@@ -454,6 +454,32 @@ test("sanitizes URL query values at the automation error boundary", () => {
   }
 });
 
+test("keeps only sanitized stage and host evidence for institution adaptation", () => {
+  const payload = subject.toErrorPayload(new subject.IeeeFlowError(
+    "institutional-return",
+    "resource return stopped at https://ds.carsi.edu.cn/portal?RelayState=TOPSECRET",
+    {
+      transitions: [
+        {
+          stage: "resource-return",
+          host: "ds.carsi.edu.cn",
+          url: "https://ds.carsi.edu.cn/resource/gotoResource.php?id=resource:test&SAMLRequest=SECRET2",
+        },
+      ],
+      token: "SECRET3",
+    },
+  ));
+  const serialized = JSON.stringify(payload);
+  assert.equal(payload.phase, "institutional-return");
+  assert.equal(payload.details.transitions[0].stage, "resource-return");
+  assert.equal(payload.details.transitions[0].host, "ds.carsi.edu.cn");
+  for (const secret of ["TOPSECRET", "SECRET2", "SECRET3"]) {
+    assert.equal(serialized.includes(secret), false);
+  }
+  assert.equal(serialized.includes("RelayState=[redacted]"), true);
+  assert.equal(serialized.includes("SAMLRequest=[redacted]"), true);
+});
+
 test("preserves Unicode across the PowerShell profile and credential bridges", async () => {
   if (process.platform !== "win32") return;
   const root = await mkdtemp(path.join(os.tmpdir(), "arp-ieee-utf8-"));

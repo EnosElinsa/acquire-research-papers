@@ -47,6 +47,26 @@ uv run --project $skill arp --help
 
 已有安装可先运行 `git pull --ff-only`，再执行 `uv sync --locked --all-groups`。
 
+## 首次使用：只配置当前任务需要的能力
+
+先检查各项能力是否可用。该命令只返回布尔值，不读取或输出密钥：
+
+```powershell
+uv run --project $skill arp config status
+```
+
+IEEE、MinerU、Elsevier、Semantic Scholar 和 OpenAlex 都是彼此独立的可选能力。Agent 应当只引导用户配置当前任务缺少的能力，配置后再次检查状态；不需要先完成全量向导，其他工作流仍可使用已有能力和公开数据源。
+
+| 能力 | 何时需要 | 配置命令 |
+| --- | --- | --- |
+| IEEE | 通过 CARSI 自动获取学校订阅的 IEEE PDF | `& "$skill\scripts\setup-ieee-institution.ps1"` |
+| MinerU | 可选全文解析或明确要求导出 Markdown | `& "$skill\scripts\setup-mineru-token.ps1"` |
+| Elsevier | ScienceDirect 人工接管前的官方元数据解析 | `& "$skill\scripts\setup-discovery-api-keys.ps1" -Provider elsevier` |
+| Semantic Scholar | 带 key 的候选检索和第一轮 DOI 摘要补全 | `& "$skill\scripts\setup-discovery-api-keys.ps1" -Provider semantic_scholar` |
+| OpenAlex | 带 key 的候选检索和第二轮 DOI 摘要补全 | `& "$skill\scripts\setup-discovery-api-keys.ps1" -Provider openalex` |
+
+交互式输入不会回显。不要把密钥粘贴到聊天、命令参数、`.env` 或仓库文件中。`arp credentials status` 作为兼容别名继续可用。
+
 ## 使用方法
 
 直接获取受支持的论文：
@@ -81,7 +101,7 @@ uv run --project $skill arp manual-fetch --input <DOI> `
 
 ```powershell
 uv run --project $skill arp discover corpus `
-  --spec .\corpus.yaml --output C:\Research\corpus-discovery
+  --progress --spec .\corpus.yaml --output C:\Research\corpus-discovery
 uv run --project $skill arp review corpus `
   --run C:\Research\corpus-discovery `
   --decisions C:\Research\review-decisions.jsonl
@@ -113,17 +133,24 @@ uv run --project $skill arp export-md --pdf .\paper.pdf --output C:\Research\mar
 
 机构档案还需要配置登录 CARSI 后进入 IEEE 的准确资源 URL。配置的接受/继续控件默认自动点击；如需人工完成，可在 `fetch` 或 `acquire corpus` 中传入 `--no-accept-ieee-attribute-release`。拒绝控件永远不会被点击，且 persistent browser context 未返回 `ieeexplore.ieee.org` 前不会请求 PDF。
 
+### 适配新的 IEEE 院校
+
+未测试院校停在不同认证页面时，保留可见浏览器，只根据错误结果中的脱敏阶段和主机名诊断。优先修改 institution profile：核对 CARSI 机构选项、entity ID、IdP 主机名、表单标签、资源入口和继续控件，然后用一篇代表论文重试。不得在通用浏览器脚本中加入学校名称分支。只有确认出现 profile 无法表达的新通用页面形态时，才先增加回归测试，再修改脚本。跳转诊断可以保留阶段与主机名，但必须删除查询值、SAML 状态、token、凭据和签名 URL。
+
 仅在需要 Markdown 提取时单独配置 MinerU：
 
 ```powershell
 & "$skill\scripts\setup-mineru-token.ps1"
 ```
 
-配置只用于官方元数据查询的 Elsevier API key：
+按需配置发现 API key，可只选择当前需要的 provider：
 
 ```powershell
-& "$skill\scripts\setup-elsevier-api-key.ps1"
+& "$skill\scripts\setup-discovery-api-keys.ps1" `
+  -Provider semantic_scholar,openalex
 ```
+
+原有的 `setup-elsevier-api-key.ps1` 继续作为 Elsevier 单项配置兼容入口。
 
 配置程序会询问 CARSI 中的准确机构选项、身份认证主机名、登录表单的可访问名称、资源入口，以及可选的属性发布页和接受/拒绝控件名称；仓库不提供任何学校默认值。凭据输入不会回显，密文通过 DPAPI 与当前 Windows 用户绑定。ScienceDirect 人工接管流程不保存任何机构密码。工具也不假设 API key 拥有 Article Retrieval 全文权限；遇到 403 时转入人工浏览器下载，不会改用网站自动化。
 

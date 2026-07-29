@@ -47,6 +47,26 @@ uv run --project $skill arp --help
 
 For an existing installation, run `git pull --ff-only`, then repeat `uv sync --locked --all-groups`.
 
+## First use: configure only what the task needs
+
+Inspect configuration without printing or decrypting secrets:
+
+```powershell
+uv run --project $skill arp config status
+```
+
+The result contains only booleans for five optional and independent capabilities. An agent should configure only a missing capability required by the current task, then rerun the status command. A user can discover public metadata without first configuring every integration.
+
+| Capability | Needed for | Setup command |
+| --- | --- | --- |
+| IEEE | automatic subscribed IEEE PDF acquisition through CARSI | `& "$skill\scripts\setup-ieee-institution.ps1"` |
+| MinerU | optional full-text parsing and explicit Markdown export | `& "$skill\scripts\setup-mineru-token.ps1"` |
+| Elsevier | official metadata used by the manual ScienceDirect handoff | `& "$skill\scripts\setup-discovery-api-keys.ps1" -Provider elsevier` |
+| Semantic Scholar | keyed search and first DOI abstract enrichment | `& "$skill\scripts\setup-discovery-api-keys.ps1" -Provider semantic_scholar` |
+| OpenAlex | keyed search and second DOI abstract enrichment | `& "$skill\scripts\setup-discovery-api-keys.ps1" -Provider openalex` |
+
+Setup prompts do not echo input. Never put a key in chat, a command argument, `.env`, or the repository. `arp credentials status` remains available as a compatibility alias.
+
 ## Usage
 
 Fetch a directly supported paper:
@@ -79,7 +99,7 @@ Corpus discovery, corpus acquisition, research, and optional Markdown export:
 
 ```powershell
 uv run --project $skill arp discover corpus `
-  --spec .\corpus.yaml --output C:\Research\corpus-discovery
+  --progress --spec .\corpus.yaml --output C:\Research\corpus-discovery
 uv run --project $skill arp review corpus `
   --run C:\Research\corpus-discovery `
   --decisions C:\Research\review-decisions.jsonl
@@ -111,17 +131,24 @@ Configure your own IEEE institution profile and credential from an interactive P
 
 The profile includes the exact post-login CARSI IEEE resource URL. A configured accept/continue control is used automatically by default; pass `--no-accept-ieee-attribute-release` to `fetch` or `acquire corpus` when you want to complete that page manually. The reject control is never clicked, and PDF retrieval starts only after the persistent browser context returns to `ieeexplore.ieee.org`.
 
+### Adapting a new IEEE institution
+
+If a university that has not been tested stops at a different authentication page, keep the visible browser open and use only the sanitized stage and hostname from the error payload. Update the institution profile first, including its exact CARSI option, entity ID, IdP hostname, form labels, resource gateway, and continuation controls. Retry one representative paper after each profile correction. Do not hardcode the university in the generic browser script. Modify that script only after confirming a new generic page shape that the profile cannot express, and add a regression test before implementing support. Transition diagnostics must preserve stages and hostnames while removing every query value, SAML state, token, credential, and signed URL.
+
 Configure MinerU independently only when Markdown extraction is needed:
 
 ```powershell
 & "$skill\scripts\setup-mineru-token.ps1"
 ```
 
-Configure the Elsevier API key used only for official metadata resolution:
+Configure discovery API keys independently; select only the providers needed now:
 
 ```powershell
-& "$skill\scripts\setup-elsevier-api-key.ps1"
+& "$skill\scripts\setup-discovery-api-keys.ps1" `
+  -Provider semantic_scholar,openalex
 ```
+
+The compatibility script `setup-elsevier-api-key.ps1` remains available for existing Elsevier-only installations.
 
 The setup asks for the institution's exact CARSI option, exact identity-provider hostname, accessible form labels, resource gateway, and optional exact attribute-release controls; the repository supplies no school-specific defaults. Credential prompts do not echo values, and DPAPI ties the encrypted payload to the current Windows user. The manual ScienceDirect workflow stores no institution password. An Elsevier Article Retrieval entitlement is not assumed; a 403 falls back to the user-driven browser download rather than website automation.
 
