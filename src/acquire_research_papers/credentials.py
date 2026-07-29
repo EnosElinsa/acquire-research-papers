@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -18,6 +19,19 @@ API_PROVIDER_HOSTS: Mapping[str, str] = MappingProxyType(
 
 class ApiKeyLoadError(RuntimeError):
     """Raised when a host-bound API key cannot be loaded from DPAPI storage."""
+
+
+class CredentialStatusError(RuntimeError):
+    """Raised when capability status cannot be read safely."""
+
+
+CAPABILITY_NAMES = (
+    "ieee",
+    "mineru",
+    "elsevier",
+    "semantic_scholar",
+    "openalex",
+)
 
 
 class DpapiApiKeyProvider:
@@ -91,3 +105,57 @@ class DpapiApiKeyProvider:
 
     def optional(self) -> str | None:
         return self._read(allow_missing=True)
+
+
+class DpapiCredentialStatusProvider:
+    def __init__(
+        self,
+        *,
+        script: Path,
+        secret_path: Path,
+        process_runner: Callable[..., CompletedProcess[str]] = subprocess.run,
+        timeout_seconds: int = 30,
+    ) -> None:
+        self.script = script.resolve()
+        self.secret_path = secret_path.resolve()
+        self.process_runner = process_runner
+        self.timeout_seconds = timeout_seconds
+
+    def __call__(self) -> dict[str, bool]:
+        command = [
+            "powershell",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(self.script),
+            "-SecretPath",
+            str(self.secret_path),
+        ]
+        try:
+            process = self.process_runner(
+                command,
+                check=False,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=self.timeout_seconds,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise CredentialStatusError("Credential capability status is unavailable.") from exc
+        lines = [line.strip() for line in process.stdout.splitlines() if line.strip()]
+        if process.returncode != 0 or len(lines) != 1:
+            raise CredentialStatusError("Credential capability status is unavailable.")
+        try:
+            payload = json.loads(lines[0])
+        except (json.JSONDecodeError, TypeError) as exc:
+            raise CredentialStatusError("Credential capability status is unavailable.") from exc
+        if (
+            not isinstance(payload, dict)
+            or set(payload) != set(CAPABILITY_NAMES)
+            or any(type(payload[name]) is not bool for name in CAPABILITY_NAMES)
+        ):
+            raise CredentialStatusError("Credential capability status is unavailable.")
+        return {name: payload[name] for name in CAPABILITY_NAMES}

@@ -11,6 +11,7 @@ from acquire_research_papers.cli import (
     _production_discovery_providers,
     run_cli,
 )
+from acquire_research_papers.credentials import CredentialStatusError
 from acquire_research_papers.discovery.contracts import (
     CandidateMetadata,
     DiscoveryBatch,
@@ -240,3 +241,108 @@ def test_environment_key_is_an_explicit_compatibility_override() -> None:
 
     openalex_client = enrichers[1].lookup.__self__
     assert openalex_client.api_key == "environment-key"
+
+
+def test_config_status_skips_application_construction(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        Application,
+        "default",
+        classmethod(lambda cls, **kwargs: (_ for _ in ()).throw(AssertionError("unused"))),
+    )
+    expected = {
+        "ieee": True,
+        "mineru": False,
+        "elsevier": False,
+        "semantic_scholar": True,
+        "openalex": False,
+    }
+
+    assert run_cli(["config", "status"], credential_status=lambda: expected) == 0
+    assert json.loads(capsys.readouterr().out) == expected
+
+
+def test_credentials_status_is_an_exact_compatibility_alias(capsys) -> None:
+    expected = {
+        "ieee": False,
+        "mineru": False,
+        "elsevier": False,
+        "semantic_scholar": False,
+        "openalex": False,
+    }
+
+    assert run_cli(["credentials", "status"], credential_status=lambda: expected) == 0
+    assert json.loads(capsys.readouterr().out) == expected
+
+
+def test_config_status_failure_is_sanitized(capsys) -> None:
+    def unavailable():
+        raise CredentialStatusError("Credential capability status is unavailable.")
+
+    assert run_cli(["config", "status"], credential_status=unavailable) == 78
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "status": "error",
+        "error_code": "contract_error",
+        "message": "Credential capability status is unavailable.",
+    }
+
+
+def test_progress_is_jsonl_on_stderr_and_final_result_stays_on_stdout(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    output = tmp_path / "run"
+    spec = tmp_path / "spec.yaml"
+    spec.write_text("mode: corpus\nname: progress\ntarget: {minimum: 1, maximum: 1}\n")
+    result = SimpleNamespace(
+        status="pending_review",
+        candidates_path=output / "candidates.jsonl",
+        evidence_path=output / "evidence-packets.jsonl",
+        pending_metadata_path=output / "pending-metadata.jsonl",
+        coverage_path=output / "coverage.jsonl",
+        request_path=output / "request-spec.json",
+        diagnostics_path=output / "discovery-errors.jsonl",
+        manifest_path=output / "discovery-manifest.json",
+        reviewable=1,
+        pending_metadata=0,
+        hard_gate_failed=0,
+        coverage_incomplete=0,
+    )
+
+    class Workflow:
+        def run(self, _spec, _output):
+            callback("provider_started", {"provider": "crossref"})
+            callback(
+                "provider_completed",
+                {"provider": "crossref", "candidates": 1, "diagnostics": 0},
+            )
+            return result
+
+    callback = None
+
+    def default(cls, **kwargs):
+        nonlocal callback
+        callback = kwargs["discovery_progress"]
+        return SimpleNamespace(
+            corpus_discovery=Workflow(), repository_root=tmp_path / "repository"
+        )
+
+    monkeypatch.setattr(Application, "default", classmethod(default))
+
+    assert run_cli(
+        ["discover", "corpus", "--progress", "--spec", str(spec), "--output", str(output)]
+    ) == 0
+    captured = capsys.readouterr()
+    assert len(captured.out.splitlines()) == 1
+    assert json.loads(captured.out)["status"] == "pending_review"
+    progress = [json.loads(line) for line in captured.err.splitlines()]
+    assert progress == [
+        {"event": "provider_started", "provider": "crossref"},
+        {
+            "candidates": 1,
+            "diagnostics": 0,
+            "event": "provider_completed",
+            "provider": "crossref",
+        },
+    ]
+    assert "token" not in captured.err.casefold()
+    assert "?" not in captured.err

@@ -8,6 +8,8 @@ import pytest
 from acquire_research_papers.credentials import (
     API_PROVIDER_HOSTS,
     ApiKeyLoadError,
+    CredentialStatusError,
+    DpapiCredentialStatusProvider,
     DpapiApiKeyProvider,
 )
 
@@ -106,3 +108,62 @@ def test_provider_host_mapping_is_closed(tmp_path: Path) -> None:
         _provider(tmp_path, subprocess.run, provider="unknown")
     with pytest.raises(ValueError, match="host"):
         _provider(tmp_path, subprocess.run, expected_host="api.openalex.org.evil.example")
+
+
+def test_status_provider_returns_only_closed_capability_booleans(tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+
+    def run(command, **kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=(
+                '{"ieee":true,"mineru":false,"elsevier":true,'
+                '"semantic_scholar":true,"openalex":false}\n'
+            ),
+            stderr="",
+        )
+
+    provider = DpapiCredentialStatusProvider(
+        script=tmp_path / "credential-status.ps1",
+        secret_path=tmp_path / "secrets.clixml",
+        process_runner=run,
+    )
+
+    assert provider() == {
+        "ieee": True,
+        "mineru": False,
+        "elsevier": True,
+        "semantic_scholar": True,
+        "openalex": False,
+    }
+    assert calls[0][calls[0].index("-SecretPath") + 1].endswith("secrets.clixml")
+
+
+@pytest.mark.parametrize(
+    "stdout",
+    [
+        '{"ieee":true,"mineru":false}\n',
+        (
+            '{"ieee":true,"mineru":false,"elsevier":false,'
+            '"semantic_scholar":"TOPSECRET","openalex":false}\n'
+        ),
+        "first\nsecond\n",
+    ],
+)
+def test_status_provider_rejects_malformed_or_secret_shaped_output(
+    tmp_path: Path, stdout: str
+) -> None:
+    provider = DpapiCredentialStatusProvider(
+        script=tmp_path / "credential-status.ps1",
+        secret_path=tmp_path / "secrets.clixml",
+        process_runner=lambda command, **kwargs: subprocess.CompletedProcess(
+            command, 0, stdout=stdout, stderr="token=TOPSECRET"
+        ),
+    )
+
+    with pytest.raises(CredentialStatusError) as caught:
+        provider()
+    assert "TOPSECRET" not in str(caught.value)
+    assert "token=" not in str(caught.value)

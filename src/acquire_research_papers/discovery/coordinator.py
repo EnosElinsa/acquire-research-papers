@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import replace
 
 from acquire_research_papers.discovery.contracts import (
@@ -22,6 +22,7 @@ class CandidateConflict(ValueError):
 
 
 _METADATA_SOURCES = frozenset({"crossref", "openalex", "semantic-scholar"})
+_SAFE_PROVIDER_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 
 def _normalized(value: str) -> str:
@@ -144,9 +145,27 @@ class DiscoveryCoordinator:
         providers: Iterable[DiscoveryProvider],
         *,
         enrichers: Iterable[DiscoveryEnricher] = (),
+        progress: Callable[[str, Mapping[str, object]], None] | None = None,
     ) -> None:
         self.providers = tuple(providers)
         self.enrichers = tuple(enrichers)
+        self.progress = progress
+
+    def _report(self, event: str, **details: object) -> None:
+        if self.progress is None:
+            return
+        safe: dict[str, object] = {}
+        for name, value in details.items():
+            if name == "provider":
+                provider = str(value)
+                safe[name] = (
+                    provider if _SAFE_PROVIDER_ID.fullmatch(provider) else "unrecognized-provider"
+                )
+            elif name in {"candidates", "diagnostics", "coverage"}:
+                safe[name] = max(0, int(value))
+            else:
+                raise ValueError("unsupported discovery progress field")
+        self.progress(event, safe)
 
     def discover(self, request: DiscoveryRequest) -> DiscoveryBatch:
         seed_by_identity: dict[str, CandidateMetadata] = {
@@ -226,6 +245,7 @@ class DiscoveryCoordinator:
                 supported_venues or request.venues,
                 supported_years or request.years,
             )
+            self._report("provider_started", provider=capability.provider_id)
             try:
                 batch = provider.discover(provider_request)
             except (RateLimited, NetworkTransient):
@@ -252,6 +272,11 @@ class DiscoveryCoordinator:
                         for year in provider_request.years
                         if venue.supports_year(year)
                     )
+                self._report(
+                    "provider_failed",
+                    provider=capability.provider_id,
+                    diagnostics=1,
+                )
                 continue
             except (HttpStatusError, RuntimeError, ValueError):
                 error_code = "provider_error"
@@ -276,6 +301,11 @@ class DiscoveryCoordinator:
                         for year in provider_request.years
                         if venue.supports_year(year)
                     )
+                self._report(
+                    "provider_failed",
+                    provider=capability.provider_id,
+                    diagnostics=1,
+                )
                 continue
             diagnostics.extend(batch.diagnostics)
             covered.extend(batch.covered_slices)
@@ -298,8 +328,15 @@ class DiscoveryCoordinator:
                             "candidate identity fields conflict",
                         )
                     )
+            self._report(
+                "provider_completed",
+                provider=capability.provider_id,
+                candidates=len(batch.candidates),
+                diagnostics=len(batch.diagnostics),
+            )
         for enricher in self.enrichers:
             capability = enricher.capabilities()
+            self._report("enricher_started", provider=capability.provider_id)
             try:
                 batch = enricher.enrich(tuple(merged.values()), request)
             except (RateLimited, NetworkTransient):
@@ -312,6 +349,11 @@ class DiscoveryCoordinator:
                         retryable=True,
                     )
                 )
+                self._report(
+                    "enricher_failed",
+                    provider=capability.provider_id,
+                    diagnostics=1,
+                )
                 continue
             except (HttpStatusError, RuntimeError, ValueError):
                 diagnostics.append(
@@ -321,6 +363,11 @@ class DiscoveryCoordinator:
                         "provider_error",
                         "metadata enrichment failed",
                     )
+                )
+                self._report(
+                    "enricher_failed",
+                    provider=capability.provider_id,
+                    diagnostics=1,
                 )
                 continue
             diagnostics.extend(batch.diagnostics)
@@ -339,6 +386,18 @@ class DiscoveryCoordinator:
                             "candidate identity fields conflict",
                         )
                     )
+            self._report(
+                "enricher_completed",
+                provider=capability.provider_id,
+                candidates=len(batch.candidates),
+                diagnostics=len(batch.diagnostics),
+            )
+        self._report(
+            "discovery_completed",
+            candidates=len(merged),
+            diagnostics=len(diagnostics),
+            coverage=len(coverage),
+        )
         return DiscoveryBatch(
             candidates=tuple(
                 candidate

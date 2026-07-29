@@ -6,7 +6,7 @@ import math
 import os
 import sys
 import webbrowser
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -65,7 +65,9 @@ from acquire_research_papers.discovery.semantic_scholar import SemanticScholarCl
 from acquire_research_papers.credentials import (
     API_PROVIDER_HOSTS,
     ApiKeyLoadError,
+    CredentialStatusError,
     DpapiApiKeyProvider,
+    DpapiCredentialStatusProvider,
 )
 from acquire_research_papers.http import NetworkTransient, RateLimited, SafeHttpClient
 from acquire_research_papers.mineru import (
@@ -245,6 +247,24 @@ def _load_optional_discovery_api_keys(
     return keys
 
 
+def _default_credential_status() -> dict[str, bool]:
+    paths = AppPaths.default()
+    repository_root = Path(__file__).resolve().parents[2]
+    script_root = _resolve_script_root(repository_root, Path(__file__).resolve().parent)
+    return DpapiCredentialStatusProvider(
+        script=script_root / "credential-status.ps1",
+        secret_path=paths.secrets / "secrets.clixml",
+    )()
+
+
+def _stderr_discovery_progress(event: str, details: Mapping[str, object]) -> None:
+    print(
+        json.dumps({"event": event, **details}, ensure_ascii=False, sort_keys=True),
+        file=sys.stderr,
+        flush=True,
+    )
+
+
 @dataclass
 class Application:
     paths: AppPaths
@@ -298,6 +318,7 @@ class Application:
         cls,
         *,
         accept_ieee_attribute_release: bool = True,
+        discovery_progress: Callable[[str, Mapping[str, object]], None] | None = None,
     ) -> Application:
         paths = AppPaths.default()
         paths.create_directories()
@@ -362,6 +383,7 @@ class Application:
                 discoverer=DiscoveryCoordinator(
                     discovery_providers,
                     enrichers=discovery_enrichers,
+                    progress=discovery_progress,
                 ).discover,
             ),
             corpus_acquisition=None,
@@ -696,6 +718,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="store_true")
     subparsers = parser.add_subparsers(dest="command")
 
+    for config_command in ("config", "credentials"):
+        config = subparsers.add_parser(
+            config_command,
+            help="show optional capability configuration without revealing secrets",
+        )
+        config_modes = config.add_subparsers(dest="config_mode", required=True)
+        config_modes.add_parser("status", help="show configured capability booleans")
+
     fetch = subparsers.add_parser("fetch", help="fetch an official PDF and BibTeX pair")
     fetch.add_argument("--input", required=True)
     fetch.add_argument("--output", type=Path, required=True)
@@ -745,6 +775,11 @@ def build_parser() -> argparse.ArgumentParser:
     corpus = discover_modes.add_parser("corpus", help="plan a quota-driven paper corpus")
     corpus.add_argument("--spec", type=Path, required=True)
     corpus.add_argument("--output", type=Path, required=True)
+    corpus.add_argument(
+        "--progress",
+        action="store_true",
+        help="emit sanitized discovery progress as JSON lines on stderr",
+    )
     research = discover_modes.add_parser("research", help="plan evidence-driven literature research")
     research.add_argument("--brief", type=Path, required=True)
     research.add_argument("--output", type=Path, required=True)
@@ -777,16 +812,35 @@ def run_cli(
     argv: Sequence[str] | None = None,
     *,
     application: Application | None = None,
+    credential_status: Callable[[], Mapping[str, bool]] | None = None,
 ) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.version:
         _emit({"name": "acquire-research-papers", "version": __version__})
         return 0
+    if args.command in {"config", "credentials"} and args.config_mode == "status":
+        status_provider = credential_status or _default_credential_status
+        try:
+            _emit(dict(status_provider()))
+            return 0
+        except CredentialStatusError as exc:
+            _emit(
+                {
+                    "status": "error",
+                    "error_code": "contract_error",
+                    "message": str(exc),
+                }
+            )
+            return 78
+    discovery_progress = (
+        _stderr_discovery_progress if bool(getattr(args, "progress", False)) else None
+    )
     app = application or Application.default(
         accept_ieee_attribute_release=bool(
             getattr(args, "accept_ieee_attribute_release", True)
-        )
+        ),
+        discovery_progress=discovery_progress,
     )
     try:
         if args.command == "fetch":

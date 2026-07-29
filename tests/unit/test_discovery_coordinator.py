@@ -699,3 +699,41 @@ def test_coordinator_continues_to_openalex_after_semantic_scholar_rate_limit() -
     assert [diagnostic.provider_id for diagnostic in batch.diagnostics] == [
         "semantic-scholar"
     ]
+
+
+def test_coordinator_progress_contains_only_safe_slugs_and_integer_counts() -> None:
+    events: list[tuple[str, dict[str, object]]] = []
+    provider = FakeProvider(
+        "https://metadata.example/search?token=TOPSECRET",
+        DiscoveryBatch(
+            (
+                CandidateMetadata(
+                    "found",
+                    "Found Paper",
+                    2026,
+                    "Venue A",
+                    0.9,
+                    True,
+                    ("title",),
+                ),
+            )
+        ),
+    )
+    coordinator = DiscoveryCoordinator(
+        [provider],
+        progress=lambda event, details: events.append((event, dict(details))),
+    )
+
+    coordinator.discover(request())
+
+    assert events[0] == ("provider_started", {"provider": "unrecognized-provider"})
+    assert events[-1][0] == "discovery_completed"
+    serialized = repr(events)
+    assert "TOPSECRET" not in serialized
+    assert "https://" not in serialized
+    assert "query" not in serialized
+    assert all(
+        isinstance(value, (str, int)) and not isinstance(value, bool)
+        for _, details in events
+        for value in details.values()
+    )
