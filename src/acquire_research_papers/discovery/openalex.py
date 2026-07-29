@@ -125,7 +125,11 @@ class OpenAlexClient:
         try:
             payload = self.client.get(query_url).json()
         except RateLimited as exc:
-            raise RateLimited(exc.status_code, self.endpoint) from None
+            raise RateLimited(
+                exc.status_code,
+                self.endpoint,
+                retry_after_seconds=exc.retry_after_seconds,
+            ) from None
         except HttpStatusError as exc:
             raise DiscoveryUnavailable(
                 f"OpenAlex request failed with HTTP {exc.status_code}"
@@ -169,7 +173,11 @@ class OpenAlexClient:
         try:
             payload = self.client.get(query_url).json()
         except RateLimited as exc:
-            raise RateLimited(exc.status_code, self.endpoint) from None
+            raise RateLimited(
+                exc.status_code,
+                self.endpoint,
+                retry_after_seconds=exc.retry_after_seconds,
+            ) from None
         except HttpStatusError as exc:
             raise DiscoveryUnavailable(
                 f"OpenAlex request failed with HTTP {exc.status_code}"

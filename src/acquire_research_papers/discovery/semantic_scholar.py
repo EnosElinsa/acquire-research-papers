@@ -17,7 +17,7 @@ class SemanticScholarRequestPacer:
     def __init__(
         self,
         *,
-        minimum_interval_seconds: float = 1.1,
+        minimum_interval_seconds: float = 1.25,
         clock: Callable[[], float] = time.monotonic,
         sleeper: Callable[[float], None] = time.sleep,
     ) -> None:
@@ -49,7 +49,7 @@ class SemanticScholarClient:
         batch_endpoint: str = "https://api.semanticscholar.org/graph/v1/paper/batch",
         api_key: str | None = None,
         request_pacer: SemanticScholarRequestPacer | None = None,
-        rate_limit_retries: int = 2,
+        rate_limit_retries: int = 4,
         rate_limit_backoff_seconds: float = 2.0,
         sleeper: Callable[[float], None] = time.sleep,
     ) -> None:
@@ -75,10 +75,17 @@ class SemanticScholarClient:
             self.request_pacer.wait()
             try:
                 return operation()
-            except RateLimited:
+            except RateLimited as exc:
                 if attempt == self.rate_limit_retries:
-                    raise RateLimited(429, endpoint) from None
-                self.sleeper(self.rate_limit_backoff_seconds * (2**attempt))
+                    raise RateLimited(
+                        429,
+                        endpoint,
+                        retry_after_seconds=exc.retry_after_seconds,
+                    ) from None
+                delay = exc.retry_after_seconds
+                if delay is None:
+                    delay = self.rate_limit_backoff_seconds * (2**attempt)
+                self.sleeper(delay)
         raise AssertionError("Semantic Scholar retry loop escaped its bound")
 
     @staticmethod

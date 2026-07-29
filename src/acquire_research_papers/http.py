@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import time
 from collections.abc import Callable, Mapping
 from typing import Any
@@ -21,8 +22,31 @@ class HttpStatusError(RuntimeError):
         self.url = url
 
 
+_MAX_RETRY_AFTER_SECONDS = 300.0
+
+
+def _bounded_retry_after(value: object) -> float | None:
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(seconds) or seconds < 0:
+        return None
+    return min(seconds, _MAX_RETRY_AFTER_SECONDS)
+
+
 class RateLimited(HttpStatusError):
     """A provider explicitly requested that acquisition stop."""
+
+    def __init__(
+        self,
+        status_code: int,
+        url: str,
+        *,
+        retry_after_seconds: float | None = None,
+    ) -> None:
+        super().__init__(status_code, url)
+        self.retry_after_seconds = _bounded_retry_after(retry_after_seconds)
 
 
 class NetworkTransient(RuntimeError):
@@ -93,7 +117,13 @@ class SafeHttpClient:
                 self._sleeper(0.25 * (2**attempt))
                 continue
             if response.status_code == 429:
-                raise RateLimited(429, url)
+                raise RateLimited(
+                    429,
+                    url,
+                    retry_after_seconds=_bounded_retry_after(
+                        response.headers.get("Retry-After")
+                    ),
+                )
             if 500 <= response.status_code <= 599:
                 if attempt == retries:
                     raise HttpStatusError(response.status_code, url)

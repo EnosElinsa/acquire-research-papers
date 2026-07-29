@@ -52,6 +52,20 @@ def test_rate_limit_is_classified_without_retry(httpserver) -> None:
         client.get(httpserver.url_for("/limited"))
 
 
+def test_rate_limit_preserves_a_bounded_numeric_retry_after(httpserver) -> None:
+    httpserver.expect_request("/limited").respond_with_data(
+        "slow down",
+        status=429,
+        headers={"Retry-After": "600"},
+    )
+    client = SafeHttpClient(allowed_hosts={httpserver.host})
+
+    with pytest.raises(RateLimited) as caught:
+        client.get(httpserver.url_for("/limited"))
+
+    assert caught.value.retry_after_seconds == 300.0
+
+
 def test_remote_protocol_disconnect_is_retried_for_get(monkeypatch) -> None:
     client = SafeHttpClient(
         allowed_hosts={"publisher.example"},

@@ -176,7 +176,7 @@ def _production_discovery_providers(
             request_pacer=semantic_request_pacer,
         )
         providers.append(
-            QueryApiProvider("semantic-scholar", semantic.corpus_searcher)
+            QueryApiProvider("semantic-scholar-search", semantic.corpus_searcher)
         )
     return providers
 

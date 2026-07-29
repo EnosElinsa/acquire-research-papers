@@ -261,6 +261,8 @@ def test_semantic_scholar_search_and_enrichment_share_one_request_pacer() -> Non
 
     search_client = providers[-1].searcher.__self__
     enrichment_client = enrichers[0].lookup.__self__
+    assert providers[-1].capabilities().provider_id == "semantic-scholar-search"
+    assert enrichers[0].capabilities().provider_id == "semantic-scholar"
     assert search_client.request_pacer is pacer
     assert enrichment_client.request_pacer is pacer
 

@@ -585,7 +585,11 @@ def test_semantic_scholar_retries_429_with_pacing_and_sanitized_endpoint() -> No
         def get(self, url: str, *, headers=None):
             self.calls += 1
             if self.calls == 1:
-                raise RateLimited(429, f"{url}&token=TOPSECRET")
+                raise RateLimited(
+                    429,
+                    f"{url}&token=TOPSECRET",
+                    retry_after_seconds=7.0,
+                )
             return ResponsePayload()
 
     pacer = Pacer()
@@ -601,7 +605,7 @@ def test_semantic_scholar_retries_429_with_pacing_and_sanitized_endpoint() -> No
 
     assert client.corpus_searcher("evolutionary optimization", 10) == ()
     assert pacer.calls == 2
-    assert backoffs == [2.0]
+    assert backoffs == [7.0]
 
 
 def test_semantic_scholar_final_429_drops_query_and_exception_context() -> None:
