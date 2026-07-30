@@ -32,6 +32,8 @@ from acquire_research_papers.models import PaperStatus
 
 __all__ = ["CandidateMetadata", "CandidatePage"]
 
+_MAX_QUOTA_OPTIMIZATION_STATES = 25_000
+
 
 @dataclass(frozen=True)
 class ScreeningDecision:
@@ -348,7 +350,12 @@ class CorpusPlanner:
             optimize_stack: list[
                 tuple[int, int, tuple[int, ...], int, tuple[int, ...]]
             ] = [(0, 0, tuple(0 for _ in groups), 0, ())]
-            while optimize_stack:
+            optimized_states = 0
+            while (
+                optimize_stack
+                and optimized_states < _MAX_QUOTA_OPTIMIZATION_STATES
+            ):
+                optimized_states += 1
                 index, selected_total, counts, cost, used = optimize_stack.pop()
                 needed = target_size - selected_total
                 if needed < 0 or needed >= len(suffix_rank_costs[index]):
@@ -577,7 +584,9 @@ class CorpusPlanner:
         stack: list[tuple[int, int, tuple[int, ...], int, tuple[int, ...]]] = [
             (0, 0, initial_counts, 0, ())
         ]
-        while stack:
+        optimized_states = 0
+        while stack and optimized_states < _MAX_QUOTA_OPTIMIZATION_STATES:
+            optimized_states += 1
             index, selected_total, counts, cost, used = stack.pop()
             needed = target_size - selected_total
             if needed < 0 or selected_total + remaining_total[index] < target_size:
