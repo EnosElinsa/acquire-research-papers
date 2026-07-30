@@ -338,7 +338,9 @@ class SelectionStore:
             raise ValueError("selection SHA-256 mismatch")
         records: list[SelectionRecord] = []
         try:
-            for line in selected_bytes.decode("utf-8").splitlines():
+            for line in selected_bytes.decode("utf-8").split("\n"):
+                if not line.strip():
+                    continue
                 value = json.loads(line)
                 if not isinstance(value, dict):
                     raise ValueError("selection record must be an object")

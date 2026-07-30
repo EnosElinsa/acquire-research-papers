@@ -119,6 +119,25 @@ def test_selection_store_round_trips_records_and_summary(tmp_path: Path) -> None
     assert len(loaded.manifest["selected_sha256"]) == 64
 
 
+def test_selection_store_preserves_unicode_line_separator_in_title(
+    tmp_path: Path,
+) -> None:
+    item = replace(candidate(), title="Evolutionary search\u2028with multiple populations")
+    records = build_selection_records(
+        [item],
+        venues=(
+            VenueScope(
+                "Invented Proceedings", short_name="IP", publisher="Invented Society"
+            ),
+        ),
+        delivery=numbered_delivery(),
+    )
+
+    store = SelectionStore.write(tmp_path, {"name": "test"}, records)
+
+    assert SelectionStore.load(store.manifest_path).records == records
+
+
 def test_selection_store_rejects_modified_jsonl(tmp_path: Path) -> None:
     records = build_selection_records(
         [candidate()],

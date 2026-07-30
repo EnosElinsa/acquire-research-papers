@@ -93,11 +93,8 @@ class CorpusReviewWorkflow:
     @staticmethod
     def _read_jsonl(path: Path) -> list[dict[str, Any]]:
         try:
-            return [
-                json.loads(line)
-                for line in path.read_text(encoding="utf-8").splitlines()
-                if line.strip()
-            ]
+            with path.open("r", encoding="utf-8") as handle:
+                return [json.loads(line) for line in handle if line.strip()]
         except (OSError, UnicodeError, json.JSONDecodeError) as exc:
             raise ReviewValidationError(f"could not read review artifact: {path.name}") from exc
 

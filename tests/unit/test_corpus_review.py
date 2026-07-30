@@ -19,6 +19,19 @@ from acquire_research_papers.discovery.review import (
 from acquire_research_papers.selection import SelectionStore
 
 
+def test_review_jsonl_reader_preserves_unicode_line_separator_inside_string(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "records.jsonl"
+    record = {"title": "Evolutionary search\u2028with multiple populations"}
+    path.write_text(
+        json.dumps(record, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    assert CorpusReviewWorkflow._read_jsonl(path) == [record]
+
+
 def corpus_spec(*, minimum: int = 2, preferred: int = 2) -> dict:
     return {
         "mode": "corpus",

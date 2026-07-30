@@ -96,20 +96,19 @@ def _read_previous(path: Path) -> dict[str, dict[str, Any]]:
         return {}
     previous: dict[str, dict[str, Any]] = {}
     try:
-        for line_number, line in enumerate(
-            path.read_text(encoding="utf-8").splitlines(), start=1
-        ):
-            if not line.strip():
-                continue
-            value = json.loads(line)
-            if not isinstance(value, dict) or not value.get("selection_id"):
-                raise ValueError(
-                    f"acquisition manifest row {line_number} has no selection_id"
-                )
-            selection_id = str(value["selection_id"])
-            if selection_id in previous:
-                raise ValueError("acquisition manifest contains duplicate selection_id")
-            previous[selection_id] = value
+        with path.open("r", encoding="utf-8") as handle:
+            for line_number, line in enumerate(handle, start=1):
+                if not line.strip():
+                    continue
+                value = json.loads(line)
+                if not isinstance(value, dict) or not value.get("selection_id"):
+                    raise ValueError(
+                        f"acquisition manifest row {line_number} has no selection_id"
+                    )
+                selection_id = str(value["selection_id"])
+                if selection_id in previous:
+                    raise ValueError("acquisition manifest contains duplicate selection_id")
+                previous[selection_id] = value
     except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
         raise ValueError("existing acquisition output has an unreadable acquisition manifest") from exc
     return previous

@@ -488,6 +488,30 @@ def test_acquire_corpus_rejects_a_corrupt_existing_ledger(tmp_path: Path) -> Non
         workflow.run(selection.manifest_path, output)
 
 
+def test_acquire_corpus_reads_unicode_line_separator_in_existing_ledger(
+    tmp_path: Path,
+) -> None:
+    selection = make_selection(tmp_path / "selection")
+    output = tmp_path / "delivery"
+    workflow = CorpusAcquisitionWorkflow(acquirer=delivered_outcome)
+    workflow.run(selection.manifest_path, output)
+    ledger = output / "acquisition-manifest.jsonl"
+    records = [
+        json.loads(line)
+        for line in ledger.read_text(encoding="utf-8").split("\n")
+        if line
+    ]
+    records[0]["message"] = "verified\u2028from existing ledger"
+    ledger.write_text(
+        "".join(json.dumps(record, ensure_ascii=False) + "\n" for record in records),
+        encoding="utf-8",
+    )
+
+    result = workflow.run(selection.manifest_path, output)
+
+    assert result.delivered == len(selection.records)
+
+
 def test_acquire_corpus_refuses_unverified_reserved_paths(tmp_path: Path) -> None:
     selection = make_selection(tmp_path / "selection")
     output = tmp_path / "delivery"
