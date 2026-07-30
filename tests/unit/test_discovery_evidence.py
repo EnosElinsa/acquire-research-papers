@@ -196,6 +196,54 @@ def test_explicit_exclusion_overrides_positive_prefilter_signal() -> None:
     assert any(signal.startswith("title:multi-agent system") for signal in result.signals)
 
 
+def test_prefilter_rejects_missing_abstract_non_article_records() -> None:
+    records = (
+        ("Table of Contents", "Test Journal"),
+        ("Test Journal", "Test Journal"),
+        ("Test Journal Publication Information", "Test Journal"),
+        ("Test Society Information", "Test Journal"),
+        ("TEST RESEARCH SOCIETY", "Test Journal"),
+        ("Information for Authors", "Test Journal"),
+        ("2025 Index Test Journal", "Test Journal"),
+        ("test-cover2-fill-123", "Test Journal"),
+        ("TechRxiv: Share Your Preprint Research with the World!", "Test Journal"),
+    )
+
+    for title, venue in records:
+        result = evaluate_prefilter(
+            candidate(title=title, venue=venue, abstract="", authors=()),
+            screening_spec(),
+        )
+
+        assert result.exclusion_signals == ("title:non-article-front-matter",), title
+        assert not result.likely_relevant, title
+
+
+def test_prefilter_preserves_research_titles_near_non_article_rules() -> None:
+    records = (
+        candidate(
+            title="Publication Information Extraction With Neural Networks",
+            abstract="",
+            authors=(),
+        ),
+        candidate(
+            title="Cover Song Identification With Evolutionary Optimization",
+            abstract="",
+            authors=(),
+        ),
+        candidate(
+            title="Table of Contents",
+            abstract="We study automated table-of-contents generation.",
+            authors=("Researcher",),
+        ),
+    )
+
+    for item in records:
+        result = evaluate_prefilter(item, screening_spec())
+
+        assert "title:non-article-front-matter" not in result.exclusion_signals
+
+
 def test_labeled_prefilter_fixture_meets_precision_and_recall_floor() -> None:
     fixture = Path(__file__).parents[1] / "fixtures" / "discovery" / "screening-labeled.json"
     records = json.loads(fixture.read_text(encoding="utf-8"))

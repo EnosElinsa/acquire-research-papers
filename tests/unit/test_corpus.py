@@ -669,6 +669,19 @@ def test_topic_exclusion_uses_word_boundaries() -> None:
     assert not CorpusDiscoverer._screen(demo, spec).hard_gates_passed
 
 
+def test_missing_abstract_front_matter_fails_hard_gate() -> None:
+    from acquire_research_papers.discovery.corpus import CorpusDiscoverer
+
+    front_matter = replace(
+        candidate("front-matter", 2026, 0.0, venue="Test Journal"),
+        title="Table of Contents",
+        abstract="",
+        evidence_fields=("title", "venue"),
+    )
+
+    assert not CorpusDiscoverer._screen(front_matter, {}).hard_gates_passed
+
+
 def test_missing_lexical_signal_does_not_fail_hard_gates() -> None:
     from acquire_research_papers.discovery.corpus import CorpusDiscoverer
 

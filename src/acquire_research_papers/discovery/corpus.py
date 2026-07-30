@@ -965,11 +965,8 @@ class CorpusDiscoveryWorkflow:
     def _read_jsonl(path: Path) -> list[dict[str, Any]]:
         if not path.is_file():
             return []
-        return [
-            json.loads(line)
-            for line in path.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
+        with path.open("r", encoding="utf-8") as handle:
+            return [json.loads(line) for line in handle if line.strip()]
 
     @staticmethod
     def _fingerprint(spec: dict[str, Any]) -> str:

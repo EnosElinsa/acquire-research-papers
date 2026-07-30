@@ -11,6 +11,30 @@ from acquire_research_papers.discovery.coordinator import candidate_identity
 
 
 _DASHES = re.compile(r"[\u2010-\u2015\u2212]")
+_NON_ARTICLE_EXACT_TITLES = frozenset(
+    {
+        "connect. support. inspire.",
+        "ieee foundation",
+        "ieee foundation - reflecting on 50 years of impact",
+        "ieee women in engineering membership benefits",
+        "information for authors",
+        "introducing ieee collabratec",
+        "medal of honor",
+        "table of contents",
+        "techrxiv: share your preprint research with the world!",
+        "thank you for your authorship",
+        "together, we are advancing technology",
+    }
+)
+_NON_ARTICLE_SUFFIXES = (
+    " publication information",
+    " information for authors",
+    " society information",
+    " council information",
+)
+_NON_ARTICLE_INDEX = re.compile(r"^\d{4}(?:\s*-\s*\d{4})?\s+index(?:\s|$)")
+_NON_ARTICLE_COVER_PLACEHOLDER = re.compile(r"(?:^|[-_])cover\d*(?:[-_]|$)")
+_NON_ARTICLE_SIGNAL = "title:non-article-front-matter"
 _COMPOUNDS = {
     "multiagent": ("multi", "agent"),
     "multiobjective": ("multi", "objective"),
@@ -78,6 +102,33 @@ def _ordered_phrase_match(haystack: tuple[str, ...], needle: tuple[str, ...]) ->
     return False
 
 
+def _non_article_title_signal(candidate: CandidateMetadata) -> tuple[str, ...]:
+    if candidate.abstract.strip():
+        return ()
+    title = _display_term(candidate.title)
+    venue = _display_term(candidate.venue)
+    if not title:
+        return ()
+    if title in _NON_ARTICLE_EXACT_TITLES:
+        return (_NON_ARTICLE_SIGNAL,)
+    if venue and title == venue:
+        return (_NON_ARTICLE_SIGNAL,)
+    if title.endswith(_NON_ARTICLE_SUFFIXES):
+        return (_NON_ARTICLE_SIGNAL,)
+    if _NON_ARTICLE_INDEX.search(title):
+        return (_NON_ARTICLE_SIGNAL,)
+    if _NON_ARTICLE_COVER_PLACEHOLDER.search(title):
+        return (_NON_ARTICLE_SIGNAL,)
+    letters = tuple(character for character in candidate.title if character.isalpha())
+    if (
+        title.endswith((" society", " council"))
+        and letters
+        and all(character.isupper() for character in letters)
+    ):
+        return (_NON_ARTICLE_SIGNAL,)
+    return ()
+
+
 @dataclass(frozen=True)
 class PrefilterResult:
     likely_relevant: bool
@@ -111,7 +162,7 @@ def evaluate_prefilter(candidate: CandidateMetadata, spec: dict[str, object]) ->
             if _ordered_phrase_match(field_tokens[field], _tokens(term)):
                 signals.append(f"{field}:{_display_term(term)}")
 
-    exclusions: list[str] = []
+    exclusions = list(_non_article_title_signal(candidate))
     for field, _ in fields:
         for term in exclusion_terms:
             if _ordered_phrase_match(field_tokens[field], _tokens(term)):

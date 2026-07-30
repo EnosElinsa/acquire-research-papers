@@ -14,6 +14,19 @@ from acquire_research_papers.discovery.contracts import (
 from acquire_research_papers.discovery.corpus import CorpusDiscoveryWorkflow
 
 
+def test_jsonl_reader_preserves_unicode_line_separator_inside_string(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "records.jsonl"
+    record = {"title": "Evolutionary search\u2028with multiple populations"}
+    path.write_text(
+        json.dumps(record, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    assert CorpusDiscoveryWorkflow._read_jsonl(path) == [record]
+
+
 def spec() -> dict:
     return {
         "mode": "corpus",
