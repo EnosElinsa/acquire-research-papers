@@ -3,6 +3,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from acquire_research_papers.specs import load_corpus_spec, load_research_brief
+
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -79,6 +81,75 @@ def test_public_documentation_is_present_and_has_no_placeholders() -> None:
     assert all(path.is_file() for path in public_files)
     placeholder = re.compile(r"\b(?:TODO|TBD|FIXME|XXX)\b|\[TODO", re.IGNORECASE)
     assert not [path for path in public_files if placeholder.search(path.read_text(encoding="utf-8"))]
+
+
+def test_readmes_explain_the_user_journey_and_current_maturity() -> None:
+    english = (ROOT / "README.md").read_text(encoding="utf-8")
+    chinese = (ROOT / "README.zh-CN.md").read_text(encoding="utf-8")
+
+    english_sections = {
+        "## Choose the workflow",
+        "## First use: configure only what this task needs",
+        "## How corpus discovery actually works",
+        "## How literature research actually works",
+        "## Source support and maturity",
+        "## Accuracy and trust boundaries",
+        "## Current limitations",
+        "## Roadmap",
+    }
+    chinese_sections = {
+        "## 选择适合的工作流",
+        "## 首次使用：只配置当前任务需要的能力",
+        "## 论文集检索实际如何工作",
+        "## 文献调研实际如何工作",
+        "## 来源支持与成熟度",
+        "## 准确性与可信边界",
+        "## 当前限制",
+        "## 后续路线图",
+    }
+    assert english_sections <= set(english.splitlines())
+    assert chinese_sections <= set(chinese.splitlines())
+
+    shared_contracts = (
+        "arp config status",
+        "pending_abstract",
+        "ready_unreviewed",
+        "manual-download.csv",
+        "Crossref",
+        "OpenAlex",
+        "Semantic Scholar",
+        "ScienceDirect",
+        "ACM",
+        "IEEE",
+        "MinerU",
+    )
+    for contract in shared_contracts:
+        assert contract in english
+        assert contract in chinese
+
+    assert "status: planned" in english
+    assert "status: planned" in chinese
+    assert "live-tested end to end with one CARSI institution" in english
+    assert "已在一个 CARSI 院校完成端到端真实验证" in chinese
+    assert "does not prove live API or publisher entitlement" in english
+    assert "不代表远端 API 或出版社权限一定可用" in chinese
+    assert "precision/recall" in english
+    assert "precision/recall" in chinese
+
+
+def test_readme_yaml_examples_are_copyable_specs(tmp_path: Path) -> None:
+    for readme_name in ("README.md", "README.zh-CN.md"):
+        text = (ROOT / readme_name).read_text(encoding="utf-8")
+        yaml_blocks = re.findall(r"```yaml\n(.*?)\n```", text, flags=re.DOTALL)
+        assert len(yaml_blocks) == 2
+
+        corpus_path = tmp_path / f"{readme_name}-corpus.yaml"
+        research_path = tmp_path / f"{readme_name}-research.yaml"
+        corpus_path.write_text(yaml_blocks[0], encoding="utf-8")
+        research_path.write_text(yaml_blocks[1], encoding="utf-8")
+
+        assert load_corpus_spec(corpus_path)["mode"] == "corpus"
+        assert load_research_brief(research_path)["mode"] == "research"
 
 
 def test_tracked_text_contains_no_jwt_or_private_key() -> None:
