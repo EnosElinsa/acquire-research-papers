@@ -61,6 +61,7 @@ packages = ["src/acquire_research_papers"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "scripts" = "acquire_research_papers/_scripts"
+"schemas" = "acquire_research_papers/_schemas"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

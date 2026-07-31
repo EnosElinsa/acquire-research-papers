@@ -84,6 +84,9 @@ from acquire_research_papers.mineru import (
 from acquire_research_papers.models import PaperStatus
 from acquire_research_papers.paths import AppPaths, ensure_outside_repository
 from acquire_research_papers.registry import Registry
+from acquire_research_papers.research.evidence_workflow import ResearchEvidenceWorkflow
+from acquire_research_papers.research.fulltext import ResearchFullTextWorkflow
+from acquire_research_papers.research.review import ResearchReviewWorkflow
 from acquire_research_papers.research.workflow import ResearchDiscoverer, ResearchWorkflow
 from acquire_research_papers.resolver import AmbiguousInput, Resolver
 from acquire_research_papers.selection import SelectionRecord, SelectionStore
@@ -278,6 +281,7 @@ class Application:
     corpus_discovery: CorpusDiscoveryWorkflow | None = None
     corpus_acquisition: CorpusAcquisitionWorkflow | None = None
     research_workflow: ResearchWorkflow | None = None
+    research_fulltext: ResearchFullTextWorkflow | None = None
     mineru_cache: MineruCache | None = None
     manual_handoff: ManualHandoffWorkflow | None = None
     manual_selection: ManualSelectionWorkflow | None = None
@@ -292,6 +296,7 @@ class Application:
         corpus_discovery: CorpusDiscoveryWorkflow | None = None,
         corpus_acquisition: CorpusAcquisitionWorkflow | None = None,
         research_workflow: ResearchWorkflow | None = None,
+        research_fulltext: ResearchFullTextWorkflow | None = None,
         mineru_cache: MineruCache | None = None,
         manual_handoff: ManualHandoffWorkflow | None = None,
         manual_selection: ManualSelectionWorkflow | None = None,
@@ -311,6 +316,7 @@ class Application:
             corpus_discovery=corpus_discovery,
             corpus_acquisition=corpus_acquisition,
             research_workflow=research_workflow,
+            research_fulltext=research_fulltext,
             mineru_cache=mineru_cache,
             manual_handoff=manual_handoff,
             manual_selection=manual_selection,
@@ -400,16 +406,50 @@ class Application:
                 progress=discovery_progress,
             ),
             corpus_acquisition=None,
-            research_workflow=ResearchWorkflow(
-                discoverer=ResearchDiscoverer([crossref.corpus_searcher]),
-                mineru_cache=mineru_cache,
-            ),
+            research_workflow=None,
+            research_fulltext=None,
             mineru_cache=mineru_cache,
             manual_handoff=manual_handoff,
             manual_selection=ManualSelectionWorkflow(opener=webbrowser.open),
         )
         application.corpus_acquisition = CorpusAcquisitionWorkflow(
             acquirer=application.acquire_selected
+        )
+        research_searchers = [crossref.corpus_searcher]
+        research_graph_expanders = []
+        semantic_key = (
+            os.environ.get("SEMANTIC_SCHOLAR_API_KEY", "").strip()
+            or discovery_api_keys.get("semantic_scholar", "").strip()
+        )
+        semantic_research = SemanticScholarClient(
+            client=SafeHttpClient(allowed_hosts={"api.semanticscholar.org"}),
+            api_key=semantic_key or None,
+            request_pacer=semantic_request_pacer,
+        )
+        research_graph_expanders.append(semantic_research.expand)
+        if semantic_key:
+            research_searchers.append(semantic_research.corpus_searcher)
+        openalex_key = (
+            os.environ.get("OPENALEX_API_KEY", "").strip()
+            or discovery_api_keys.get("openalex", "").strip()
+        )
+        if openalex_key:
+            openalex_research = OpenAlexClient(
+                client=SafeHttpClient(allowed_hosts={"api.openalex.org"}),
+                api_key=openalex_key,
+            )
+            research_searchers.append(openalex_research.corpus_searcher)
+            research_graph_expanders.append(openalex_research.expand)
+        application.research_workflow = ResearchWorkflow(
+            discoverer=ResearchDiscoverer(
+                research_searchers,
+                graph_expanders=research_graph_expanders,
+            ),
+            mineru_cache=mineru_cache,
+        )
+        application.research_fulltext = ResearchFullTextWorkflow(
+            acquisition=application.corpus_acquisition,
+            mineru_cache=mineru_cache,
         )
         return application
 
@@ -782,6 +822,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     review_corpus.add_argument("--run", type=Path, required=True)
     review_corpus.add_argument("--decisions", type=Path, required=True)
+    review_research = review_modes.add_parser(
+        "research", help="freeze explicitly reviewed closest research papers"
+    )
+    review_research.add_argument("--run", type=Path, required=True)
+    review_research.add_argument("--decisions", type=Path, required=True)
 
     discover = subparsers.add_parser("discover", help="discover a corpus or research evidence")
     discover_modes = discover.add_subparsers(dest="discover_mode", required=True)
@@ -814,6 +859,32 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         help="defer an exact publisher hostname to the manual-download queue (repeatable)",
     )
+    acquire_research = acquire_modes.add_parser(
+        "research", help="acquire and parse a frozen closest-paper selection"
+    )
+    acquire_research.add_argument("--run", type=Path, required=True)
+    acquire_research.add_argument(
+        "--accept-ieee-attribute-release",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="automatically use the configured institutional accept control (enabled by default)",
+    )
+    acquire_research.add_argument(
+        "--defer-host",
+        action="append",
+        default=[],
+        help="defer an exact publisher hostname to the manual-download queue (repeatable)",
+    )
+
+    evidence = subparsers.add_parser(
+        "evidence", help="validate claim evidence against hash-bound full text"
+    )
+    evidence_modes = evidence.add_subparsers(dest="evidence_mode", required=True)
+    evidence_research = evidence_modes.add_parser(
+        "research", help="import Codex evidence and generate final research reports"
+    )
+    evidence_research.add_argument("--run", type=Path, required=True)
+    evidence_research.add_argument("--records", type=Path, required=True)
     return parser
 
 
@@ -855,10 +926,7 @@ def run_cli(
                 getattr(args, "accept_ieee_attribute_release", True)
             ),
             discovery_progress=discovery_progress,
-            load_discovery_api_keys=(
-                args.command == "discover"
-                and getattr(args, "discover_mode", None) == "corpus"
-            ),
+            load_discovery_api_keys=(args.command == "discover"),
         )
     except ApiKeyLoadError as exc:
         _emit(
@@ -974,8 +1042,13 @@ def run_cli(
         if args.command == "discover" and args.discover_mode == "research":
             if app.research_workflow is None:
                 raise AmbiguousInput("research discovery is not configured")
-            destination = ensure_outside_repository(args.output, app.repository_root)
-            result = app.research_workflow.run(load_research_brief(args.brief), destination)
+            try:
+                destination = ensure_outside_repository(args.output, app.repository_root)
+                result = app.research_workflow.run(
+                    load_research_brief(args.brief), destination
+                )
+            except ValueError as exc:
+                raise AmbiguousInput(str(exc)) from exc
             _emit(
                 {
                     "status": result.status,
@@ -986,6 +1059,10 @@ def run_cli(
                     "nearest_work_matrix": str(result.delivery.nearest_work_matrix),
                     "gap_analysis": str(result.delivery.gap_analysis),
                     "research_plan": str(result.delivery.research_plan),
+                    "candidates": str(result.delivery.candidates_snapshot),
+                    "citation_graph": str(result.delivery.citation_graph),
+                    "run_manifest": str(result.delivery.run_manifest),
+                    "claim_coverage": str(result.delivery.claim_coverage),
                 }
             )
             return 0
@@ -1011,6 +1088,29 @@ def run_cli(
                     "selected": result.selected,
                     "shortfall_classes": list(result.shortfall_classes),
                     "quota_shortfalls": list(result.quota_shortfalls),
+                }
+            )
+            return 0
+        if args.command == "review" and args.review_mode == "research":
+            try:
+                run_root = ensure_outside_repository(args.run, app.repository_root)
+                result = ResearchReviewWorkflow().run(run_root, args.decisions)
+            except ValueError as exc:
+                raise AmbiguousInput(str(exc)) from exc
+            _emit(
+                {
+                    "status": result.status,
+                    "manifest": str(result.manifest_path),
+                    "reviewed": str(result.reviewed_path),
+                    "pending_review": str(result.pending_path),
+                    "selection_manifest": (
+                        str(result.selection_manifest_path)
+                        if result.selection_manifest_path
+                        else None
+                    ),
+                    "included": result.included,
+                    "excluded": result.excluded,
+                    "pending": result.pending,
                 }
             )
             return 0
@@ -1040,6 +1140,53 @@ def run_cli(
                     "retryable": result.retryable,
                     "contract_error": result.contract_error,
                     "complete": result.complete,
+                }
+            )
+            return 0
+        if args.command == "acquire" and args.acquire_mode == "research":
+            if app.research_fulltext is None:
+                raise AmbiguousInput("research full-text acquisition is not configured")
+            try:
+                run_root = ensure_outside_repository(args.run, app.repository_root)
+                result = app.research_fulltext.run(
+                    run_root,
+                    deferred_hosts=args.defer_host,
+                )
+            except ValueError as exc:
+                raise AmbiguousInput(str(exc)) from exc
+            _emit(
+                {
+                    "status": result.status,
+                    "full_text_manifest": str(result.full_text_manifest),
+                    "manifest": str(result.manifest_path),
+                    "acquisition_manifest": str(result.acquisition.manifest_path),
+                    "manual_download": str(result.acquisition.manual_download_path),
+                    "parsed": result.parsed,
+                    "pending": result.pending,
+                    "acquisition_pending": result.acquisition_pending,
+                    "parsing_pending": result.parsing_pending,
+                }
+            )
+            return 0
+        if args.command == "evidence" and args.evidence_mode == "research":
+            try:
+                run_root = ensure_outside_repository(args.run, app.repository_root)
+                result = ResearchEvidenceWorkflow().run(run_root, args.records)
+            except ValueError as exc:
+                raise AmbiguousInput(str(exc)) from exc
+            _emit(
+                {
+                    "status": result.status,
+                    "manifest": str(result.manifest_path),
+                    "validated_reviews": str(result.reviewed_path),
+                    "pending_review": str(result.pending_path),
+                    "evidence_map": str(result.evidence_map),
+                    "nearest_work_matrix": str(result.nearest_work_matrix),
+                    "gap_analysis": str(result.gap_analysis),
+                    "claim_coverage": str(result.claim_coverage),
+                    "reviewed": result.reviewed,
+                    "pending": result.pending,
+                    "evidence_records": result.evidence_records,
                 }
             )
             return 0

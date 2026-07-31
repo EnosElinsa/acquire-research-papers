@@ -52,6 +52,7 @@ def test_public_repository_metadata_is_complete() -> None:
         "force-include"
     ]
     assert force_include["scripts"] == "acquire_research_papers/_scripts"
+    assert force_include["schemas"] == "acquire_research_papers/_schemas"
     assert configuration["tool"]["hatch"]["build"]["exclude"] == ["/docs"]
 
 

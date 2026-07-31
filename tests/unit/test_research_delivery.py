@@ -1,9 +1,12 @@
+import json
 from pathlib import Path
 
+import pytest
 from acquire_research_papers.discovery.corpus import CandidateMetadata
 from acquire_research_papers.research.delivery import ResearchDelivery
 from acquire_research_papers.research.evidence import EvidenceRecord
 from acquire_research_papers.research.planner import ResearchPlanner
+from acquire_research_papers.research.workflow import GraphBounds
 
 
 def brief() -> dict:
@@ -39,11 +42,79 @@ def test_research_delivery_writes_evidence_package_without_full_text_markdown(tm
         plan=ResearchPlanner().build(brief()),
         candidates=[candidate],
         evidence=[evidence],
+        graph_bounds=GraphBounds(
+            seed_limit=1,
+            neighbors_per_direction=10,
+            requested_seeds=("10.1000/one", "10.1000/two"),
+            expanded_seeds=("10.1000/one",),
+            skipped_seeds=("10.1000/two",),
+        ),
     )
     assert result.manifest.name == "research-manifest.csv"
     assert result.evidence_map.name == "evidence-map.md"
     assert result.nearest_work_matrix.name == "nearest-work-matrix.csv"
     assert result.gap_analysis.name == "gap-analysis.md"
+    assert result.candidates_snapshot.name == "research-candidates.jsonl"
+    packet = json.loads(result.candidates_snapshot.read_text(encoding="utf-8"))
+    assert packet["candidate"]["key"] == "paper-1"
+    assert len(packet["candidate_sha256"]) == 64
+    run = json.loads(result.run_manifest.read_text(encoding="utf-8"))
+    assert run["candidates_sha256"]
+    assert run["status"] == "review_required"
+    graph = json.loads(result.citation_graph.read_text(encoding="utf-8"))
+    assert graph["bounds"]["skipped_seeds"] == ["10.1000/two"]
     assert "within the searched scope" in result.gap_analysis.read_text(encoding="utf-8")
     assert not list((tmp_path / "out").rglob("paper.md"))
     assert not (tmp_path / "out" / "narrative.md").exists()
+
+
+def test_research_discovery_cannot_overwrite_an_existing_run(tmp_path: Path) -> None:
+    output = tmp_path / "out"
+    delivery = ResearchDelivery(output)
+    arguments = {
+        "brief": brief(),
+        "plan": ResearchPlanner().build(brief()),
+        "candidates": [],
+        "evidence": [],
+    }
+    delivery.write(**arguments)
+
+    with pytest.raises(ValueError, match="immutable research run"):
+        delivery.write(**arguments)
+
+
+def test_research_delivery_requires_requested_claim_relation(tmp_path: Path) -> None:
+    scoped_brief = brief()
+    scoped_brief["claims"] = [
+        {
+            "id": "claim-1",
+            "text": "The method directly supports the coupling.",
+            "required_relation": "direct-support",
+        }
+    ]
+    candidate = CandidateMetadata(
+        "paper-1", "Nearest Work", 2025, "Test", 0.9, True, ("title", "abstract")
+    )
+    evidence = EvidenceRecord(
+        claim_id="claim-1",
+        paper_id="paper-1",
+        relation="background",
+        read_scope="full-text",
+        section="Introduction",
+        page=1,
+        excerpt="Related background.",
+        explanation="This is context, not direct support.",
+    ).validate()
+
+    result = ResearchDelivery(tmp_path / "out").write(
+        brief=scoped_brief,
+        plan=ResearchPlanner().build(scoped_brief),
+        candidates=[candidate],
+        evidence=[evidence],
+    )
+
+    coverage = result.claim_coverage.read_text(encoding="utf-8-sig")
+    assert "required_relation" in coverage
+    assert "claim-1" in coverage
+    assert "direct-support" in coverage
+    assert "unresolved" in coverage

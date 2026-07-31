@@ -33,6 +33,7 @@ def test_research_brief_defaults_delivery_flags(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     brief = load_research_brief(path)
+    assert brief["analysis"]["max_full_text_papers"] == 20
     assert brief["delivery"] == {"write_narrative": False, "export_markdown": False}
 
 

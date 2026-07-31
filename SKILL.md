@@ -90,6 +90,12 @@ uv run --project $skill arp acquire corpus `
   --selection <discovery-run\selection-manifest.json> --output <delivery-root> `
   --defer-host <publisher.example>
 uv run --project $skill arp discover research --brief <brief.yaml> --output <directory>
+uv run --project $skill arp review research `
+  --run <directory> --decisions <research-review.jsonl>
+uv run --project $skill arp acquire research --run <directory> `
+  --defer-host <publisher.example>
+uv run --project $skill arp evidence research `
+  --run <directory> --records <evidence-review.jsonl>
 ```
 
 Discovery writes `request-spec.json`, `coverage.jsonl`, `candidates.jsonl`, `evidence-packets.jsonl`, `pending-metadata.csv`, `discovery-errors.jsonl`, and `discovery-manifest.json`. It writes no selection, PDF, BibTeX, acquisition ledger, or manual-download queue. Resume the same run to retry partial coverage; complete venue/year slices are checkpointed.
@@ -99,6 +105,14 @@ Codex must inspect `evidence-packets.jsonl` and create hash-bound JSONL decision
 `review corpus` verifies the request, candidate, evidence, and coverage hashes; rejects unknown IDs, duplicate decisions, stale hashes, missing explanations, and acceptance without title-and-abstract evidence; and revalidates an existing frozen selection on every rerun. It writes `reviewed-candidates.jsonl`, `pending-review.csv`, `selected-papers.jsonl`, and `selection-manifest.json`. The selection manifest hashes both the normalized specification and selected list; edit neither file before acquisition.
 
 Acquisition verifies that frozen hash, writes `selection-binding.json` before the first publisher call, processes only `selected-papers.jsonl`, and never changes the selection. It writes verified pairs, `acquisition-manifest.jsonl`, `manual-download.csv`, `retryable-downloads.csv`, and `delivery-manifest.json`. A known access or paper-level failure does not stop unrelated selections. Corrupt ledgers and unbound or unverified reserved artifacts are rejected instead of overwritten.
+
+Research is a resumable four-stage workflow. `discover research` runs the four query passes across configured search APIs, performs bounded backward/forward/related graph expansion, and writes `research-candidates.jsonl`, `citation-graph.json`, and `research-run.json`. Optional provider failures remain sanitized diagnostics; they do not erase successful results from other sources.
+
+Codex must inspect every research candidate packet and create one row conforming to `schemas/research-review-decision.schema.json`. `review research` rejects stale candidate hashes, unknown claims, omitted explanations, non-Codex reviewers, duplicate decisions, and selections above `analysis.max_full_text_papers`. It freezes a selection only when every candidate has an explicit include/exclude decision, then binds both the normalized decisions and review manifest by SHA-256.
+
+`acquire research` reuses the standard official publisher acquisition workflow. It never substitutes metadata APIs or repositories for the official PDF/BibTeX pair. Delivered PDFs are parsed through the content-addressed MinerU cache and recorded in `full-text-manifest.jsonl`; inaccessible publishers and parse failures stay pending so the same run can resume. Inspect both `acquisition_pending` and `parsing_pending`; the top-level status names the earliest unfinished gate so a manual publisher item is never hidden by a parser or evidence task.
+
+After reading each parsed closest paper, Codex must create one row conforming to `schemas/research-evidence-review.schema.json`. `evidence research` verifies the selected paper ID, PDF SHA-256, Markdown SHA-256, claim IDs, relation/read-scope contract, and that every full-text excerpt occurs in the bound Markdown. It then fills `evidence-map.md`, `nearest-work-matrix.csv`, `claim-coverage.csv`, and `gap-analysis.md`. A run is `complete` only when every frozen paper has a completed full-text evidence review; unresolved claims remain explicitly unresolved and never become automatic novelty claims.
 
 Use repeatable `--defer-host <exact-hostname>` options when a publisher must not be contacted during the current run. Matching is exact and case-insensitive: already hash-verified deliveries remain delivered, while undelivered records for those hosts enter `manual-download.csv` as `access_required`. Never remove deferred records from the frozen selection.
 
@@ -116,7 +130,7 @@ Read [references/corpus-mode.md](references/corpus-mode.md) or [references/resea
 
 ## Markdown policy
 
-Research mode may use a seven-day SHA-256 MinerU cache for internal reading. Do not copy that Markdown into delivery. Export it only after the user explicitly requests and approves a destination:
+`acquire research` uses a seven-day SHA-256 MinerU cache for internal reading. Do not copy that Markdown into publisher delivery. Export it only after the user explicitly requests and approves a destination:
 
 ```powershell
 uv run --project $skill arp export-md --pdf <paper.pdf> --output <directory>

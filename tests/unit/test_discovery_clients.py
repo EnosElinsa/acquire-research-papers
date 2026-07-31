@@ -516,6 +516,91 @@ def test_semantic_scholar_search_uses_header_key_and_candidate_query(fixture_ser
     )
 
 
+def test_semantic_scholar_expands_references_with_doi_seed(fixture_server) -> None:
+    recommended = json.loads(
+        (FIXTURES / "semantic-scholar.json").read_text(encoding="utf-8")
+    )["recommendedPapers"]
+
+    def handler(request):
+        assert request.headers["x-api-key"] == "synthetic-key"
+        assert request.args["limit"] == "25"
+        assert "externalIds" in request.args["fields"]
+        return Response(
+            json.dumps({"data": [{"citedPaper": recommended[0]}]}),
+            content_type="application/json",
+        )
+
+    fixture_server.server.expect_request(
+        "/graph/paper/DOI:10.1234/seed/references"
+    ).respond_with_handler(handler)
+    client = SemanticScholarClient(
+        client=SafeHttpClient(allowed_hosts={fixture_server.host}),
+        graph_endpoint=fixture_server.url("/graph/paper"),
+        api_key="synthetic-key",
+    )
+
+    candidates = client.expand("10.1234/seed", "references", 25)
+
+    assert candidates[0].doi == "10.1234/s2.1"
+    assert candidates[0].provenance["source"] == "semantic-scholar"
+
+
+def test_semantic_scholar_preserves_non_doi_exact_seed_identifiers(fixture_server) -> None:
+    fixture_server.server.expect_request(
+        "/graph/paper/CorpusId:123/references"
+    ).respond_with_json({"data": []})
+    client = SemanticScholarClient(
+        client=SafeHttpClient(allowed_hosts={fixture_server.host}),
+        graph_endpoint=fixture_server.url("/graph/paper"),
+        api_key=None,
+    )
+
+    assert client.expand("CorpusId:123", "references", 5) == ()
+
+
+def test_openalex_expands_forward_citations_without_key_provenance(fixture_server) -> None:
+    observed: list[dict[str, str]] = []
+
+    def handler(request):
+        observed.append(dict(request.args))
+        if len(observed) == 1:
+            return Response(
+                json.dumps({"results": [{"id": "https://openalex.org/WSEED"}]}),
+                content_type="application/json",
+            )
+        return Response(
+            json.dumps(
+                {
+                    "results": [
+                        {
+                            "id": "https://openalex.org/WCITING",
+                            "title": "Forward Citation",
+                            "publication_year": 2026,
+                            "doi": "https://doi.org/10.1000/citing",
+                        }
+                    ]
+                }
+            ),
+            content_type="application/json",
+        )
+
+    fixture_server.server.expect_request("/works").respond_with_handler(handler)
+    fixture_server.server.expect_request("/works").respond_with_handler(handler)
+    client = OpenAlexClient(
+        client=SafeHttpClient(allowed_hosts={fixture_server.host}),
+        endpoint=fixture_server.url("/works"),
+        api_key="synthetic-key",
+    )
+
+    candidates = client.expand("10.1000/seed", "citations", 20)
+
+    assert candidates[0].doi == "10.1000/citing"
+    assert observed[0]["filter"] == "doi:https://doi.org/10.1000/seed"
+    assert observed[1]["filter"] == "cites:WSEED"
+    assert observed[1]["per-page"] == "20"
+    assert "synthetic-key" not in json.dumps(candidates[0].provenance)
+
+
 def test_semantic_scholar_batches_doi_lookup_without_requiring_a_key(
     fixture_server,
 ) -> None:

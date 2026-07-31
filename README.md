@@ -21,7 +21,7 @@ A completed acquisition is an identity-verified pair: the official publisher PDF
 | You have a DOI or official URL | `fetch` | One verified PDF/BibTeX pair, or an actionable access result |
 | You need papers from specified venues, years, and topics | `discover corpus` → Codex review → `review corpus` → `acquire corpus` | Coverage evidence, a frozen selection, verified deliveries, and manual/retry queues |
 | A publisher requires authorized user interaction | `manual-fetch` | The official files you download are taken over locally, identified, verified, and placed in the reserved delivery paths |
-| You need nearest work, claim citations, Related Work, or a gap check | `discover research` followed by Codex review and full-text evidence work | A search plan and candidate package first; defensible evidence only after the closest papers are read |
+| You need nearest work, claim citations, Related Work, or a gap check | `discover research` → `review research` → `acquire research` → `evidence research` | A citation graph, frozen closest-paper set, verified full text, and claim-level evidence reports |
 | You explicitly need PDF-to-Markdown | `export-md` | A successful MinerU result exported on request; Markdown is never part of ordinary acquisition |
 
 The corpus path is intentionally separated into four stages:
@@ -188,6 +188,10 @@ work_under_review:
   objectives: [latency, solution quality]
   constraints: [limited communication budget]
 seed_papers: []
+analysis:
+  max_full_text_papers: 20
+  graph_seed_limit: 3
+  graph_neighbors_per_direction: 25
 scope:
   years: [2023, 2024, 2025, 2026]
 delivery:
@@ -200,7 +204,18 @@ uv run --project $skill arp discover research `
   --brief .\research-brief.yaml --output C:\Research\literature-review
 ```
 
-This command currently returns `status: planned`: it prepares the four search passes and candidate package. It is not a claim that citation expansion, full-text reading, or gap validation is complete.
+Discovery returns `status: review_required`. Codex then reviews the hash-bound candidates, freezes the closest papers, acquires their official files, reads the MinerU parses, and imports evidence:
+
+```powershell
+uv run --project $skill arp review research `
+  --run C:\Research\literature-review --decisions .\research-review.jsonl
+uv run --project $skill arp acquire research `
+  --run C:\Research\literature-review
+uv run --project $skill arp evidence research `
+  --run C:\Research\literature-review --records .\evidence-review.jsonl
+```
+
+The review and evidence JSONL files are produced by Codex from the immutable packets and parsed full text, using the public schemas in `schemas/`. A final `status: complete` means every paper in the frozen closest-paper set was reviewed; it does not claim that every paper in the world was found or that novelty is universally proven.
 
 ## How corpus discovery actually works
 
@@ -231,14 +246,14 @@ A defensible literature investigation needs more than one keyword query. The int
 
 Title and abstract are enough to nominate and triage candidates. A claim that a paper directly supports, contradicts, or already solves a research question requires a full-text read with a section or page and a short excerpt. Gap conclusions must be bounded to the searched scope and name the closest counterexamples.
 
-The current implementation is a foundation, not a one-command systematic review. The default `discover research` command:
+Research mode is an explicit, resumable pipeline rather than an unattended one-command systematic review:
 
-- builds all four query forms;
-- searches Crossref and deduplicates a bounded candidate set;
-- writes the plan, candidate manifest, pending-review list, nearest-work matrix, evidence-map scaffold, and gap-report scaffold;
-- deliberately asserts no novelty conclusion before full-text validation.
+- `discover research` searches Crossref plus configured Semantic Scholar/OpenAlex sources, deduplicates by DOI, and executes bounded backward, forward, and related-paper expansion. Each optional provider can fail independently, leaving a sanitized diagnostic rather than erasing other results.
+- `review research` requires one explicit Codex include/exclude decision for every hash-bound candidate, then freezes only the closest papers selected for full-text checking. Its normalized decisions and review manifest are hash-bound into the selection.
+- `acquire research` reuses the official publisher workflow, preserves manual and retry queues, and parses verified PDFs through the content-addressed MinerU cache. Separate acquisition/parsing pending counts keep mixed failures visible; the top-level status identifies the earliest unfinished gate.
+- `evidence research` verifies paper IDs, PDF and Markdown hashes, claim IDs, read scope, locations, and excerpts before filling the evidence map, closest-work matrix, claim coverage, and bounded gap report.
 
-It does **not yet** execute the planned citation graph, use OpenAlex/Semantic Scholar as default research searchers, acquire and read the closest papers automatically, or populate claim-level evidence by itself. In the full Codex skill workflow, the agent must continue with publisher acquisition, optional MinerU parsing, manual evidence review, and bounded synthesis. The README treats these as remaining work instead of presenting empty scaffolds as completed research.
+Title and abstract still only nominate candidates. Direct support and contradiction require a full-text excerpt with a section or page. Papers blocked by publisher access or MinerU remain pending in the same frozen run; they are never silently removed or replaced.
 
 ## How acquisition works
 
@@ -265,8 +280,8 @@ The output directory is bound to one frozen selection before publisher contact. 
 | IEEE Xplore | Candidates usually come from Crossref/OpenAlex/Semantic Scholar | Automatic with a configured CARSI institution profile | Generic profile-driven flow; live-tested end to end with one CARSI institution. Every additional institution requires first-use adaptation and a representative smoke test |
 | ACM Digital Library | Usually Crossref collection enumeration plus optional query APIs | Conditional HTTP adapter | Works only when the official page and artifact endpoints allow the dedicated client. No production browser-backed ACM adapter exists yet; blocked pages become manual work |
 | ScienceDirect | Crossref/OpenAlex/Semantic Scholar discovery; Elsevier API can resolve expected identity | Manual only | The user downloads in a normal authorized browser; the CLI verifies and imports the local pair. No scripted ScienceDirect login or browser automation |
-| Semantic Scholar | Optional keyed candidate search; DOI abstract enrichment can use lower unauthenticated limits | No | Discovery evidence only |
-| OpenAlex | Optional candidate search and DOI abstract enrichment | No | Discovery evidence only |
+| Semantic Scholar | Optional keyed candidate search, DOI enrichment, and citation/related graph expansion | No | Discovery and graph evidence only; provider failures remain diagnostics |
+| OpenAlex | Optional candidate search, DOI enrichment, and citation graph expansion | No | Requires its optional API key; discovery and graph evidence only |
 | MinerU | No | No | Optional seven-day full-text parsing cache; it is analysis support, not a paper source |
 | Generic direct publisher adapter | Internal host-bounded adapter exists | Not enabled as a public production default | Requires an explicit approved-host configuration and productized setup before it should be advertised as general support |
 
@@ -338,6 +353,12 @@ uv run --project $skill arp manual-fetch `
 | `manual-download.csv` | Frozen selections needing authorized user action or a not-yet-supported safe adapter |
 | `retryable-downloads.csv` | Transient failures that can be retried without changing the selection |
 | `delivery-manifest.json` | Acquisition totals, selection binding, and completion state |
+| `research-candidates.jsonl` | Hash-bound research candidates used for explicit closest-paper review |
+| `citation-graph.json` | Bounded backward, forward, and related-paper edges, applied/skipped seed bounds, and sanitized provider diagnostics |
+| `full-text-manifest.jsonl` | Frozen paper, official PDF hash, MinerU Markdown hash, parser mode, and pending state |
+| `validated-evidence-reviews.jsonl` | Codex evidence reviews bound to the exact PDF and parsed Markdown |
+| `claim-coverage.csv` | Per-claim relations, supporting papers, and unresolved status |
+| `evidence-map.md` / `gap-analysis.md` | Auditable evidence locations and a bounded conclusion for the searched scope |
 
 Use repeatable `--defer-host <exact-hostname>` options when a publisher must not be contacted in the current run. Deferred records remain in the selection and enter the manual queue; verified prior deliveries remain delivered.
 
@@ -358,7 +379,8 @@ The repository has regression tests for its contracts and has completed real mul
 - IEEE journal discovery relies primarily on Crossref and optional metadata APIs; there is no official IEEE venue enumerator in the current release.
 - ACM automation has no browser-backed production adapter. Official pages that block the HTTP client become manual items.
 - ScienceDirect acquisition is manual only; the project intentionally does not automate organization login or the article page.
-- `discover research` currently plans and scaffolds a review. Citation-graph execution, automatic closest-paper acquisition, and claim-level full-text evidence are not one-command features.
+- Research mode is staged and requires explicit Codex candidate and evidence decisions; it is not an unattended one-command systematic review.
+- Citation-graph coverage is bounded by configured seeds, neighbor limits, provider coverage, and API availability; it cannot prove universal recall.
 - A paper without a trustworthy abstract remains `pending_abstract`; title-only acceptance is forbidden.
 - New or not-yet-published proceedings and inconsistent upstream metadata can leave coverage incomplete.
 - `arp config status: true` confirms stored configuration shape, not live credentials, quota, subscription, or API entitlement.
@@ -373,7 +395,7 @@ These are improvement priorities, not claims about current support.
 
 ### Near term
 
-1. **Make research mode executable end to end.** Add OpenAlex and Semantic Scholar research searchers, real backward/forward citation traversal, closest-paper acquisition, resumable full-text review, and validated claim-level evidence import.
+1. **Measure research-search saturation.** Add repeatable stopping diagnostics for new mechanisms, citation-frontier growth, classic/recent coverage, and unresolved boundary papers without turning them into false universal-recall claims.
 2. **Add an IEEE institution doctor.** Probe non-secret profile fields, show sanitized stage transitions, validate the resource gateway/entity ID/form contract, and run one representative smoke test without exposing credentials.
 3. **Productize ACM authorized access.** Design a dedicated visible, isolated, exact-host browser contract with the same fail-closed standards as IEEE; retain manual fallback when access or page shape is unknown.
 4. **Support safe delta acquisition and existing-folder import.** Bind a new frozen selection without colliding with already verified user files, and provide an explicit migration command instead of ad hoc copying.
@@ -391,7 +413,7 @@ ScienceDirect browser automation is deliberately not on the roadmap unless publi
 
 ## Optional Markdown policy
 
-Research work may parse a selected PDF through a seven-day SHA-256 MinerU cache for internal reading. Ordinary fetch, manual fetch, corpus discovery, review, and acquisition produce no Markdown. Export only after the user explicitly requests a destination:
+`acquire research` parses selected PDFs into a seven-day SHA-256 MinerU cache for internal evidence review. The cached Markdown is analysis state, not a delivery artifact. Ordinary fetch, manual fetch, and corpus workflows do not produce Markdown. Export only after the user explicitly requests a destination:
 
 ```powershell
 uv run --project $skill arp export-md `

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import re
 import threading
 import time
 from collections.abc import Callable
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 from acquire_research_papers.discovery.contracts import CandidateMetadata
 from acquire_research_papers.http import RateLimited, SafeHttpClient
@@ -47,6 +48,7 @@ class SemanticScholarClient:
         endpoint: str = "https://api.semanticscholar.org/recommendations/v1/papers",
         search_endpoint: str = "https://api.semanticscholar.org/graph/v1/paper/search",
         batch_endpoint: str = "https://api.semanticscholar.org/graph/v1/paper/batch",
+        graph_endpoint: str = "https://api.semanticscholar.org/graph/v1/paper",
         api_key: str | None = None,
         request_pacer: SemanticScholarRequestPacer | None = None,
         rate_limit_retries: int = 4,
@@ -57,6 +59,8 @@ class SemanticScholarClient:
         self.endpoint = endpoint
         self.search_endpoint = search_endpoint
         self.batch_endpoint = batch_endpoint
+        self.graph_endpoint = graph_endpoint.rstrip("/")
+        self.graph_provider_id = "semantic-scholar"
         self.api_key = api_key
         self.request_pacer = request_pacer or SemanticScholarRequestPacer(
             sleeper=sleeper
@@ -193,4 +197,58 @@ class SemanticScholarClient:
             self._candidate(item)
             for item in payload
             if isinstance(item, dict) and item.get("paperId")
+        )
+
+    @staticmethod
+    def _paper_identifier(seed: str) -> str:
+        raw = seed.strip()
+        if not raw:
+            return ""
+        if re.match(r"(?i)^(corpusid|arxiv|mag|acl|pmid|pmcid|url):", raw):
+            return raw
+        normalized = normalize_doi(raw)
+        if normalized and re.match(r"^10\.\d{4,9}/\S+$", normalized):
+            return f"DOI:{normalized}"
+        return raw
+
+    def expand(
+        self,
+        seed: str,
+        direction: str,
+        limit: int,
+    ) -> tuple[CandidateMetadata, ...]:
+        """Expand one bounded citation-graph hop from an exact paper seed."""
+        identifier = self._paper_identifier(seed)
+        if not identifier:
+            return ()
+        if direction == "related":
+            return self.recommend(
+                positive_ids=[identifier],
+                limit=max(1, min(limit, 500)),
+            )
+        relation_key = {
+            "references": "citedPaper",
+            "citations": "citingPaper",
+        }.get(direction)
+        if relation_key is None:
+            raise ValueError(f"unsupported Semantic Scholar graph direction: {direction}")
+        fields = (
+            "paperId,title,abstract,venue,year,publicationDate,publicationTypes,"
+            "authors,externalIds,url,citationCount"
+        )
+        relation_endpoint = (
+            f"{self.graph_endpoint}/{quote(identifier, safe=':')}/{direction}"
+        )
+        query_url = f"{relation_endpoint}?{urlencode({'limit': max(1, min(limit, 1000)), 'fields': fields})}"
+        headers = {"x-api-key": self.api_key} if self.api_key else None
+        payload = self._request(
+            lambda: self.client.get(query_url, headers=headers),
+            endpoint=relation_endpoint,
+        ).json()
+        return tuple(
+            self._candidate(paper)
+            for row in payload.get("data") or ()
+            if isinstance(row, dict)
+            and isinstance((paper := row.get(relation_key)), dict)
+            and paper.get("paperId")
         )

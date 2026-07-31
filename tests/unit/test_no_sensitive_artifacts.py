@@ -127,8 +127,17 @@ def test_readmes_explain_the_user_journey_and_current_maturity() -> None:
         assert contract in english
         assert contract in chinese
 
-    assert "status: planned" in english
-    assert "status: planned" in chinese
+    assert "status: review_required" in english
+    assert "status: review_required" in chinese
+    for command in (
+        "review research",
+        "acquire research",
+        "evidence research",
+        "citation-graph.json",
+        "claim-coverage.csv",
+    ):
+        assert command in english
+        assert command in chinese
     assert "live-tested end to end with one CARSI institution" in english
     assert "已在一个 CARSI 院校完成端到端真实验证" in chinese
     assert "does not prove live API or publisher entitlement" in english

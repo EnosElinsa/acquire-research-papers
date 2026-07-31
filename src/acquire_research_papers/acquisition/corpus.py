@@ -10,7 +10,12 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import quote, urlsplit
 
-from acquire_research_papers.artifacts import atomic_write_bytes, sha256_file
+from acquire_research_papers.artifacts import atomic_write_bytes, sha256_file, validate_pdf
+from acquire_research_papers.acquisition.manual_handoff import (
+    document_from_selection,
+    validate_manual_pair,
+)
+from acquire_research_papers.models import normalize_doi
 from acquire_research_papers.selection import SelectionRecord, SelectionStore
 
 
@@ -185,6 +190,71 @@ def _verified_previous(
         if not path.is_file() or sha256_file(path) != digest:
             return False
     return True
+
+
+def _normalized_identity_text(value: Any) -> str:
+    return " ".join(str(value or "").split()).casefold()
+
+
+def _verified_manual_import(
+    record: SelectionRecord,
+    prior: Mapping[str, Any] | None,
+    root: Path,
+) -> dict[str, Any] | None:
+    if not prior or prior.get("state") != "manual_required":
+        return None
+    expected = _expected_paths(record, root)
+    if not all(path.is_file() for path in expected.values()):
+        return None
+    try:
+        provenance = json.loads(expected["provenance"].read_text(encoding="utf-8"))
+        validate_pdf(expected["pdf"])
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(provenance, dict):
+        return None
+    metadata = provenance.get("metadata")
+    if not isinstance(metadata, dict):
+        return None
+    pdf_sha256 = sha256_file(expected["pdf"])
+    bibtex_sha256 = sha256_file(expected["bibtex"])
+    try:
+        identity_matches = (
+            _normalized_identity_text(metadata.get("title"))
+            == _normalized_identity_text(record.title)
+            and int(metadata.get("year") or 0) == record.year
+            and _normalized_identity_text(metadata.get("venue"))
+            == _normalized_identity_text(record.venue)
+            and normalize_doi(metadata.get("doi")) == normalize_doi(record.doi)
+        )
+    except (TypeError, ValueError):
+        return None
+    if not (
+        provenance.get("selection_id") == record.selection_id
+        and provenance.get("acquisition_method") == "manual_publisher_download"
+        and provenance.get("pdf_sha256") == pdf_sha256
+        and provenance.get("bibtex_sha256") == bibtex_sha256
+        and identity_matches
+    ):
+        return None
+    try:
+        validate_manual_pair(
+            document_from_selection(record),
+            expected["pdf"],
+            expected["bibtex"],
+        )
+    except (OSError, UnicodeError, ValueError):
+        return None
+    return {
+        **_identity_row(record),
+        "state": "delivered",
+        "error_code": "",
+        "message": "",
+        **{kind: str(path) for kind, path in expected.items()},
+        "pdf_sha256": pdf_sha256,
+        "bibtex_sha256": bibtex_sha256,
+        "provenance_sha256": sha256_file(expected["provenance"]),
+    }
 
 
 def _delivered_row(
@@ -400,6 +470,10 @@ class CorpusAcquisitionWorkflow:
             prior = previous.get(record.selection_id)
             if _verified_previous(record, prior, destination):
                 rows.append(dict(prior))
+                continue
+            manual_import = _verified_manual_import(record, prior, destination)
+            if manual_import is not None:
+                rows.append(manual_import)
                 continue
             if any(
                 path.exists() for path in _expected_paths(record, destination).values()

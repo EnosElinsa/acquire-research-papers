@@ -21,7 +21,7 @@ Acquire Research Papers 是一个公开的 Codex skill 和确定性命令行工�
 | 已有 DOI 或出版社正式链接 | `fetch` | 一对经过核验的 PDF/BibTeX，或明确可操作的访问结果 |
 | 要从指定 venue、年份和主题中建立论文集 | `discover corpus` → Codex 评审 → `review corpus` → `acquire corpus` | 覆盖证据、冻结选集、正式文件以及人工/重试队列 |
 | 出版社要求用户在授权浏览器中操作 | `manual-fetch` | 接管用户下载的正式文件，核验身份后放入预留交付位置 |
-| 要找相近工作、观点引用、Related Work 或验证 gap | `discover research`，随后由 Codex 继续评审和全文取证 | 先得到检索计划和候选包；只有阅读最相近论文后才形成可靠证据 |
+| 要找相近工作、观点引用、Related Work 或验证 gap | `discover research` → `review research` → `acquire research` → `evidence research` | 引用图、冻结的最相近论文、经过核验的全文和 claim 级证据报告 |
 | 明确需要把 PDF 转成 Markdown | `export-md` | 按要求导出成功的 MinerU 结果；普通论文获取不会产生 Markdown |
 
 论文集流程被明确分成四个阶段：
@@ -188,6 +188,10 @@ work_under_review:
   objectives: [latency, solution quality]
   constraints: [limited communication budget]
 seed_papers: []
+analysis:
+  max_full_text_papers: 20
+  graph_seed_limit: 3
+  graph_neighbors_per_direction: 25
 scope:
   years: [2023, 2024, 2025, 2026]
 delivery:
@@ -200,7 +204,18 @@ uv run --project $skill arp discover research `
   --brief .\research-brief.yaml --output C:\Research\literature-review
 ```
 
-该命令当前返回 `status: planned`：它准备四类检索和候选包，不代表引用扩展、全文阅读或 gap 验证已经完成。
+发现阶段返回 `status: review_required`。随后由 Codex 评审经过哈希绑定的候选，冻结最相近论文，获取正式文件，阅读 MinerU 解析结果并导入证据：
+
+```powershell
+uv run --project $skill arp review research `
+  --run C:\Research\literature-review --decisions .\research-review.jsonl
+uv run --project $skill arp acquire research `
+  --run C:\Research\literature-review
+uv run --project $skill arp evidence research `
+  --run C:\Research\literature-review --records .\evidence-review.jsonl
+```
+
+评审和证据 JSONL 由 Codex 根据不可变候选包和解析后的全文生成，并遵守 `schemas/` 中的公开格式。最终 `status: complete` 表示冻结的最相近论文都已完成评审，不表示已经找到世界上所有论文，也不表示创新性得到无条件证明。
 
 ## 论文集检索实际如何工作
 
@@ -231,14 +246,14 @@ uv run --project $skill arp discover research `
 
 标题和摘要足以提出候选并做初筛。若要判断某篇论文直接支持、反驳或已经解决某个研究问题，必须阅读正文，记录章节或页码，并保留简短摘录。Gap 结论必须限定在已经搜索的范围内，并列出最接近的反例。
 
-当前实现是调研基础设施，不是一条命令完成系统综述。默认 `discover research` 目前会：
+Research mode 是明确分阶段、可恢复的流程，不是无人参与的一键系统综述：
 
-- 生成四类查询；
-- 使用 Crossref 搜索并对有限候选去重；
-- 写出调研计划、候选清单、待评审清单、最相近工作矩阵、证据图框架和 gap 报告框架；
-- 在尚未完成全文验证时明确拒绝给出创新性结论。
+- `discover research` 使用 Crossref 以及已配置的 Semantic Scholar/OpenAlex 搜索，按 DOI 去重，并执行有边界的后向参考文献、前向引用和 related-paper 扩展。可选来源可以独立失败，只留下脱敏诊断，不会抹掉其他来源的结果。
+- `review research` 要求 Codex 对每个哈希绑定候选明确给出 include/exclude 决定，然后只冻结需要全文核验的最相近论文。规范化决定和审核清单也会通过哈希绑定到选集。
+- `acquire research` 复用正式出版社获取流程，保留人工和重试队列，并通过内容寻址的 MinerU 缓存解析已核验 PDF。获取待办和解析待办分别计数；顶层状态指向最早尚未完成的关口，混合失败也不会互相遮蔽。
+- `evidence research` 校验论文 ID、PDF 和 Markdown 哈希、claim ID、阅读范围、位置和摘录，之后填充证据图、最相近工作矩阵、claim 覆盖表和有边界的 gap 报告。
 
-它目前**不会**真正执行规划好的引用图，不会默认使用 OpenAlex/Semantic Scholar 作为 research searcher，不会自动获取并阅读最相近论文，也不会自行填充 claim 级全文证据。在完整 Codex skill 工作流中，Agent 必须继续完成出版社获取、可选 MinerU 解析、人工证据评审和有边界的综合判断。README 不再把空框架描述成已经完成的文献调研。
+标题和摘要仍然只能用于提出和初筛候选。直接支持或反驳必须有正文摘录以及章节或页码。因出版社访问或 MinerU 失败而未完成的论文会继续保留在同一个冻结任务中，不会被静默删除或替换。
 
 ## 自动获取实际如何工作
 
@@ -265,8 +280,8 @@ Crossref、OpenAlex、Semantic Scholar、普通仓库和镜像都不能满足最
 | IEEE Xplore | 候选主要来自 Crossref/OpenAlex/Semantic Scholar | 配置 CARSI 院校档案后自动 | 使用通用 profile；已在一个 CARSI 院校完成端到端真实验证。每个新增院校都需要首次适配和一篇代表论文冒烟测试 |
 | ACM Digital Library | 通常由 Crossref collection 枚举和可选查询 API 发现 | 条件式 HTTP adapter | 只有正式页面和文件接口允许独立客户端访问时才能自动完成；目前没有生产级 ACM 浏览器 adapter，被拦截时转人工 |
 | ScienceDirect | Crossref/OpenAlex/Semantic Scholar 发现；Elsevier API 可解析预期身份 | 仅人工 | 用户在正常授权浏览器中下载，CLI 核验并接管本地文件；不自动登录或操作 ScienceDirect |
-| Semantic Scholar | 可选带 key 候选搜索；DOI 摘要补全可使用更低的无 key 额度 | 不支持 | 只作为发现证据 |
-| OpenAlex | 可选候选搜索和 DOI 摘要补全 | 不支持 | 只作为发现证据 |
+| Semantic Scholar | 可选带 key 候选搜索、DOI 补全以及引用/related 图扩展 | 不支持 | 只提供发现和图证据；来源失败会保留为诊断 |
+| OpenAlex | 可选候选搜索、DOI 补全和引用图扩展 | 不支持 | 需要可选 API key；只提供发现和图证据 |
 | MinerU | 不负责发现 | 不负责下载 | 可选七天全文解析缓存，只服务分析，不是论文来源 |
 | 通用出版社 adapter | 内部已有受域名约束的实现 | 未作为公开生产默认入口启用 | 需要把批准域名和配置流程产品化后，才能宣称通用支持 |
 
@@ -338,6 +353,12 @@ uv run --project $skill arp manual-fetch `
 | `manual-download.csv` | 需要授权用户操作或尚无安全 adapter 的冻结论文 |
 | `retryable-downloads.csv` | 不改变选集即可重试的临时故障 |
 | `delivery-manifest.json` | 获取数量、选集绑定和完成状态 |
+| `research-candidates.jsonl` | 用于明确评审最相近论文的哈希绑定候选 |
+| `citation-graph.json` | 有边界的后向、前向和 related-paper 边、已使用/被截断的种子边界，以及脱敏来源诊断 |
+| `full-text-manifest.jsonl` | 冻结论文、正式 PDF 哈希、MinerU Markdown 哈希、解析模式和 pending 状态 |
+| `validated-evidence-reviews.jsonl` | 绑定到准确 PDF 和解析 Markdown 的 Codex 证据评审 |
+| `claim-coverage.csv` | 每个 claim 的关系、证据论文和未解决状态 |
+| `evidence-map.md` / `gap-analysis.md` | 可审计的证据位置和限定在检索范围内的结论 |
 
 某次运行中不应访问指定出版社时，可以重复使用 `--defer-host <准确主机名>`。延后的论文仍保留在选集中并进入人工队列；已经通过哈希验证的交付仍会复用。
 
@@ -358,7 +379,8 @@ uv run --project $skill arp manual-fetch `
 - IEEE 期刊发现主要依赖 Crossref 和可选元数据 API；当前版本没有 IEEE 官方 venue 枚举器。
 - ACM 自动获取没有生产级浏览器 adapter；HTTP 客户端被正式页面拦截时转人工。
 - ScienceDirect 只支持人工获取；项目有意不自动操作 organization login 或文章页面。
-- `discover research` 当前负责规划和搭建调研框架，不会一条命令完成引用图、最相近论文获取和 claim 级全文证据。
+- Research mode 分阶段运行，并要求 Codex 明确给出候选评审和证据决定；它不是无人参与的一键系统综述。
+- 引用图覆盖受到种子、邻居上限、来源覆盖和 API 可用性的共同限制，不能据此宣称普遍召回率。
 - 没有可信摘要的论文保持 `pending_abstract`，禁止只按题名接受。
 - 尚未发布的 proceedings 和上游元数据不一致会造成覆盖不完整。
 - `arp config status: true` 只说明本地配置结构存在，不代表凭据、额度、订阅或 API entitlement 实时有效。
@@ -373,7 +395,7 @@ uv run --project $skill arp manual-fetch `
 
 ### 近期
 
-1. **让 research mode 真正端到端执行。**接入 OpenAlex 和 Semantic Scholar research searcher，执行真实前向/后向引用遍历，获取最相近论文，支持可恢复全文评审，并导入经过校验的 claim 级证据。
+1. **量化 research 检索饱和度。**增加可重复的停止诊断，报告新机制、引用前沿增长、经典/近期工作覆盖和未解决边界论文，同时避免把这些指标误写成普遍召回率证明。
 2. **增加 IEEE 院校诊断器。**探测非敏感 profile 字段，显示脱敏阶段跳转，校验资源入口、entity ID 和表单契约，并在不泄露凭据的情况下运行一篇代表论文冒烟测试。
 3. **产品化 ACM 授权访问。**设计独立、可见、隔离并限制准确域名的浏览器契约，采用与 IEEE 相同的 fail-closed 原则；访问或页面形态未知时继续转人工。
 4. **支持安全增量获取和现有目录导入。**让新的冻结选集能够复用已验证用户文件，提供明确迁移命令，不再依赖临时复制。
@@ -391,7 +413,7 @@ uv run --project $skill arp manual-fetch `
 
 ## 可选 Markdown 规则
 
-文献调研可以通过七天 SHA-256 MinerU 缓存解析选定 PDF，用于内部阅读。普通 fetch、manual fetch、论文集发现、评审和获取都不会产生 Markdown。只有用户明确指定目标目录时才导出：
+`acquire research` 会把选定 PDF 解析到七天 SHA-256 MinerU 缓存，用于内部证据评审。缓存 Markdown 属于分析状态，不是交付文件。普通 fetch、manual fetch 和论文集流程不会产生 Markdown。只有用户明确指定目标目录时才导出：
 
 ```powershell
 uv run --project $skill arp export-md `

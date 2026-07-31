@@ -9,7 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
@@ -341,9 +341,12 @@ class ManualHandoffWorkflow:
 
 
 def document_from_selection(record: SelectionRecord) -> SourceDocument:
-    if not record.official_url:
-        raise ValueError("selected paper has no official URL for manual handoff")
-    host = urlsplit(record.official_url).hostname
+    landing_url = record.official_url
+    if not landing_url and record.doi:
+        landing_url = f"https://doi.org/{quote(record.doi, safe='/().;:-_')}"
+    if not landing_url:
+        raise ValueError("selected paper has no official URL or DOI for manual handoff")
+    host = urlsplit(landing_url).hostname
     if not host:
         raise ValueError("selected paper official URL is invalid")
     metadata = PaperMetadata(
@@ -353,13 +356,13 @@ def document_from_selection(record: SelectionRecord) -> SourceDocument:
         venue=record.venue,
         doi=record.doi,
         publisher=record.publisher or host,
-        landing_url=record.official_url,
+        landing_url=landing_url,
         publication_type=record.publication_type,
     )
     return SourceDocument(
         metadata=metadata,
-        pdf_url=record.official_url,
-        bibtex_url=record.official_url,
+        pdf_url=landing_url,
+        bibtex_url=landing_url,
         allowed_hosts=frozenset({host}),
     )
 

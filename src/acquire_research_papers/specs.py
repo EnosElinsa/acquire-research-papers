@@ -8,8 +8,8 @@ from typing import Any
 import yaml
 from jsonschema import Draft202012Validator
 
+from acquire_research_papers.schema_resources import schema
 
-SCHEMA_ROOT = Path(__file__).resolve().parents[2] / "schemas"
 
 
 class SpecValidationError(ValueError):
@@ -28,8 +28,11 @@ def _read_mapping(path: Path) -> dict[str, Any]:
 
 
 def _validate(value: dict[str, Any], schema_name: str) -> dict[str, Any]:
-    schema = json.loads((SCHEMA_ROOT / schema_name).read_text(encoding="utf-8"))
-    errors = sorted(Draft202012Validator(schema).iter_errors(value), key=lambda item: list(item.path))
+    contract = schema(schema_name)
+    errors = sorted(
+        Draft202012Validator(contract).iter_errors(value),
+        key=lambda item: list(item.path),
+    )
     if errors:
         error = errors[0]
         location = ".".join(str(part) for part in error.absolute_path)
@@ -80,6 +83,10 @@ def load_research_brief(path: Path) -> dict[str, Any]:
     brief.setdefault("work_under_review", {})
     brief.setdefault("claims", [])
     brief.setdefault("seed_papers", [])
+    brief.setdefault("analysis", {})
+    brief["analysis"].setdefault("max_full_text_papers", 20)
+    brief["analysis"].setdefault("graph_seed_limit", 3)
+    brief["analysis"].setdefault("graph_neighbors_per_direction", 25)
     brief.setdefault("scope", {})
     brief.setdefault("delivery", {"write_narrative": False, "export_markdown": False})
     return brief

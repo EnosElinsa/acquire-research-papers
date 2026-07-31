@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 from urllib.parse import urlencode
 
@@ -58,6 +59,26 @@ class OpenAlexClient:
         self.client = client
         self.api_key = api_key
         self.endpoint = endpoint
+        self.graph_provider_id = "openalex"
+
+    def _results(self, parameters: list[tuple[str, str]]) -> list[dict[str, Any]]:
+        query_url = f"{self.endpoint}?{urlencode(parameters)}"
+        try:
+            payload = self.client.get(query_url).json()
+        except RateLimited as exc:
+            raise RateLimited(
+                exc.status_code,
+                self.endpoint,
+                retry_after_seconds=exc.retry_after_seconds,
+            ) from None
+        except HttpStatusError as exc:
+            raise DiscoveryUnavailable(
+                f"OpenAlex request failed with HTTP {exc.status_code}"
+            ) from None
+        except NetworkTransient:
+            raise NetworkTransient("OpenAlex request is temporarily unavailable") from None
+        results = payload.get("results") if isinstance(payload, dict) else None
+        return [item for item in results or () if isinstance(item, dict)]
 
     @staticmethod
     def _candidate(item: dict[str, Any], query_url: str) -> CandidateMetadata:
@@ -195,3 +216,66 @@ class OpenAlexClient:
             if candidate.doi:
                 by_doi.setdefault(normalize_doi(candidate.doi) or "", candidate)
         return tuple(by_doi[doi] for doi in normalized if doi in by_doi)
+
+    def _graph_seed(self, seed: str) -> tuple[str, tuple[str, ...]] | None:
+        if not self.api_key:
+            raise DiscoveryUnavailable("OpenAlex API key is not configured")
+        raw = seed.strip().rstrip("/")
+        openalex_id = raw.rsplit("/", 1)[-1] if raw.upper().startswith("W") or "openalex.org/" in raw else ""
+        if openalex_id.upper().startswith("W"):
+            filter_value = f"openalex:{openalex_id}"
+        else:
+            doi = normalize_doi(raw)
+            if not doi or not re.match(r"^10\.\d{4,9}/\S+$", doi):
+                return None
+            filter_value = f"doi:https://doi.org/{doi}"
+        rows = self._results(
+            [
+                ("filter", filter_value),
+                ("per-page", "1"),
+                ("select", "id,referenced_works"),
+                ("api_key", self.api_key),
+            ]
+        )
+        if not rows:
+            return None
+        seed_id = str(rows[0].get("id") or "").rstrip("/").rsplit("/", 1)[-1]
+        references = tuple(
+            str(value).rstrip("/").rsplit("/", 1)[-1]
+            for value in rows[0].get("referenced_works") or ()
+            if str(value).strip()
+        )
+        return seed_id, references
+
+    def expand(
+        self,
+        seed: str,
+        direction: str,
+        limit: int,
+    ) -> tuple[CandidateMetadata, ...]:
+        """Expand one bounded OpenAlex references, citations, or related hop."""
+        resolved = self._graph_seed(seed)
+        if resolved is None:
+            return ()
+        seed_id, references = resolved
+        if direction == "references":
+            identifiers = references[: max(1, min(limit, 100))]
+            if not identifiers:
+                return ()
+            graph_filter = "openalex:" + "|".join(identifiers)
+        elif direction == "citations":
+            graph_filter = f"cites:{seed_id}"
+        elif direction == "related":
+            graph_filter = f"related_to:{seed_id}"
+        else:
+            raise ValueError(f"unsupported OpenAlex graph direction: {direction}")
+        per_page = max(1, min(limit, 100))
+        rows = self._results(
+            [
+                ("filter", graph_filter),
+                ("per-page", str(per_page)),
+                ("select", _WORK_SELECT),
+                ("api_key", self.api_key or ""),
+            ]
+        )
+        return tuple(self._candidate(item, self.endpoint) for item in rows)

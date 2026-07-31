@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 import pytest
+from pypdf import PdfWriter
 
 from acquire_research_papers.acquisition.corpus import CorpusAcquisitionWorkflow
 from acquire_research_papers.acquisition.base import AcquiredPair, SourceAdapter, SourceDocument
@@ -597,3 +598,61 @@ def test_acquire_corpus_rejects_modified_frozen_selection(
     assert exit_code == 64
     assert payload["error_code"] == "invalid_input"
     assert "SHA-256" in payload["message"]
+
+
+def test_acquire_corpus_reconciles_verified_manual_pair_on_resume(tmp_path: Path) -> None:
+    selection = make_selection(tmp_path / "selection")
+    output = tmp_path / "delivery"
+
+    def first_pass(record, destination: Path):
+        if record.key == "blocked":
+            return {"error_code": "access_required", "message": "manual"}
+        return delivered_outcome(record, destination)
+
+    workflow = CorpusAcquisitionWorkflow(acquirer=first_pass)
+    first = workflow.run(selection.manifest_path, output)
+    assert first.manual_required == 1
+    record = selection.records[0]
+    pdf = (output / record.relative_pdf).resolve()
+    bibtex = (output / record.relative_bibtex).resolve()
+    provenance = (output / record.relative_provenance).resolve()
+    pdf.parent.mkdir(parents=True, exist_ok=True)
+    writer = PdfWriter()
+    writer.add_blank_page(width=72, height=72)
+    writer.add_metadata({"/Title": f"{record.title} {record.doi}"})
+    with pdf.open("wb") as handle:
+        writer.write(handle)
+    bibtex.write_text(
+        "@article{k,title={Blocked Paper},year={2026},"
+        "journal={Invented Venue},doi={10.1000/blocked}}\n",
+        encoding="utf-8",
+    )
+    provenance.write_text(
+        json.dumps(
+            {
+                "selection_id": record.selection_id,
+                "acquisition_method": "manual_publisher_download",
+                "metadata": {
+                    "title": record.title,
+                    "year": record.year,
+                    "venue": record.venue,
+                    "doi": record.doi,
+                },
+                "pdf_sha256": sha256_file(pdf),
+                "bibtex_sha256": sha256_file(bibtex),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = workflow.run(selection.manifest_path, output)
+
+    assert result.complete
+    assert result.delivered == 2
+    rows = [
+        json.loads(line)
+        for line in result.acquisition_path.read_text(encoding="utf-8").splitlines()
+    ]
+    imported = next(row for row in rows if row["selection_id"] == record.selection_id)
+    assert imported["state"] == "delivered"
+    assert imported["provenance_sha256"] == sha256_file(provenance)

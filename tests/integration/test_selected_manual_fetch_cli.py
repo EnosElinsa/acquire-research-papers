@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 from pypdf import PdfWriter
 
-from acquire_research_papers.acquisition.manual_handoff import ManualSelectionWorkflow
+from acquire_research_papers.acquisition.manual_handoff import (
+    ManualSelectionWorkflow,
+    document_from_selection,
+)
 from acquire_research_papers.cli import Application, run_cli
 from acquire_research_papers.discovery.contracts import CandidateMetadata, VenueScope
 from acquire_research_papers.selection import SelectionRecord, SelectionStore, build_selection_records
@@ -165,3 +169,15 @@ def test_manual_fetch_selection_requires_exact_selection_id(
     assert exit_code == 64
     assert payload["error_code"] == "invalid_input"
     assert "selection ID" in payload["message"]
+
+
+def test_manual_handoff_uses_doi_when_selection_has_no_official_url(
+    tmp_path: Path,
+) -> None:
+    _, record = make_selection(tmp_path / "selection")
+    doi_only = replace(record, doi="10.1000/manual.test", official_url=None)
+
+    document = document_from_selection(doi_only)
+
+    assert document.metadata.landing_url == "https://doi.org/10.1000/manual.test"
+    assert document.allowed_hosts == frozenset({"doi.org"})
