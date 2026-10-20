@@ -22,8 +22,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       RELEASE_REF: ${{ github.event.release.tag_name || inputs.ref || 'main' }}
-      ARP_RUNTIME_ROOT: ${{ runner.temp }}/arp-public-runtime
-      ARP_DATA_ROOT: ${{ runner.temp }}/arp-public-data
     steps:
       - uses: actions/setup-python@v6
         with:
@@ -41,6 +39,9 @@ jobs:
           subprocess.run([shutil.which("npx"), "--yes", "skills", "add", source,
                           "--skill", "acquire-research-papers", "-a", "codex", "-g", "-y"], check=True)
       - name: Bootstrap the actual release wheel and run offline commands
+        env:
+          ARP_RUNTIME_ROOT: ${{ runner.temp }}/arp-public-runtime
+          ARP_DATA_ROOT: ${{ runner.temp }}/arp-public-data
         shell: python
         run: |
           import json, os, pathlib, subprocess, sys
