@@ -22,7 +22,6 @@ from acquire_research_papers.acquisition.adapters.ieee import (
 from acquire_research_papers.acquisition.adapters.ijcai import IjcaiProceedingsAdapter
 from acquire_research_papers.acquisition.adapters.elsevier_api import (
     ELSEVIER_API_HOST,
-    DpapiElsevierApiKeyProvider,
     ElsevierApiError,
     ElsevierSearchClient,
 )
@@ -70,11 +69,10 @@ from acquire_research_papers.credentials import (
     ApiKeyLoadError,
     CredentialStatusError,
     DpapiApiKeyProvider,
-    DpapiCredentialStatusProvider,
 )
 from acquire_research_papers.http import NetworkTransient, RateLimited, SafeHttpClient
+from acquire_research_papers.file_credentials import API_KEYS
 from acquire_research_papers.mineru import (
-    DpapiMineruTokenProvider,
     MineruCache,
     MineruCliRunner,
     MineruExtractionError,
@@ -263,18 +261,10 @@ def _load_optional_discovery_api_keys(
     return keys
 
 
-def _default_credential_status() -> dict[str, bool]:
-    if not _supports_dpapi():
-        return {"ieee": False, "mineru": False, "elsevier": False,
-                "openalex": bool(os.environ.get("OPENALEX_API_KEY", "").strip()),
-                "semantic_scholar": bool(os.environ.get("SEMANTIC_SCHOLAR_API_KEY", "").strip())}
-    paths = AppPaths.default()
-    repository_root = Path(__file__).resolve().parents[2]
-    script_root = _resolve_script_root(repository_root, Path(__file__).resolve().parent)
-    return DpapiCredentialStatusProvider(
-        script=script_root / "credential-status.ps1",
-        secret_path=paths.secrets / "secrets.clixml",
-    )()
+def _default_credential_status(*, env_file: Path | None = None) -> dict[str, bool]:
+    from acquire_research_papers import configuration_commands as config
+    paths = config.runtime_paths()
+    return config.credential_manager(paths, env_file=env_file).status()
 
 
 def _stderr_discovery_progress(event: str, details: Mapping[str, object]) -> None:
@@ -298,6 +288,7 @@ class Application:
     mineru_cache: MineruCache | None = None
     manual_handoff: ManualHandoffWorkflow | None = None
     manual_selection: ManualSelectionWorkflow | None = None
+    discovery_coordinator: DiscoveryCoordinator | None = None
 
     @classmethod
     def for_test(
@@ -344,6 +335,7 @@ class Application:
         discovery_progress: Callable[[str, Mapping[str, object]], None] | None = None,
         load_discovery_api_keys: bool = True,
         ieee_profile: str | None = None,
+        env_file: Path | None = None,
     ) -> Application:
         paths = AppPaths.default()
         paths.create_directories()
@@ -354,11 +346,12 @@ class Application:
         acm = AcmDigitalLibraryAdapter.for_production()
         sciencedirect = ScienceDirectAdapter.for_production()
         from acquire_research_papers import configuration_commands
-        store = configuration_commands.store_for(paths)
+        manager = configuration_commands.credential_manager(paths, env_file=env_file)
+        store = configuration_commands.store_for(paths, manager=manager)
         configuration_commands.migrate_legacy(store, paths)
         profile = store.get(ieee_profile) if ieee_profile else store.active()
         if profile:
-            bridge = configuration_commands.bridge_for(profile, paths)
+            bridge = configuration_commands.bridge_for(profile, paths, manager=manager)
             bridge.accept_attribute_release = (bridge.accept_attribute_release
                                                and accept_ieee_attribute_release)
         else:
@@ -369,16 +362,15 @@ class Application:
                 work_root=paths.runs,
                 secret_path=paths.secrets / "secrets.clixml",
                 accept_attribute_release=accept_ieee_attribute_release,
+                data_root=paths.registry.parent.parent,
             )
         ieee = IeeeXploreAdapter(bridge)
         crossref = CrossrefClient(
             client=SafeHttpClient(allowed_hosts={"api.crossref.org"}),
         )
         discovery_api_keys = (
-            _load_optional_discovery_api_keys(
-                script_root=script_root,
-                secret_path=paths.secrets / "secrets.clixml",
-            )
+            {provider: manager.api_provider(provider, API_PROVIDER_HOSTS[provider]).optional() or ""
+             for provider in ("semantic_scholar", "openalex")}
             if load_discovery_api_keys
             else {}
         )
@@ -395,16 +387,12 @@ class Application:
             semantic_request_pacer=semantic_request_pacer,
         )
         mineru_runner = MineruCliRunner(
-            token_provider=DpapiMineruTokenProvider(
-                script=script_root / "read-mineru-token.ps1",
-                secret_path=paths.secrets / "secrets.clixml",
-            )
+            token_provider=manager.api_provider("mineru", "mineru.net")
         )
         mineru_cache = MineruCache(paths.cache, runner=mineru_runner)
-        elsevier_key = DpapiElsevierApiKeyProvider(
-            script=script_root / "read-discovery-api-key.ps1",
-            secret_path=paths.secrets / "secrets.clixml",
-        )
+        elsevier_key = manager.api_provider("elsevier", ELSEVIER_API_HOST)
+        coordinator = DiscoveryCoordinator(discovery_providers, enrichers=discovery_enrichers,
+                                           progress=discovery_progress)
         manual_handoff = ManualHandoffWorkflow(
             resolver=ElsevierSearchClient(
                 client=SafeHttpClient(allowed_hosts={ELSEVIER_API_HOST}),
@@ -420,11 +408,7 @@ class Application:
                 AdapterRouter.with_defaults([acl, ijcai, ieee, acm, sciencedirect])
             ),
             corpus_discovery=CorpusDiscoveryWorkflow(
-                discoverer=DiscoveryCoordinator(
-                    discovery_providers,
-                    enrichers=discovery_enrichers,
-                    progress=discovery_progress,
-                ).discover,
+                discoverer=coordinator.discover,
                 progress=discovery_progress,
             ),
             corpus_acquisition=None,
@@ -433,6 +417,7 @@ class Application:
             mineru_cache=mineru_cache,
             manual_handoff=manual_handoff,
             manual_selection=ManualSelectionWorkflow(opener=webbrowser.open),
+            discovery_coordinator=coordinator,
         )
         application.corpus_acquisition = CorpusAcquisitionWorkflow(
             acquirer=application.acquire_selected
@@ -925,6 +910,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     evidence_research.add_argument("--run", type=Path, required=True)
     evidence_research.add_argument("--records", type=Path, required=True)
+    from acquire_research_papers import capability_cli
+    capability_cli.register(subparsers, discover_modes=discover_modes, review_modes=review_modes,
+                            evidence_modes=evidence_modes, acquire_modes=acquire_modes)
+    from acquire_research_papers import host_support
+    host_support.register(subparsers)
+    def env_option(command):
+        command.add_argument("--env-file", type=Path, default=argparse.SUPPRESS,
+                             help="select one API dotenv file; no workspace search")
+        for action in command._actions:
+            if isinstance(action, argparse._SubParsersAction):
+                for child in action.choices.values():
+                    env_option(child)
+    env_option(parser)
+    parser.set_defaults(env_file=None)
     return parser
 
 
@@ -944,6 +943,25 @@ def run_cli(
         _emit({"name": "acquire-research-papers", "version": __version__})
         return 0
     from acquire_research_papers import configuration_commands
+    from acquire_research_papers import capability_cli
+    if args.command == "doctor":
+        from acquire_research_papers import host_support
+        try:
+            result = host_support.dispatch(args)
+            _emit(result)
+            return 78 if result["status"] == "attention_required" else 0
+        except (ValueError, OSError) as exc:
+            _emit({"status": "error", "error_code": "configuration_error", "message": str(exc)})
+            return 78
+    if capability_cli.handles(args):
+        try:
+            result = capability_cli.dispatch(args, application=application)
+            _emit(result)
+            return 78 if result.get("status") in {"failed", "configuration_required"} else (
+                75 if result.get("status") == "rate_limited" else 0)
+        except (ValueError, OSError, KeyError, TypeError) as exc:
+            _emit({"status": "error", "error_code": "invalid_input", "message": str(exc)})
+            return 64
     if args.command == "schema":
         from acquire_research_papers.schema_resources import schema
         try:
@@ -969,14 +987,19 @@ def run_cli(
             _emit(payload)
             return 75 if code == "network_transient" else 69 if code == "access_required" else 78
     if args.command in {"config", "credentials"} and args.config_mode == "status":
-        status_provider = credential_status or _default_credential_status
         try:
-            status = dict(status_provider())
-            store = configuration_commands.store_for(configuration_commands.runtime_paths())
+            paths = configuration_commands.runtime_paths()
+            manager = configuration_commands.credential_manager(paths, env_file=args.env_file)
+            status = dict(credential_status() if credential_status else manager.status())
+            store = configuration_commands.store_for(paths, manager=manager)
             if store.active():
                 status["ieee"] = True
             if args.details:
                 status["ieee_details"] = store.details()
+                status["configuration"] = {"backend": manager.backend,
+                    "env_file": str(manager.env_file), "remote_services_verified": False,
+                    "api_sources": {key: "environment" if name in manager.environ else manager.backend
+                        for key, name in API_KEYS.items()}}
             _emit(status)
             return 0
         except (CredentialStatusError, ValueError, OSError) as exc:
@@ -994,7 +1017,7 @@ def run_cli(
             library_app = application
             if (args.command == "library" and args.library_mode == "update"
                     and not args.verify_only and args.watch is None and library_app is None):
-                library_app = Application.default(load_discovery_api_keys=False)
+                library_app = Application.default(load_discovery_api_keys=False, env_file=args.env_file)
             result = library_cli.dispatch(args, application=library_app)
             _emit(result)
             return 78 if result.get("status") == "failed" else 0
@@ -1012,6 +1035,7 @@ def run_cli(
             discovery_progress=discovery_progress,
             load_discovery_api_keys=(args.command == "discover"),
             ieee_profile=getattr(args, "ieee_profile", None),
+            env_file=args.env_file,
         )
     except (ApiKeyLoadError, ValueError) as exc:
         _emit(

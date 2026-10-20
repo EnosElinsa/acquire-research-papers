@@ -49,7 +49,9 @@ def runtime_root() -> Path:
         base = Path.home() / "Library" / "Caches"
     else:
         base = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
-    return base / "Codex" / "runtimes" / "acquire-research-papers"
+    legacy = base / "Codex" / "runtimes" / "acquire-research-papers"
+    # Reuse an existing cache in place; never copy or silently discard it.
+    return legacy if legacy.is_dir() else base / "acquire-research-papers" / "runtimes"
 
 
 def prepare_runtime(manifest_path: Path) -> Path:

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.0 — 2026-10-20
+
+- Added independent capability commands for identity, discovery, enrichment, collections, reviews, immutable selection, acquisition, local verification, PDF parsing, evidence validation and export, with lightweight hash-checked run status and recovery. Existing corpus/research/author entrypoints and frozen identities remain compatible.
+- New installations use editable local dotenv credentials, explicit file selection, no interpolation, private permissions, isolated institution files, and non-secret status. Existing DPAPI stores remain selected until explicit conflict-safe migration on the original Windows account.
+- Shared v2 review provenance records the actual host and available model metadata while preserving legacy Codex review bytes/hashes. Added host-aware safe copy targets, read-only local `doctor --host`, Codex/Claude Code/Kiro installation guidance and a Kiro `skill://` resource template. Documentation compatibility is separate from live host validation.
+- Added seven composition recipes with input templates, expected outputs, recovery and limits. Official PDF/raw BibTeX pairing, exact credential hosts, institution/browser isolation, manual ScienceDirect interaction and library backups/rollback remain in force.
+
 ## 0.4.0 — 2026-10-20
 
 This is the first packaged GitHub release. It includes the previously developed acquisition, corpus, and research commands alongside the following additions.

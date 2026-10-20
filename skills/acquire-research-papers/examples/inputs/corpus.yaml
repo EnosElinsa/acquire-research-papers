@@ -1,0 +1,13 @@
+mode: corpus
+name: Replace with the requested topic corpus
+target:
+  minimum: 1
+  maximum: 5
+  preferred: 3
+scope:
+  venues: []
+  years:
+    include: [2025, 2026]
+  topics:
+    include: [Replace with the requested topic]
+    exclude: []

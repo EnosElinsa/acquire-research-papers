@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ResolvedIdentity",
+  "type": "object",
+  "required": ["schema_version", "status", "identity", "doi", "official_url", "source_ids", "conflicts"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "status": {"enum": ["resolved", "unresolved", "ambiguous"]},
+    "identity": {"type": ["string", "null"]},
+    "doi": {"type": ["string", "null"]},
+    "official_url": {"type": ["string", "null"]},
+    "source_ids": {"type": "object"},
+    "conflicts": {"type": "array", "items": {"type": "object"}}
+  },
+  "additionalProperties": false
+}

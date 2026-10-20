@@ -7,7 +7,7 @@
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Acquire Research Papers is a public Codex skill and deterministic CLI for paper acquisition and library management:
+Acquire Research Papers is a shared agent skill and deterministic CLI for paper acquisition and library management:
 
 - fetch a known paper from its DOI or official publisher page;
 - build an auditable corpus for specified venues, years, topics, and quotas;
@@ -27,7 +27,7 @@ A completed acquisition is an identity-verified pair: the official publisher PDF
 | You need institution access or a different institution | `config setup ieee` → `config ieee login/doctor` | A named isolated profile, manual login by default, and separate authentication/download diagnostics |
 | You have an existing PDF/BibTeX folder | `library audit/update/import/organize` → `library apply` | Version evidence, paired filenames, native citation bytes, a hash-bound change plan, and backups |
 | You want an author's publication list or missing local papers | `discover author` | Formal, early-access, and preprint groups with identity ambiguity and source-coverage limits |
-| You need papers from specified venues, years, and topics | `discover corpus` → Codex review → `review corpus` → `acquire corpus` | Coverage evidence, a frozen selection, verified deliveries, and manual/retry queues |
+| You need papers from specified venues, years, and topics | `discover corpus` → agent review → `review corpus` → `acquire corpus` | Coverage evidence, a frozen selection, verified deliveries, and manual/retry queues |
 | A publisher requires authorized user interaction | `manual-fetch` | The official files you download are taken over locally, identified, verified, and placed in the reserved delivery paths |
 | You need nearest work, claim citations, Related Work, or a gap check | `discover research` → `review research` → `acquire research` → `evidence research` | A citation graph, frozen closest-paper set, verified full text, and claim-level evidence reports |
 | You explicitly need PDF-to-Markdown | `export-md` | A successful MinerU result exported on request; Markdown is never part of ordinary acquisition |
@@ -45,7 +45,13 @@ scope and quotas
         └─ retryable
 ```
 
-Codex is part of the workflow. The CLI validates, checkpoints, freezes, and acquires deterministic artifacts; Codex translates the user's request into a specification and makes the recorded semantic review decisions.
+The executing agent is part of the workflow. The CLI validates, checkpoints, freezes, and acquires deterministic artifacts; the agent translates the user's request into explicit inputs and makes the recorded semantic review decisions.
+
+## Capabilities and composition
+
+Identity resolution, discovery, metadata enrichment, exact collection merge/compare, agent review, immutable selection, acquisition, local verification, standalone PDF parsing, evidence validation, library operations, and structured export can run independently. Existing corpus/research/author entrypoints remain available. See [capability contracts](skills/acquire-research-papers/references/capabilities.md) and [seven composition recipes](skills/acquire-research-papers/examples/README.md), each with inputs, expected results, recovery, and limits. These are compositions, not new kernel task types or an agent orchestrator.
+
+New reviews use `schema_version: 2`, the actual host in `reviewer` and `executor.host`, and only available model/version metadata. Legacy Codex v1 reviews remain readable without rewriting their bytes or hashes. Capability commands support optional `--run` records and `arp run status --run <directory>`; legacy runs retain their original manifests and recovery commands. Standalone `parse` accepts PDF without BibTeX while retaining user-supplied trust. Structured `export --format markdown` differs from cached full-text `export-md`.
 
 ## Install
 
@@ -63,11 +69,17 @@ python "$skill/scripts/arp.py" --help
 python "$skill/scripts/arp.py" config status
 ```
 
-The standard-library launcher reads `runtime.json`, downloads the fixed release wheel, verifies SHA-256, and installs it with uv into a separate cache. It never needs a developer checkout or installs development tools into the skill. IEEE browser access and DPAPI credentials currently require Windows, PowerShell, and Node.js; public discovery and library operations remain portable.
+The standard-library launcher reads `runtime.json`, downloads the fixed release wheel, verifies SHA-256, and installs it with uv into a separate cache. It never needs a developer checkout or installs development tools into the skill. File configuration and core commands support Windows/macOS/Linux. Current IEEE browser access and legacy DPAPI require Windows, PowerShell, and Node.js; live institutional access needs a separate check.
 
 Update by rerunning the same Skills install command. Registries, credentials, caches, named institution profiles, and browser sessions live outside the installed skill. Use a separate delivery directory. Development builds can use the digest-verified local-wheel procedure in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 If your current skill directory is a Git developer checkout, preserve it. Do not point a third-party installer's overwrite operation at that directory. Build an export and use the repository's safe copy installer into a new directory; it refuses `.git` targets and keeps an explicit backup when replacing a clean previous thin skill. See [safe migration](CONTRIBUTING.md#safe-copy-and-checkout-migration).
+
+### Host setup and checked support
+
+Codex, Claude Code, Kiro IDE, and Kiro CLI share the same skill and pinned wheel. User skill directories are `~/.agents/skills/`, `~/.claude/skills/`, and `~/.kiro/skills/` respectively. Copy only the exported `acquire-research-papers/` folder. Kiro custom agents require explicit `skill://` resources; a [resource template](skills/acquire-research-papers/templates/kiro-agent.example.json) is included. See [host installation and official sources](skills/acquire-research-papers/references/hosts.md), checked on **October 20, 2026**.
+
+Run `arp doctor --host <codex|claude-code|kiro-ide|kiro-cli> --skill-directory <actual-path>`. Its default local inventory reports Python/runtime/schema/configuration/dependency state. Host loading and institutional access remain unverified. `--check-host-version` explicitly runs the host executable's version command; `--remote-check` explicitly probes public Crossref reachability without credentials. Official format compatibility and synthetic CI are not live certification; Claude Code and Kiro interactive execution remain unverified until recorded.
 
 ### Release downloads and manual installation
 
@@ -89,7 +101,7 @@ Start by asking which optional capabilities are already configured:
 python "$skill/scripts/arp.py" config status
 ```
 
-The command returns capability booleans only; `--details` adds non-secret profile/history details. It checks the stored object shape without printing or decrypting any value. A `true` result means a local configuration exists; it does not prove live API or publisher entitlement. The agent should guide configuration only for a capability required by the current task, then test that capability with a representative operation.
+The command returns capability booleans only; `--details` adds non-secret profile/history details. File values are read for presence and never emitted; legacy DPAPI status inspects scope shape without decrypting secrets. A `true` result means local configuration exists; it does not prove live API or publisher entitlement. Configure only a capability required by this task, then test it with a representative operation.
 
 | Capability | Configure it when | Setup |
 | --- | --- | --- |
@@ -100,7 +112,15 @@ The command returns capability booleans only; `--details` adds non-secret profil
 | Elsevier | You need official metadata resolution for the manual ScienceDirect handoff | `arp config setup elsevier` |
 | MinerU | You need selected PDFs parsed for internal full-text analysis or explicit Markdown export | `arp config setup mineru` |
 
-Secret prompts are interactive and non-echoing; institution names and official entry URLs are ordinary non-secret inputs. Never paste a password, API key, token, or cookie into chat, an agent message, a command argument, `.env`, or a repository file. Provider updates are independent: adding an OpenAlex key does not replace IEEE, MinerU, Elsevier, or Semantic Scholar configuration.
+Secret prompts are interactive and non-echoing; institution names and official entry URLs are ordinary non-secret inputs. Never paste a password, API key, token, or cookie into chat, an agent message, a command argument, or a repository file. Local editing of the selected credential file outside the repository is supported. Provider updates are independent: adding OpenAlex does not replace IEEE, MinerU, Elsevier, or Semantic Scholar.
+
+### Editable local credentials
+
+New installations default to an editable local file backend outside the repository. Use `arp config init`, `arp config path`, and `arp config edit`; `config edit --profile <id>` opens one institution's file. The configuration root contains `config.toml`, `.env`, `institutions/<id>.json`, and `credentials/<id>.env`. `ARP_CONFIG_ROOT` overrides the platform configuration root; `ARP_DATA_ROOT` isolates runtime data. New data roots use the application's own name; detected legacy roots remain compatible.
+
+The root `.env` contains `SEMANTIC_SCHOLAR_API_KEY`, `OPENALEX_API_KEY`, `ELSEVIER_API_KEY`, and `MINERU_TOKEN`. A selected institution file contains `INSTITUTION_USERNAME` and `INSTITUTION_PASSWORD`. [Empty templates](skills/acquire-research-papers/templates/.env.example) ship without values. Files are plaintext restricted to the current user: edit locally, keep private, and never commit them. Saving credentials does not enable automatic login.
+
+API precedence is explicit process environment → one selected file; file selection is `--env-file` → `ARP_ENV_FILE` → default `.env`. There is no upward search, implicit dotenv merging, shell execution, or interpolation. Each command reads a snapshot; empty values are unconfigured. Institutions read only their selected profile file. Existing DPAPI installations stay legacy; explicit `arp config migrate --from dpapi` runs on the original Windows account, preserves the source, reports conflicting key names, and never overwrites conflicts. See [configuration details](skills/acquire-research-papers/references/credentials-and-cache.md).
 
 ## Named institutions, local libraries, and author discovery
 
@@ -141,7 +161,7 @@ Use the output only when the JSON status is `delivered`. A title alone must firs
 
 ### Build a topic corpus
 
-A user normally describes the task in plain language and lets Codex create the corpus specification. This compact example shows what is made explicit:
+A user normally describes the task in plain language and lets the executing agent create the corpus specification. This compact example shows what is made explicit:
 
 ```yaml
 schema_version: 1
@@ -204,7 +224,7 @@ python "$skill/scripts/arp.py" discover corpus --progress `
   --spec .\corpus.yaml --output C:\Research\corpus-run
 ```
 
-Codex then reads `evidence-packets.jsonl`, reviews title and abstract evidence, and writes hash-bound decisions. Import those decisions and freeze the selection:
+The executing agent then reads `evidence-packets.jsonl`, reviews title and abstract evidence, and writes hash-bound decisions. Import those decisions and freeze the selection:
 
 ```powershell
 python "$skill/scripts/arp.py" review corpus `
@@ -250,7 +270,7 @@ python "$skill/scripts/arp.py" discover research `
   --brief .\research-brief.yaml --output C:\Research\literature-review
 ```
 
-Discovery returns `status: review_required`. Codex then reviews the hash-bound candidates, freezes the closest papers, acquires their official files, reads the MinerU parses, and imports evidence:
+Discovery returns `status: review_required`. The executing agent then reviews the hash-bound candidates, freezes the closest papers, acquires their official files, reads the MinerU parses, and imports evidence:
 
 ```powershell
 python "$skill/scripts/arp.py" review research `
@@ -261,17 +281,17 @@ python "$skill/scripts/arp.py" evidence research `
   --run C:\Research\literature-review --records .\evidence-review.jsonl
 ```
 
-The review and evidence JSONL files are produced by Codex from the immutable packets and parsed full text, using the public schemas in `schemas/`. A final `status: complete` means every paper in the frozen closest-paper set was reviewed; it does not claim that every paper in the world was found or that novelty is universally proven.
+The review and evidence JSONL files are produced by the executing agent from the immutable packets and parsed full text, using the public schemas in `schemas/`. A final `status: complete` means every paper in the frozen closest-paper set was reviewed; it does not claim that every paper in the world was found or that novelty is universally proven.
 
 ## How corpus discovery actually works
 
 Corpus discovery is designed for bounded requests such as “papers from these venues, during these years, about these topics.” It uses the following process:
 
-1. **Define the boundary.** Codex records exact venues, years, publication types, topics, exclusions, totals, and quotas.
+1. **Define the boundary.** The executing agent records exact venues, years, publication types, topics, exclusions, totals, and quotas.
 2. **Enumerate before filtering.** ACL and IJCAI use official proceedings. Journals and identified conference collections use Crossref pagination by ISSN, collection DOI, venue, and year. OpenAlex and Semantic Scholar can add query-based candidates.
 3. **Record coverage.** Every venue/year slice is marked complete, partial, or failed. A missing proceedings page or identifier becomes a diagnostic, not an empty result silently treated as complete.
 4. **Merge and enrich.** Records are deduplicated primarily by DOI. Missing abstracts are looked up by DOI through Semantic Scholar and, when configured, OpenAlex. Field provenance remains attached to the candidate.
-5. **Screen with evidence.** Deterministic rules reject wrong years, venues, tracks, types, and recognizable front matter. Keywords help nominate candidates, but acceptance requires Codex to judge both title and abstract and record a reason.
+5. **Screen with evidence.** Deterministic rules reject wrong years, venues, tracks, types, and recognizable front matter. Keywords help nominate candidates, but acceptance requires the executing agent to judge both title and abstract and record a reason.
 6. **Freeze after quotas are satisfied.** The selected list and normalized specification are hashed. Acquisition cannot add, remove, or replace papers afterward.
 
 Two pending states are expected:
@@ -295,7 +315,7 @@ Title and abstract are enough to nominate and triage candidates. A claim that a 
 Research mode is an explicit, resumable pipeline rather than an unattended one-command systematic review:
 
 - `discover research` searches Crossref plus configured Semantic Scholar/OpenAlex sources, deduplicates by DOI, and executes bounded backward, forward, and related-paper expansion. Each optional provider can fail independently, leaving a sanitized diagnostic rather than erasing other results.
-- `review research` requires one explicit Codex include/exclude decision for every hash-bound candidate, then freezes only the closest papers selected for full-text checking. Its normalized decisions and review manifest are hash-bound into the selection.
+- `review research` requires one explicit agent include/exclude decision for every hash-bound candidate, then freezes only the closest papers selected for full-text checking. Its normalized decisions and review manifest are hash-bound into the selection.
 - `acquire research` reuses the official publisher workflow, preserves manual and retry queues, and parses verified PDFs through the content-addressed MinerU cache. Separate acquisition/parsing pending counts keep mixed failures visible; the top-level status identifies the earliest unfinished gate.
 - `evidence research` verifies paper IDs, PDF and Markdown hashes, claim IDs, read scope, locations, and excerpts before filling the evidence map, closest-work matrix, claim coverage, and bounded gap report.
 
@@ -337,7 +357,7 @@ IEEE uses a dedicated visible Chrome profile because authenticated access and PD
 
 1. enters the institution profile's exact CARSI IEEE resource gateway;
 2. selects the exact configured institution option and writes and verifies its IdP entity ID;
-3. releases the DPAPI-protected credential only on the exact configured IdP hostname and submits it at most once;
+3. releases the selected profile's credential only on the exact configured IdP hostname and submits it at most once;
 4. handles either a single continue control or an accept/reject attribute-release page, never clicking reject;
 5. revisits only the configured resource gateway when CARSI returns without IEEE entitlement;
 6. requires the same context to return to the exact `ieeexplore.ieee.org` host before requesting PDF and BibTeX.
@@ -355,7 +375,7 @@ Modify the generic browser script only when a visible page proves a new reusable
 ScienceDirect remains manual by design. Configure an Elsevier API key if the task needs official expected-identity resolution:
 
 ```powershell
-& "$skill\scripts\setup-discovery-api-keys.ps1" -Provider elsevier
+python "$skill/scripts/arp.py" config setup elsevier
 ```
 
 Start the watcher before downloading:
@@ -390,7 +410,7 @@ python "$skill/scripts/arp.py" manual-fetch `
 | --- | --- |
 | `coverage.jsonl` | Which provider covered each requested venue/year slice and whether it was complete |
 | `candidates.jsonl` | Deduplicated discovery ledger; not a final bibliography |
-| `evidence-packets.jsonl` | Immutable title/abstract evidence Codex reviews |
+| `evidence-packets.jsonl` | Immutable title/abstract evidence agent reviews |
 | `pending-metadata.csv` | Candidates blocked by missing evidence such as an abstract |
 | `pending-review.csv` | Review-ready candidates that still lack a semantic decision |
 | `selected-papers.jsonl` | The frozen papers eligible for acquisition |
@@ -402,7 +422,7 @@ python "$skill/scripts/arp.py" manual-fetch `
 | `research-candidates.jsonl` | Hash-bound research candidates used for explicit closest-paper review |
 | `citation-graph.json` | Bounded backward, forward, and related-paper edges, applied/skipped seed bounds, and sanitized provider diagnostics |
 | `full-text-manifest.jsonl` | Frozen paper, official PDF hash, MinerU Markdown hash, parser mode, and pending state |
-| `validated-evidence-reviews.jsonl` | Codex evidence reviews bound to the exact PDF and parsed Markdown |
+| `validated-evidence-reviews.jsonl` | Agent evidence reviews bound to the exact PDF and parsed Markdown |
 | `claim-coverage.csv` | Per-claim relations, supporting papers, and unresolved status |
 | `evidence-map.md` / `gap-analysis.md` | Auditable evidence locations and a bounded conclusion for the searched scope |
 
@@ -413,7 +433,7 @@ Use repeatable `--defer-host <exact-hostname>` options when a publisher must not
 The project improves reliability in three different ways:
 
 - **Coverage accountability:** venue/year enumeration and a coverage ledger are stronger than trusting the first page of keyword results. They still cannot guarantee that upstream indexes contain every paper.
-- **Relevance accountability:** deterministic hard gates and prefiltering reduce noise, but an accepted paper requires a recorded Codex judgment over title and abstract. This is more auditable than keyword-only acceptance, not a proof of universal semantic accuracy.
+- **Relevance accountability:** deterministic hard gates and prefiltering reduce noise, but an accepted paper requires a recorded agent judgment over title and abstract. This is more auditable than keyword-only acceptance, not a proof of universal semantic accuracy.
 - **Artifact identity:** official-host boundaries, raw publisher BibTeX, metadata comparison, provenance, and hashes give the strongest guarantee in the system: the delivered files correspond to the frozen paper.
 
 The repository has regression tests for its contracts and has completed real multi-venue corpus runs. It does not yet have a large, independently labeled cross-domain benchmark, so it must not advertise a measured precision/recall score. Missing abstracts, incomplete current-year indexes, ambiguous records, and boundary relevance judgments are reported rather than guessed.
@@ -421,11 +441,11 @@ The repository has regression tests for its contracts and has completed real mul
 ## Current limitations
 
 - The full IEEE/CARSI path has been live-validated with one CARSI institution. Every additional institution is profile-driven but still requires first-use observation and adaptation.
-- Secure institutional credentials and the current guided setup are Windows/PowerShell/DPAPI oriented.
+- Editable credential files and core commands are portable. Current IEEE browser integration and legacy DPAPI remain Windows-specific; Claude Code and Kiro interactive execution have not been live verified.
 - IEEE journal discovery relies primarily on Crossref and optional metadata APIs; there is no official IEEE venue enumerator in the current release.
 - ACM automation has no browser-backed production adapter. Official pages that block the HTTP client become manual items.
 - ScienceDirect acquisition is manual only; the project intentionally does not automate organization login or the article page.
-- Research mode is staged and requires explicit Codex candidate and evidence decisions; it is not an unattended one-command systematic review.
+- Research mode is staged and requires explicit agent candidate and evidence decisions; it is not an unattended one-command systematic review.
 - Citation-graph coverage is bounded by configured seeds, neighbor limits, provider coverage, and API availability; it cannot prove universal recall.
 - A paper without a trustworthy abstract remains `pending_abstract`; title-only acceptance is forbidden.
 - New or not-yet-published proceedings and inconsistent upstream metadata can leave coverage incomplete.
@@ -445,14 +465,14 @@ These are improvement priorities, not claims about current support.
 2. **Improve IEEE institution diagnostics.** Extend the current named-profile doctor with clearer first-use adaptation and live access diagnostics while keeping secrets private.
 3. **Productize ACM authorized access.** Design a dedicated visible, isolated, exact-host browser contract with the same fail-closed standards as IEEE; retain manual fallback when access or page shape is unknown.
 4. **Extend safe delta acquisition.** Build on the existing library import/update plans to bind new frozen selections while preserving verified files.
-5. **Publish copyable templates.** Add `arp init corpus` and `arp init research`, example specifications, and a human-readable run summary.
+5. **Expand composition guidance.** Build on the seven shipped recipes, input templates, and run summaries; evaluate optional init helpers after their contracts stabilize.
 
 ### Medium term
 
 6. **Measure discovery quality.** Build labeled venue/topic fixtures and report coverage, precision, recall, pending-abstract rate, and reviewer disagreement by source and discipline.
 7. **Expand official enumeration.** Add exact, auditable venue adapters where an official index or API exists, especially for IEEE and ACM collections, without weakening identifier requirements.
 8. **Improve batch operations.** Add safe publisher-aware concurrency, progress snapshots, retry scheduling, and manual-queue batch handoff while preserving rate limits and shared-session safety.
-9. **Improve portability.** Abstract the secret store behind operating-system keychains while keeping Windows DPAPI compatibility and never falling back to plaintext files.
+9. **Expand checked portability.** Validate host integrations and IEEE browser workflows per operating system while retaining explicit file-credential setup and Windows DPAPI migration compatibility.
 10. **Open a publisher plug-in contract.** Let users register exact approved hosts and tested page contracts for the generic adapter without accepting arbitrary redirects or generated citations.
 
 ScienceDirect browser automation is deliberately not on the roadmap unless publisher policy and a safe official integration make it appropriate.

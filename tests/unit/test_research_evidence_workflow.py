@@ -55,6 +55,81 @@ def _write_evidence(path: Path, row: dict, excerpt: str) -> None:
     )
 
 
+@pytest.mark.parametrize("host", ["codex", "claude-code", "kiro-ide", "kiro-cli", "other-agent"])
+def test_research_evidence_v2_retains_actual_executor(tmp_path: Path, host: str) -> None:
+    root, row = _parsed_run(tmp_path)
+    decisions = tmp_path / "evidence.jsonl"
+    _write_evidence(decisions, row, "The method jointly optimizes placement and scheduling.")
+    executor = {"host": host, "model": "review-model", "version": "1.0"}
+    record = {
+        **json.loads(decisions.read_text(encoding="utf-8")),
+        "schema_version": 2,
+        "reviewer": host,
+        "executor": executor,
+    }
+    decisions.write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+    result = ResearchEvidenceWorkflow().run(root, decisions)
+
+    assert result.status == "complete"
+    assert json.loads(result.reviewed_path.read_text(encoding="utf-8")) == record
+    decisions.write_text("", encoding="utf-8")
+    assert ResearchEvidenceWorkflow().run(root, decisions).reviewed == 1
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {"reviewer": "kiro-cli"},
+        {"executor": {"host": "codex"}},
+        {"schema_version": 2},
+        {"schema_version": 2, "executor": {"host": "kiro-ide"}},
+        {"schema_version": 2, "executor": {"host": "codex", "version": " "}},
+    ],
+)
+def test_research_evidence_rejects_invalid_executor_metadata(
+    tmp_path: Path,
+    metadata: dict,
+) -> None:
+    root, row = _parsed_run(tmp_path)
+    decisions = tmp_path / "evidence.jsonl"
+    _write_evidence(decisions, row, "The method jointly optimizes placement and scheduling.")
+    record = {**json.loads(decisions.read_text(encoding="utf-8")), **metadata}
+    decisions.write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError):
+        ResearchEvidenceWorkflow().run(root, decisions)
+
+
+def test_research_evidence_v2_still_rejects_stale_fulltext(tmp_path: Path) -> None:
+    root, row = _parsed_run(tmp_path)
+    decisions = tmp_path / "evidence.jsonl"
+    _write_evidence(decisions, row, "The method jointly optimizes placement and scheduling.")
+    record = {
+        **json.loads(decisions.read_text(encoding="utf-8")),
+        "schema_version": 2,
+        "reviewer": "claude-code",
+        "executor": {"host": "claude-code"},
+        "markdown_sha256": "0" * 64,
+    }
+    decisions.write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Markdown SHA-256"):
+        ResearchEvidenceWorkflow().run(root, decisions)
+
+
+def test_legacy_research_evidence_preserves_audit_bytes(tmp_path: Path) -> None:
+    root, row = _parsed_run(tmp_path)
+    decisions = tmp_path / "evidence.jsonl"
+    _write_evidence(decisions, row, "The method jointly optimizes placement and scheduling.")
+    record = json.loads(decisions.read_text(encoding="utf-8"))
+    expected = json.dumps(record, ensure_ascii=False, sort_keys=True).encode("utf-8") + b"\n"
+
+    result = ResearchEvidenceWorkflow().run(root, decisions)
+
+    assert result.reviewed_path.read_bytes() == expected
+
+
 def test_research_evidence_import_verifies_excerpt_and_fills_reports(tmp_path: Path) -> None:
     root, row = _parsed_run(tmp_path)
     decisions = tmp_path / "evidence.jsonl"
@@ -73,9 +148,7 @@ def test_research_evidence_import_verifies_excerpt_and_fills_reports(tmp_path: P
     manifest = result.manifest_path.parent / "reports" / "research-manifest.csv"
     assert "reviewed" in manifest.read_text(encoding="utf-8-sig")
     pending_report = result.manifest_path.parent / "reports" / "pending-review.csv"
-    assert pending_report.read_text(encoding="utf-8-sig").splitlines() == [
-        "paper_id,title,reason"
-    ]
+    assert pending_report.read_text(encoding="utf-8-sig").splitlines() == ["paper_id,title,reason"]
     run = json.loads((root / "research-run.json").read_text(encoding="utf-8"))
     assert run["status"] == "complete"
 

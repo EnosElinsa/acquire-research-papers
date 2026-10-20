@@ -18,12 +18,26 @@ SCHEMA_FILES = (
     "research-evidence-review.schema.json", "research-review-decision.schema.json",
     "institution-profile.schema.json", "library-plan.schema.json", "author-spec.schema.json",
     "author-discovery.schema.json", "library-audit.schema.json",
+    "identity.schema.json", "metadata-snapshot.schema.json", "artifact-reference.schema.json",
+    "operation-result.schema.json", "capability-review.schema.json",
+    "capability-evidence-review.schema.json",
+    "run-context.schema.json",
 )
 SKILL_FILES = (
     "SKILL.md", "agents/openai.yaml", "scripts/arp.py", "runtime.json",
     "references/corpus-mode.md", "references/research-mode.md", "references/source-policies.md",
     "references/credentials-and-cache.md", "references/workflows.md",
     "references/configuration.md", "references/library-mode.md", "references/author-mode.md",
+    "references/capabilities.md", "references/hosts.md",
+    "templates/.env.example", "templates/institution.env.example",
+    "templates/kiro-agent.example.json", "examples/README.md",
+    "examples/01-known-list.md", "examples/02-topic-corpus.md",
+    "examples/03-author-gap-check.md", "examples/04-library-maintenance.md",
+    "examples/05-related-work.md", "examples/06-gap-analysis.md",
+    "examples/07-book-chapters.md", "examples/inputs/known-papers.json",
+    "examples/inputs/corpus.yaml", "examples/inputs/author.json",
+    "examples/inputs/empty-metadata.json", "examples/inputs/related-work.yaml",
+    "examples/inputs/gap-analysis.yaml", "examples/inputs/chapter-map.json",
     *("schemas/" + name for name in SCHEMA_FILES),
 )
 

@@ -20,6 +20,7 @@ from acquire_research_papers.research.state import (
     update_run_manifest,
     validate_record,
 )
+from acquire_research_papers.review_contracts import review_metadata
 from acquire_research_papers.selection import SelectionStore, build_selection_records
 
 
@@ -46,6 +47,7 @@ def _load_decisions(path: Path) -> dict[str, dict[str, Any]]:
             if not isinstance(value, dict):
                 raise ValueError("research decision must be an object")
             validate_record(value, "research-review-decision.schema.json")
+            review_metadata(value)
             candidate_id = str(value.get("candidate_id") or "")
             if not candidate_id or candidate_id in decisions:
                 raise ValueError("research decisions contain a missing or duplicate candidate_id")
@@ -104,14 +106,12 @@ class ResearchReviewWorkflow:
                     {
                         "candidate_id": candidate_id,
                         "title": candidate.title,
-                        "reason": "explicit Codex relevance decision required",
+                        "reason": "explicit agent relevance decision required",
                     }
                 )
                 continue
             if decision.get("candidate_sha256") != packet["candidate_sha256"]:
                 raise ValueError("research decision candidate SHA-256 mismatch")
-            if decision.get("reviewer") != "codex":
-                raise ValueError("research decisions must identify reviewer as codex")
             verdict = str(decision.get("decision") or "")
             if verdict not in {"include", "exclude"}:
                 raise ValueError("research decision must be include or exclude")
@@ -139,7 +139,7 @@ class ResearchReviewWorkflow:
                     "decision": verdict,
                     "claims": list(claims),
                     "reason": reason,
-                    "reviewer": "codex",
+                    **review_metadata(decision),
                 }
             )
         maximum = int((run["brief"].get("analysis") or {}).get("max_full_text_papers", 20))

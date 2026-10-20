@@ -22,7 +22,7 @@ python "$skill/scripts/arp.py" review research `
   --run <research-run> --decisions <research-review.jsonl>
 ```
 
-The selection freezes only after every candidate has an explicit Codex include/exclude decision. The normalized decision JSONL and review manifest are SHA-256-bound into that selection and rechecked before acquisition and evidence import. Keep only the closest papers needed to test the claims, within `analysis.max_full_text_papers`.
+The selection freezes only after every candidate has an explicit include/exclude decision by the executing agent. New records use `schema_version: 2`, actual-host `reviewer` and matching `executor.host`; model/version are included only when available. Legacy Codex v1 reviews remain readable unchanged. The normalized decision JSONL and review manifest are SHA-256-bound into that selection and rechecked before acquisition and evidence import. Keep only the closest papers needed to test the claims, within `analysis.max_full_text_papers`.
 
 ## Acquire before claiming
 

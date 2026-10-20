@@ -43,9 +43,7 @@ def corpus_spec(*, minimum: int = 2, preferred: int = 2) -> dict:
                 {"name": "Journal", "kind": "journal", "short_name": "JOUR"},
             ],
             "years": {"include": [2025, 2024], "priority": [2025, 2024]},
-            "publication_types": {
-                "include": ["proceedings-article", "journal-article"]
-            },
+            "publication_types": {"include": ["proceedings-article", "journal-article"]},
             "topics": {"include": ["evolutionary algorithm"]},
         },
         "quotas": {
@@ -66,9 +64,7 @@ def candidate(
     year: int = 2025,
     abstract: str = "We develop an evolutionary algorithm for difficult search.",
 ) -> CandidateMetadata:
-    publication_type = (
-        "proceedings-article" if venue == "Conference" else "journal-article"
-    )
+    publication_type = "proceedings-article" if venue == "Conference" else "journal-article"
     evidence = ("title", "abstract", "venue") if abstract else ("title", "venue")
     return CandidateMetadata(
         key=key,
@@ -105,9 +101,7 @@ def packets(run: Path) -> dict[str, dict]:
         row["candidate_id"]: row
         for row in (
             json.loads(line)
-            for line in (run / "evidence-packets.jsonl").read_text(
-                encoding="utf-8"
-            ).splitlines()
+            for line in (run / "evidence-packets.jsonl").read_text(encoding="utf-8").splitlines()
         )
     }
 
@@ -133,6 +127,132 @@ def write_decisions(path: Path, records: list[dict]) -> Path:
         encoding="utf-8",
     )
     return path
+
+
+@pytest.mark.parametrize("host", ["codex", "claude-code", "kiro-ide", "kiro-cli", "other-agent"])
+def test_semantic_review_v2_retains_actual_executor(tmp_path: Path, host: str) -> None:
+    run = create_run(
+        tmp_path / "run",
+        (candidate("one", "Conference"),),
+        corpus_spec(minimum=1, preferred=1),
+    )
+    packet = next(iter(packets(run).values()))
+    executor = {"host": host, "model": "review-model", "version": "1.0"}
+    record = decision(packet, schema_version=2, reviewer=host, executor=executor)
+    decisions = write_decisions(tmp_path / "decisions.jsonl", [record])
+
+    result = CorpusReviewWorkflow().run(run, decisions)
+
+    review = json.loads(result.reviewed_path.read_text(encoding="utf-8"))["review"]
+    assert result.accepted == 1
+    assert review["schema_version"] == 2
+    assert review["reviewer"] == host
+    assert review["executor"] == executor
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {"reviewer": "claude-code"},
+        {"executor": {"host": "codex"}},
+        {"schema_version": 2},
+        {"schema_version": 2, "executor": {}},
+        {"schema_version": 2, "executor": {"host": "kiro-cli"}},
+        {"schema_version": 2, "reviewer": " ", "executor": {"host": " "}},
+        {"schema_version": 2, "executor": {"host": "codex", "model": " "}},
+        {"schema_version": 2, "executor": {"host": "codex", "version": 1}},
+        {"schema_version": 2, "executor": {"host": "codex", "extra": "unknown"}},
+        {"schema_version": 3, "executor": {"host": "codex"}},
+    ],
+)
+def test_semantic_review_rejects_invalid_executor_metadata(
+    tmp_path: Path,
+    metadata: dict,
+) -> None:
+    run = create_run(
+        tmp_path / "run",
+        (candidate("one", "Conference"),),
+        corpus_spec(minimum=1, preferred=1),
+    )
+    packet = next(iter(packets(run).values()))
+    decisions = write_decisions(tmp_path / "decisions.jsonl", [decision(packet, **metadata)])
+
+    with pytest.raises(ReviewValidationError):
+        CorpusReviewWorkflow().run(run, decisions)
+
+
+def test_semantic_review_v2_still_rejects_stale_evidence(tmp_path: Path) -> None:
+    run = create_run(
+        tmp_path / "run",
+        (candidate("one", "Conference"),),
+        corpus_spec(minimum=1, preferred=1),
+    )
+    packet = next(iter(packets(run).values()))
+    decisions = write_decisions(
+        tmp_path / "decisions.jsonl",
+        [
+            decision(
+                packet,
+                evidence_hash="0" * 64,
+                schema_version=2,
+                reviewer="claude-code",
+                executor={"host": "claude-code"},
+            )
+        ],
+    )
+
+    with pytest.raises(ReviewValidationError, match="evidence hash"):
+        CorpusReviewWorkflow().run(run, decisions)
+
+
+def test_legacy_semantic_review_does_not_gain_executor_metadata(tmp_path: Path) -> None:
+    run = create_run(
+        tmp_path / "run",
+        (candidate("one", "Conference"),),
+        corpus_spec(minimum=1, preferred=1),
+    )
+    packet = next(iter(packets(run).values()))
+    record = decision(packet)
+    decisions = write_decisions(tmp_path / "decisions.jsonl", [record])
+
+    result = CorpusReviewWorkflow().run(run, decisions)
+
+    expected = {
+        key: value for key, value in record.items() if key not in {"candidate_id", "evidence_hash"}
+    }
+    assert json.loads(result.reviewed_path.read_text(encoding="utf-8"))["review"] == expected
+
+
+@pytest.mark.parametrize('reviewer', ['Codex', ' codex ', '\tCoDeX\n'])
+@pytest.mark.parametrize('version', [None, 1])
+def test_legacy_corpus_reviewer_retains_normalization_and_audit_bytes(
+    tmp_path: Path, reviewer: str, version: int | None,
+) -> None:
+    run = create_run(tmp_path / 'run', (candidate('one', 'Conference'),),
+                     corpus_spec(minimum=1, preferred=1))
+    record = decision(next(iter(packets(run).values())), reviewer=reviewer)
+    if version is not None:
+        record['schema_version'] = version
+    decisions = write_decisions(tmp_path / 'decisions.jsonl', [record])
+    original_decisions = decisions.read_bytes()
+
+    result = CorpusReviewWorkflow().run(run, decisions)
+
+    assert result.accepted == 1
+    review = json.loads(result.reviewed_path.read_text(encoding='utf-8'))['review']
+    assert review['reviewer'] == reviewer.strip()
+    original_reviewed = result.reviewed_path.read_bytes()
+    original_manifest = result.manifest_path.read_bytes()
+    repeated = CorpusReviewWorkflow().run(run, decisions)
+    assert repeated.reviewed_path.read_bytes() == original_reviewed
+    assert repeated.manifest_path.read_bytes() == original_manifest
+    assert decisions.read_bytes() == original_decisions
+
+
+def test_corpus_normalization_does_not_relax_research_v1_reviewer():
+    from acquire_research_papers.review_contracts import review_metadata
+    with pytest.raises(ValueError, match='legacy reviewer'):
+        review_metadata({'reviewer': ' Codex '})
 
 
 def test_review_import_validates_decisions_and_freezes_schema_one_selection(
@@ -423,14 +543,10 @@ def test_cached_review_rejects_selection_and_manifest_rewritten_together(
     result = workflow.run(run, decisions)
     replacement = b""
     result.selected_path.write_bytes(replacement)
-    selection_manifest = json.loads(
-        result.selection_manifest_path.read_text(encoding="utf-8")
-    )
+    selection_manifest = json.loads(result.selection_manifest_path.read_text(encoding="utf-8"))
     selection_manifest["selected_sha256"] = sha256_bytes(replacement)
     selection_manifest["selected_count"] = 0
-    result.selection_manifest_path.write_text(
-        json.dumps(selection_manifest), encoding="utf-8"
-    )
+    result.selection_manifest_path.write_text(json.dumps(selection_manifest), encoding="utf-8")
 
     with pytest.raises(ReviewValidationError, match="frozen selection"):
         workflow.run(run, decisions)
@@ -468,6 +584,8 @@ def test_valid_spec_without_delivery_uses_generic_layout(tmp_path: Path) -> None
     result = CorpusReviewWorkflow().run(run, decisions)
 
     assert result.status == "frozen"
-    assert SelectionStore.load(result.selection_manifest_path).records[0].relative_pdf.endswith(
-        "/paper.pdf"
+    assert (
+        SelectionStore.load(result.selection_manifest_path)
+        .records[0]
+        .relative_pdf.endswith("/paper.pdf")
     )

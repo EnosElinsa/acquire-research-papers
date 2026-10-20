@@ -1,5 +1,11 @@
 .worktrees/
-/docs/
+/docs/*
+!/docs/portable-workflows-progress.md
+!/docs/superpowers/
+/docs/superpowers/*
+!/docs/superpowers/plans/
+/docs/superpowers/plans/*
+!/docs/superpowers/plans/2026-10-20-portable-composable-research-workflows.md
 .venv/
 __pycache__/
 .pytest_cache/
@@ -7,6 +13,7 @@ __pycache__/
 *.py[cod]
 .env
 .env.*
+!skills/acquire-research-papers/templates/.env.example
 *.clixml
 *.sqlite
 *.sqlite-*

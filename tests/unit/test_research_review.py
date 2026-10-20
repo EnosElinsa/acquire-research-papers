@@ -74,9 +74,7 @@ def _run_two(tmp_path: Path) -> tuple[Path, list[dict]]:
     )
     packets = [
         json.loads(line)
-        for line in (root / "research-candidates.jsonl")
-        .read_text(encoding="utf-8")
-        .splitlines()
+        for line in (root / "research-candidates.jsonl").read_text(encoding="utf-8").splitlines()
     ]
     return root, packets
 
@@ -90,6 +88,80 @@ def _decision(packet: dict, verdict: str) -> dict:
         "reason": "Explicit closest-paper review decision.",
         "reviewer": "codex",
     }
+
+
+@pytest.mark.parametrize("host", ["codex", "claude-code", "kiro-ide", "kiro-cli", "other-agent"])
+def test_research_review_v2_retains_actual_executor(tmp_path: Path, host: str) -> None:
+    root, packets = _run(tmp_path)
+    decisions = tmp_path / "decisions.jsonl"
+    executor = {"host": host, "model": "review-model", "version": "1.0"}
+    record = {
+        **_decision(packets[0], "include"),
+        "schema_version": 2,
+        "reviewer": host,
+        "executor": executor,
+    }
+    decisions.write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+    result = ResearchReviewWorkflow().run(root, decisions)
+
+    assert result.status == "acquisition_required"
+    assert json.loads(result.reviewed_path.read_text(encoding="utf-8")) == record
+    assert ResearchReviewWorkflow().run(root, decisions).reviewed_path.read_bytes() == (
+        json.dumps(record, ensure_ascii=False, sort_keys=True).encode("utf-8") + b"\n"
+    )
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {"reviewer": "claude-code"},
+        {"executor": {"host": "codex"}},
+        {"schema_version": 2},
+        {"schema_version": 2, "executor": {"host": "claude-code"}},
+        {"schema_version": 2, "executor": {"host": "codex", "model": " "}},
+    ],
+)
+def test_research_review_rejects_invalid_executor_metadata(
+    tmp_path: Path,
+    metadata: dict,
+) -> None:
+    root, packets = _run(tmp_path)
+    decisions = tmp_path / "decisions.jsonl"
+    record = {**_decision(packets[0], "include"), **metadata}
+    decisions.write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError):
+        ResearchReviewWorkflow().run(root, decisions)
+
+
+def test_research_review_v2_still_rejects_stale_candidate(tmp_path: Path) -> None:
+    root, packets = _run(tmp_path)
+    decisions = tmp_path / "decisions.jsonl"
+    record = {
+        **_decision(packets[0], "include"),
+        "schema_version": 2,
+        "reviewer": "kiro-ide",
+        "executor": {"host": "kiro-ide"},
+        "candidate_sha256": "0" * 64,
+    }
+    decisions.write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="candidate SHA-256"):
+        ResearchReviewWorkflow().run(root, decisions)
+
+
+def test_legacy_research_review_preserves_audit_bytes(tmp_path: Path) -> None:
+    root, packets = _run(tmp_path)
+    decisions = tmp_path / "decisions.jsonl"
+    record = _decision(packets[0], "include")
+    decisions.write_text(json.dumps(record) + "\n", encoding="utf-8")
+    expected = json.dumps(record, ensure_ascii=False, sort_keys=True).encode("utf-8") + b"\n"
+
+    first = ResearchReviewWorkflow().run(root, decisions)
+    second = ResearchReviewWorkflow().run(root, decisions)
+
+    assert first.reviewed_path.read_bytes() == second.reviewed_path.read_bytes() == expected
 
 
 def test_research_review_freezes_hash_bound_closest_papers(tmp_path: Path) -> None:
@@ -119,13 +191,12 @@ def test_research_review_freezes_hash_bound_closest_papers(tmp_path: Path) -> No
     assert selection.manifest["reviewed_file"] == "reviewed-research.jsonl"
     assert len(selection.manifest["reviewed_sha256"]) == 64
     assert selection.manifest["review_manifest_file"] == "research-review.json"
-    assert selection.manifest["review_manifest_sha256"] == sha256_file(
-        result.manifest_path
-    )
+    assert selection.manifest["review_manifest_sha256"] == sha256_file(result.manifest_path)
     review = json.loads(result.manifest_path.read_text(encoding="utf-8"))
-    assert review["candidate_snapshot_sha256"] == json.loads(
-        (root / "research-run.json").read_text(encoding="utf-8")
-    )["candidates_sha256"]
+    assert (
+        review["candidate_snapshot_sha256"]
+        == json.loads((root / "research-run.json").read_text(encoding="utf-8"))["candidates_sha256"]
+    )
     assert review["reviewed_sha256"] == selection.manifest["reviewed_sha256"]
 
 

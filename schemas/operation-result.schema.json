@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "OperationResult",
+  "type": "object",
+  "required": ["status", "completed"],
+  "properties": {
+    "status": {"enum": ["complete", "pending", "partial", "failed", "configuration_required", "rate_limited", "stale", "user_download", "retryable", "review_required"]},
+    "completed": {"type": "integer", "minimum": 0},
+    "pending": {"type": "integer", "minimum": 0},
+    "diagnostics": {"type": "array", "items": {"type": "object"}},
+    "next_actions": {"type": "array", "items": {"type": "object"}},
+    "outputs": {"type": "array", "items": {"type": "string"}}
+  }
+}

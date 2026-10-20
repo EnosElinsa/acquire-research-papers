@@ -1,0 +1,18 @@
+schema_version: 1
+mode: research
+question_type: related-work
+research_question: Replace with the precise Related Work comparison question
+claims:
+  - id: claim-1
+    text: Replace with a claim whose evidence must be checked
+seed_papers: []
+analysis:
+  max_full_text_papers: 10
+  graph_seed_limit: 3
+  graph_neighbors_per_direction: 10
+scope:
+  include_terms: []
+  exclude_terms: []
+delivery:
+  write_narrative: false
+  export_markdown: false

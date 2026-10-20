@@ -4,7 +4,22 @@ from dataclasses import dataclass
 import os
 from pathlib import Path
 
-from platformdirs import user_data_dir
+from platformdirs import user_config_dir, user_data_dir
+
+
+@dataclass(frozen=True)
+class ConfigPaths:
+    root: Path
+    settings: Path
+    env_file: Path
+    institutions: Path
+    credentials: Path
+
+    @classmethod
+    def for_root(cls, root: Path) -> ConfigPaths:
+        root = root.expanduser().resolve()
+        return cls(root, root / "config.toml", root / ".env", root / "institutions",
+                   root / "credentials")
 
 
 @dataclass(frozen=True)
@@ -15,17 +30,30 @@ class AppPaths:
     profiles: Path
     dependencies: Path
     runs: Path
+    config: Path
+
+    @property
+    def config_paths(self) -> ConfigPaths:
+        return ConfigPaths.for_root(self.config)
 
     @classmethod
     def default(cls) -> AppPaths:
         if os.environ.get("ARP_DATA_ROOT"):
             return cls.for_root(Path(os.environ["ARP_DATA_ROOT"]).expanduser())
-        local = Path(user_data_dir("Codex", appauthor=False))
-        return cls.for_root(local)
+        legacy = Path(user_data_dir("Codex", appauthor=False))
+        markers = (legacy / "paper-acquisition" / "registry.sqlite",
+                   legacy / "secrets" / "acquire-research-papers" / "secrets.clixml",
+                   legacy / "paper-acquisition" / "institutions")
+        root = legacy if any(p.exists() for p in markers) else Path(
+            user_data_dir("acquire-research-papers", appauthor=False))
+        config = Path(os.environ.get("ARP_CONFIG_ROOT") or user_config_dir(
+            "acquire-research-papers", appauthor=False)).expanduser()
+        return cls.for_root(root, config_root=config)
 
     @classmethod
-    def for_root(cls, local: Path) -> AppPaths:
+    def for_root(cls, local: Path, *, config_root: Path | None = None) -> AppPaths:
         root = local.resolve()
+        config = Path(os.environ.get("ARP_CONFIG_ROOT") or config_root or root / "config")
         return cls(
             registry=root / "paper-acquisition" / "registry.sqlite",
             cache=root / "cache" / "acquire-research-papers",
@@ -33,6 +61,7 @@ class AppPaths:
             profiles=root / "browser-profiles" / "acquire-research-papers",
             dependencies=root / "deps" / "acquire-research-papers",
             runs=root / "paper-acquisition" / "runs",
+            config=config.expanduser().resolve(),
         )
 
     def create_directories(self) -> None:

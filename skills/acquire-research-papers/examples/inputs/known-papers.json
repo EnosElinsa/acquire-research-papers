@@ -1,0 +1,4 @@
+{
+  "records": [],
+  "instructions": "Add records with a real DOI or official_url supplied by the user. This empty template intentionally requests no papers."
+}

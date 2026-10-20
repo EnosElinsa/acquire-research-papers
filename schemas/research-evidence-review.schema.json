@@ -14,12 +14,23 @@
     "records"
   ],
   "properties": {
+    "schema_version": {"type": "integer", "enum": [1, 2]},
     "selection_id": {"type": "string", "pattern": "^[a-f0-9]{24}$"},
     "full_text_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
     "markdown_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
     "review_status": {"enum": ["reviewed", "insufficient-text"]},
     "summary": {"type": "string", "minLength": 1},
-    "reviewer": {"const": "codex"},
+    "reviewer": {"type": "string", "pattern": "\\S"},
+    "executor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["host"],
+      "properties": {
+        "host": {"type": "string", "pattern": "\\S"},
+        "model": {"type": "string", "pattern": "\\S"},
+        "version": {"type": "string", "pattern": "\\S"}
+      }
+    },
     "records": {
       "type": "array",
       "items": {
@@ -57,5 +68,14 @@
         }
       }
     }
+  },
+  "if": {
+    "required": ["schema_version"],
+    "properties": {"schema_version": {"const": 2}}
+  },
+  "then": {"required": ["executor"]},
+  "else": {
+    "properties": {"reviewer": {"const": "codex"}},
+    "not": {"required": ["executor"]}
   }
 }

@@ -9,6 +9,9 @@ Start with the [English guide](README.md), [中文指南](README.zh-CN.md), [rel
 - The launcher normally downloads a fixed GitHub release wheel and verifies `runtime.json`. A digest mismatch is an integrity failure: re-download the published asset and compare `SHA256SUMS`; do not edit the expected hash to bypass the check.
 - `ARP_LOCAL_WHEEL` must point to the exact matching wheel, not a differently rebuilt file with the same version. A local wheel does not itself provide all dependencies for offline installation.
 - Updates preserve external runtime state. A new runtime version can need fresh dependency installation; it does not imply that a stored institution session remains valid.
+- Codex, Claude Code, Kiro IDE and Kiro CLI use one shared skill; follow [host installation](skills/acquire-research-papers/references/hosts.md). Use `arp doctor --host <host> --skill-directory <actual-path>` for local runtime/schema/configuration diagnostics. Host loading, remote availability and institution access remain separate; include the actual host/version/OS and checked scope in a support report. Claude Code/Kiro interactive execution is not yet live verified.
+
+New installations use editable `.env` credentials outside the repository. `arp config init/path/edit` resolves the actual file; `config edit --profile <id>` selects one institution. Files are private plaintext rather than keychain encryption. `--env-file`/`ARP_ENV_FILE` selects one API file with process-environment precedence and no interpolation. Never attach populated files. Legacy DPAPI remains selected until explicit `config migrate --from dpapi` on the original Windows account; conflicts report key names without overwrite and the original store is preserved. See [credential configuration](skills/acquire-research-papers/references/credentials-and-cache.md).
 
 安装或更新时请保留原有开发 checkout，只复制 ZIP 内的轻量 skill 文件夹。摘要不匹配时先核对发布页和 `SHA256SUMS`，不要关闭校验。请先确认 Python、uv、Node.js 等前置条件，再提交问题。
 

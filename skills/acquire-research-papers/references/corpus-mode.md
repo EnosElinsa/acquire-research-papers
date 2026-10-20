@@ -30,7 +30,7 @@ Apply hard gates before semantic relevance:
 
 The deterministic lexical prefilter is high recall and produces review signals only. It never rejects a hard-gate-passing candidate for lacking an exact phrase. Normalize case, Unicode separators, hyphens, plurals, and common inflections. A candidate without an abstract goes to `pending-metadata.csv`; keywords are optional.
 
-Discovery and selection are separate phases. Discovery prepares immutable evidence. Codex then decides semantic relevance from title and abstract; keywords are optional and full text is not required. Selection is frozen only after those decisions pass hash and schema validation.
+Discovery and selection are separate phases. Discovery prepares immutable evidence. The executing agent then decides semantic relevance from title and abstract; keywords are optional and full text is not required. Selection is frozen only after those decisions pass hash and schema validation.
 
 Run discovery as its own phase:
 
@@ -61,7 +61,7 @@ Read `evidence-packets.jsonl` and write `review-decisions.jsonl`. Each record mu
 - `decision`: `accept`, `reject`, or `pending`;
 - `matched_topics` and `evidence_fields` used by the decision;
 - a concrete `reason`;
-- `reviewer: codex` and a stable `rule_version`.
+- `schema_version: 2`, `reviewer: <actual-host>`, matching `executor.host`, and a stable `rule_version`; include model/version only when known. Legacy Codex v1 reviews remain readable unchanged.
 
 Use title and abstract for the decision; keywords are optional. Do not require publisher login or full text. Missing abstracts remain pending. Then import decisions:
 

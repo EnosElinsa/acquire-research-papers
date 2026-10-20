@@ -52,6 +52,16 @@ def test_atomic_pdf_write_removes_invalid_partial(tmp_path: Path) -> None:
     assert not destination.with_suffix(".pdf.partial").exists()
 
 
+def test_atomic_write_can_resume_without_deleting_another_writers_partial(tmp_path: Path) -> None:
+    destination = tmp_path / 'state.json'
+    destination.write_bytes(b'previous-complete-state')
+    stale = destination.with_suffix('.json.partial')
+    stale.write_bytes(b'interrupted-or-other-writer')
+    atomic_write_bytes(destination, b'new-complete-state')
+    assert destination.read_bytes() == b'new-complete-state'
+    assert stale.read_bytes() == b'interrupted-or-other-writer'
+
+
 def test_artifact_sanitizer_removes_api_keys_and_signed_url_queries() -> None:
     sanitized = sanitize_artifact_value(
         {

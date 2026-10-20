@@ -16,6 +16,7 @@ from acquire_research_papers.artifacts import (
 from acquire_research_papers.discovery.contracts import CandidateMetadata, DiscoveryRequest
 from acquire_research_papers.discovery.corpus import CorpusPlanner
 from acquire_research_papers.discovery.evidence import EvidencePacket
+from acquire_research_papers.review_contracts import review_metadata
 from acquire_research_papers.selection import (
     SelectionStore,
     build_selection_records,
@@ -36,6 +37,8 @@ class SemanticReviewRecord:
     reason: str
     reviewer: str
     rule_version: str
+    schema_version: int | None = None
+    executor: dict[str, str] | None = None
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> SemanticReviewRecord:
@@ -49,7 +52,7 @@ class SemanticReviewRecord:
             "reviewer",
             "rule_version",
         }
-        if set(payload) - allowed:
+        if set(payload) - (allowed | {"schema_version", "executor"}):
             raise ReviewValidationError("review record contains unknown fields")
         missing = allowed - set(payload)
         if missing:
@@ -59,6 +62,16 @@ class SemanticReviewRecord:
         decision = str(payload["decision"])
         if decision not in {"accept", "reject", "pending"}:
             raise ReviewValidationError("review decision must be accept, reject, or pending")
+        try:
+            attribution = payload
+            if payload.get("schema_version", 1) == 1:
+                # Corpus v1 historically stripped reviewer whitespace and
+                # compared case-insensitively. Keep that boundary compatibility
+                # without relaxing the research v1 provenance contract.
+                attribution = {**payload, "reviewer": str(payload["reviewer"]).strip().casefold()}
+            metadata = review_metadata(attribution)
+        except ValueError as exc:
+            raise ReviewValidationError(str(exc)) from exc
         return cls(
             candidate_id=str(payload["candidate_id"]),
             evidence_hash=str(payload["evidence_hash"]),
@@ -66,8 +79,11 @@ class SemanticReviewRecord:
             matched_topics=tuple(str(value) for value in payload["matched_topics"]),
             evidence_fields=tuple(str(value) for value in payload["evidence_fields"]),
             reason=str(payload["reason"]).strip(),
-            reviewer=str(payload["reviewer"]).strip(),
+            reviewer=(str(payload["reviewer"]).strip()
+                      if metadata.get("schema_version", 1) == 1 else metadata["reviewer"]),
             rule_version=str(payload["rule_version"]).strip(),
+            schema_version=metadata.get("schema_version"),
+            executor=metadata.get("executor"),
         )
 
 
@@ -137,8 +153,6 @@ class CorpusReviewWorkflow:
             )
         if not record.reason:
             raise ReviewValidationError("review reason is required")
-        if record.reviewer.casefold() != "codex":
-            raise ReviewValidationError("reviewer must be codex")
         if not record.rule_version:
             raise ReviewValidationError("review rule_version is required")
         if not record.evidence_fields:
@@ -376,6 +390,16 @@ class CorpusReviewWorkflow:
                         "reason": reason,
                         "reviewer": reviewer,
                         "rule_version": rule_version,
+                        **(
+                            {"schema_version": record.schema_version}
+                            if record is not None and record.schema_version is not None
+                            else {}
+                        ),
+                        **(
+                            {"executor": record.executor}
+                            if record is not None and record.executor is not None
+                            else {}
+                        ),
                     },
                 }
             )

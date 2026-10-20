@@ -17,7 +17,7 @@ _RESERVED = {"con", "prn", "aux", "nul", *(f"com{i}" for i in range(10)),
 _SECRET_NAMES = {"password", "username", "token", "cookie", "cookies", "authorization",
                  "samlresponse", "samlrequest", "relaystate", "execution", "ticket"}
 _PROFILE_FIELDS = {"schema_version", "id", "organization", "mode", "entry_url",
-                   "credential_host", "credential_ref", "contract", "last_validation"}
+                   "credential_host", "credential_ref", "credential_file", "contract", "last_validation"}
 
 
 def profile_id(value: str) -> str:
@@ -108,6 +108,8 @@ def validate_profile(value: dict[str, Any]) -> dict[str, Any]:
         if result["credential_ref"] not in {f"ieee_profiles:{result['id']}",
                                            "legacy:ieee_institution"}:
             raise ValueError("credential_ref does not belong to this profile")
+    if "credential_file" in result and result["credential_file"] != f"credentials/{result['id']}.env":
+        raise ValueError("credential_file does not belong to this profile")
     return result
 
 

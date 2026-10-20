@@ -313,23 +313,25 @@ def test_non_windows_discovery_does_not_open_dpapi_payloads(tmp_path: Path, monk
 
 
 @pytest.mark.parametrize("discovery_key,expected", [("configured", True), ("  ", False)])
-def test_non_windows_status_reports_only_supported_environment_providers(
-    monkeypatch, discovery_key: str, expected: bool
+def test_file_status_supports_all_api_providers_without_dpapi(
+    tmp_path, monkeypatch, discovery_key: str, expected: bool
 ) -> None:
     def forbidden_provider(**kwargs):
         raise AssertionError("non-Windows status must not read DPAPI credentials")
 
-    monkeypatch.setattr(cli_module, "_supports_dpapi", lambda: False)
-    monkeypatch.setattr(cli_module, "DpapiCredentialStatusProvider", forbidden_provider)
-    monkeypatch.setenv("MINERU_API_TOKEN", "configured-but-unsupported")
-    monkeypatch.setenv("ELSEVIER_API_KEY", "configured-but-unsupported")
+    from acquire_research_papers import configuration_commands as config
+    from acquire_research_papers.paths import AppPaths
+    monkeypatch.setattr(config, "runtime_paths", lambda: AppPaths.for_root(tmp_path))
+    monkeypatch.setattr(config, "_powershell", forbidden_provider)
+    monkeypatch.setenv("MINERU_TOKEN", "configured")
+    monkeypatch.setenv("ELSEVIER_API_KEY", "configured")
     monkeypatch.setenv("OPENALEX_API_KEY", discovery_key)
     monkeypatch.setenv("SEMANTIC_SCHOLAR_API_KEY", discovery_key)
 
     assert cli_module._default_credential_status() == {
         "ieee": False,
-        "mineru": False,
-        "elsevier": False,
+        "mineru": True,
+        "elsevier": True,
         "openalex": expected,
         "semantic_scholar": expected,
     }

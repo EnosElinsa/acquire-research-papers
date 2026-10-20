@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MetadataSnapshot",
+  "type": "object",
+  "required": ["schema_version", "fields", "field_sources", "conflicts", "content_sha256"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "fields": {"type": "object"},
+    "field_sources": {"type": "object"},
+    "conflicts": {"type": "array", "items": {"type": "object"}},
+    "content_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+  },
+  "additionalProperties": false
+}

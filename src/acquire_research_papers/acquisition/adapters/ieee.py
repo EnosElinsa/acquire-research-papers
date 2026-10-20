@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -8,7 +9,7 @@ import threading
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Callable, Protocol
 from urllib.parse import urlsplit
 
 from acquire_research_papers.acquisition.base import (
@@ -66,6 +67,9 @@ class IeeeBridge:
         timeout_seconds: int = 900,
         accept_attribute_release: bool = True,
         access_profile: Path | None = None,
+        credential_provider: Callable[[str], dict | None] | None = None,
+        credential_host: str = "",
+        data_root: Path | None = None,
     ) -> None:
         self.script = script.resolve()
         self.profile_root = profile_root.resolve()
@@ -77,6 +81,9 @@ class IeeeBridge:
         self.timeout_seconds = timeout_seconds
         self.accept_attribute_release = accept_attribute_release
         self.access_profile = access_profile.resolve() if access_profile else None
+        self.credential_provider = credential_provider
+        self.credential_host = credential_host
+        self.data_root = data_root.resolve() if data_root else None
 
     def command(self, reference: str, *, run_dir: Path) -> list[str]:
         command = [
@@ -100,15 +107,29 @@ class IeeeBridge:
         )
         if self.access_profile:
             command.extend(["--access-profile", str(self.access_profile)])
+        if self.data_root:
+            command.extend(["--data-root", str(self.data_root)])
+        if self.credential_provider:
+            command.extend(["--credential-stdin", "true"])
         return command
 
     def _execute(self, command: list[str]) -> subprocess.CompletedProcess[str]:
+        payload = None
+        if self.credential_provider:
+            # Carry the selected backend's missing state explicitly. The browser
+            # may inspect, download, or reuse a session without needing an account.
+            credential = self.credential_provider(self.credential_host) or {
+                "username": None, "password": None,
+            }
+            payload = json.dumps({"host": self.credential_host, **credential}) + "\n"
         if self.access_profile is None:
-            return subprocess.run(command, check=False, capture_output=True, text=True,
+            options = {"input": payload} if payload is not None else {}
+            return subprocess.run(command, check=False, capture_output=True, text=True, **options,
                                   encoding="utf-8", errors="replace",
                                   timeout=self.timeout_seconds + 30,
                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   stdin=subprocess.PIPE if payload is not None else subprocess.DEVNULL,
                                    text=True, encoding="utf-8", errors="replace",
                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         errors: list[str] = []
@@ -129,6 +150,11 @@ class IeeeBridge:
 
         reader = threading.Thread(target=consume_progress, daemon=True)
         reader.start()
+        if payload is not None:
+            assert process.stdin is not None
+            process.stdin.write(payload)
+            process.stdin.close()
+            payload = None
         expired = threading.Event()
 
         def stop() -> None:
@@ -187,6 +213,8 @@ class IeeeBridge:
     def _ensure_dependency(self) -> None:
         if self._dependency_ready():
             return
+        if os.name != "nt":
+            raise IeeeBridgeError("dependency-install", "IEEE browser installation is currently verified on Windows only")
         process = subprocess.run(
             [
                 "powershell",

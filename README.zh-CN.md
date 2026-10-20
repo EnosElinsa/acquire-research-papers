@@ -7,7 +7,7 @@
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Acquire Research Papers 是一个公开的 Codex skill 和确定性命令行工具，用来获取论文和管理本地论文库：
+Acquire Research Papers 是一个多个 Agent 宿主共用的 skill 和确定性命令行工具，用来获取论文和管理本地论文库：
 
 - 根据 DOI 或出版社正式页面获取已知论文；
 - 按指定期刊/会议、年份、主题和配额建立可审计的论文集；
@@ -27,7 +27,7 @@ Acquire Research Papers 是一个公开的 Codex skill 和确定性命令行工�
 | 需要机构访问或切换学校 | `config setup ieee` → `config ieee login/doctor` | 命名隔离档案、默认人工登录，以及分开的认证和下载诊断 |
 | 已有 PDF/BibTeX 文件夹 | `library audit/update/import/organize` → `library apply` | 版本证据、配对文件名、原始引用字节、带哈希的变更计划和备份 |
 | 需要作者论文列表或本地查漏 | `discover author` | 正式发表、Early Access 和预印本分组，以及身份歧义和来源覆盖说明 |
-| 要从指定 venue、年份和主题中建立论文集 | `discover corpus` → Codex 评审 → `review corpus` → `acquire corpus` | 覆盖证据、冻结选集、正式文件以及人工/重试队列 |
+| 要从指定 venue、年份和主题中建立论文集 | `discover corpus` → Agent 评审 → `review corpus` → `acquire corpus` | 覆盖证据、冻结选集、正式文件以及人工/重试队列 |
 | 出版社要求用户在授权浏览器中操作 | `manual-fetch` | 接管用户下载的正式文件，核验身份后放入预留交付位置 |
 | 要找相近工作、观点引用、Related Work 或验证 gap | `discover research` → `review research` → `acquire research` → `evidence research` | 引用图、冻结的最相近论文、经过核验的全文和 claim 级证据报告 |
 | 明确需要把 PDF 转成 Markdown | `export-md` | 按要求导出成功的 MinerU 结果；普通论文获取不会产生 Markdown |
@@ -45,7 +45,13 @@ Acquire Research Papers 是一个公开的 Codex skill 和确定性命令行工�
         └─ retryable
 ```
 
-Codex 是这条工作流的一部分。CLI 负责确定性校验、断点记录、冻结清单和正式文件获取；Codex 负责把用户的自然语言要求转成检索规范，并作出可记录、可复查的语义评审决定。
+当前执行 Agent 是这条工作流的一部分。CLI 负责确定性校验、断点记录、冻结清单和正式文件获取；Agent 负责把用户要求转成显式输入，并作出可记录、可复查的语义评审决定。
+
+## 独立能力与组合
+
+身份解析、发现、元数据补全、精确集合合并/比较、Agent 评审、冻结选集、获取、本地核验、独立 PDF 解析、全文证据验证、论文库操作与结构化导出可独立运行。原 corpus/research/author 入口继续兼容。参见[能力契约](skills/acquire-research-papers/references/capabilities.md)及[七个组合示例](skills/acquire-research-papers/examples/README.md)：已知列表、主题论文集、作者查漏、本地库维护、Related Work、gap 分析、显式章节。每个示例附输入、预期结果、恢复与限制；不增加内核任务类型或 Agent 编排器。
+
+新评审使用 `schema_version: 2`，`reviewer` 与 `executor.host` 记录实际宿主，模型/版本仅在已知时记录。旧 Codex v1 记录仍可读取，原字节和哈希不变。能力命令可用 `--run`，`arp run status --run <目录>` 汇总状态；旧工作流继续使用原清单及恢复命令。独立 `parse` 无需 BibTeX，但保留用户文件的来源可信度；结构化 `export --format markdown` 与全文 `export-md` 区分。
 
 ## 安装
 
@@ -63,11 +69,17 @@ python "$skill/scripts/arp.py" --help
 python "$skill/scripts/arp.py" config status
 ```
 
-启动器只使用 Python 标准库，根据 `runtime.json` 获取固定版本 wheel、校验 SHA-256，再通过 uv 安装到独立缓存。不会依赖开发 checkout 或把开发工具装进 skill。IEEE 浏览器和 DPAPI 凭据当前需要 Windows、PowerShell、Node.js；公开检索和论文库操作可跨平台运行。
+启动器只使用 Python 标准库，根据 `runtime.json` 获取固定版本 wheel、校验 SHA-256，再通过 uv 安装到独立缓存。不会依赖开发 checkout 或把开发工具装进 skill。文件配置与核心命令支持 Windows/macOS/Linux；当前 IEEE 浏览器和旧 DPAPI 仍需要 Windows、PowerShell、Node.js，机构实时权限需单独验证。
 
 更新时重新运行同一条 Skills 安装命令。注册表、凭据、缓存、院校 profile 和浏览器会话保存在 skill 目录之外；交付文件也应使用独立目录。开发构建可按[开发指南](CONTRIBUTING.md)使用经过摘要校验的本地 wheel 验证。
 
 如果现有 skill 目录本身是 Git 开发 checkout，请保留它，不要让第三方安装器覆盖此目录。先构建导出，再用仓库的安全复制安装器放入新目录；它拒绝含 `.git` 的目标，明确替换旧版纯 skill 时也保留备份。详见[安全迁移](CONTRIBUTING.md#safe-copy-and-checkout-migration)。
+
+### 宿主安装与验证范围
+
+Codex、Claude Code、Kiro IDE、Kiro CLI 共用同一 skill 和固定 wheel。用户目录分别为 `~/.agents/skills/`、`~/.claude/skills/`、`~/.kiro/skills/`；只复制导出的 `acquire-research-papers/` 文件夹。Kiro 自定义 agent 需要显式 `skill://` resources，附带[资源模板](skills/acquire-research-papers/templates/kiro-agent.example.json)。参见[宿主安装及官方依据](skills/acquire-research-papers/references/hosts.md)，于 **2026-10-20** 核对。
+
+执行 `arp doctor --host <codex|claude-code|kiro-ide|kiro-cli> --skill-directory <实际路径>`。默认仅检查本地 Python、运行时、schema、配置及依赖，宿主是否加载和机构权限仍未验证。`--check-host-version` 显式运行所选宿主版本命令；`--remote-check` 显式进行无凭据 Crossref 连通测试。官方格式兼容与模拟 CI 不等于实机认证；Claude Code 和 Kiro 交互执行仍需单独记录实测。
 
 ### 发布文件与手动安装
 
@@ -89,7 +101,7 @@ python "$skill/scripts/arp.py" config status
 python "$skill/scripts/arp.py" config status
 ```
 
-该命令默认只返回能力布尔值；`--details` 可附加非敏感 profile/历史验证摘要。它检查本地保存对象的结构，不打印或解密任何值。`true` 表示本地已有配置，不代表远端 API 或出版社权限一定可用。Agent 应只引导配置当前任务真正需要的能力，然后用一项有代表性的实际操作验证它。
+该命令默认只返回能力布尔值；`--details` 可附加非敏感 profile/历史验证摘要。文件凭据会读取到内存检查存在状态但不输出值；旧 DPAPI 仅检查 scope 结构而不解密秘密。`true` 表示本地已有配置，不代表远端 API 或出版社权限一定可用。Agent 应只引导配置当前任务真正需要的能力，再用有代表性的实际操作验证。
 
 | 能力 | 何时配置 | 配置方式 |
 | --- | --- | --- |
@@ -100,7 +112,15 @@ python "$skill/scripts/arp.py" config status
 | Elsevier | ScienceDirect 人工接管前需要解析官方预期身份 | `arp config setup elsevier` |
 | MinerU | 需要为内部全文分析解析 PDF，或明确要求导出 Markdown | `arp config setup mineru` |
 
-秘密输入采用交互式、不回显提示；机构名称和官方入口是普通非敏感输入。不要把密码、API key、token 或 Cookie 粘贴到聊天、Agent 消息、命令参数、`.env` 或仓库文件中。各 Provider 独立更新：增加 OpenAlex key 不会覆盖 IEEE、MinerU、Elsevier 或 Semantic Scholar 配置。
+秘密输入采用交互式、不回显提示；机构名称和官方入口是普通非敏感输入。不要把密码、API key、token 或 Cookie 粘贴到聊天、Agent 消息、命令参数或仓库文件中。支持在本机编辑仓库外选定凭据文件。各 Provider 独立更新，互不覆盖。
+
+### 可编辑本地凭据
+
+新安装默认使用仓库外本地可编辑文件。使用 `arp config init`、`arp config path`、`arp config edit`；院校使用 `config edit --profile <id>`。配置根包含 `config.toml`、`.env`、`institutions/<id>.json`、`credentials/<id>.env`。`ARP_CONFIG_ROOT` 显式覆盖系统配置根，`ARP_DATA_ROOT` 隔离运行数据；新数据根用应用自身名称，已识别旧根继续兼容。
+
+根 `.env` 含 `SEMANTIC_SCHOLAR_API_KEY`、`OPENALEX_API_KEY`、`ELSEVIER_API_KEY`、`MINERU_TOKEN`；院校文件含 `INSTITUTION_USERNAME`、`INSTITUTION_PASSWORD`。[空模板](skills/acquire-research-papers/templates/.env.example)不含值。文件是限制当前用户访问的明文：可本机编辑，保持私有，禁止提交。保存密码不等于启用自动登录。
+
+API 优先级为显式进程环境 → 一个选定文件；文件选择为 `--env-file` → `ARP_ENV_FILE` → 默认 `.env`。不向上搜索、不隐式合并、不执行 shell、不插值，每命令读取一次快照，空值表示未配置。院校仅读取当前 profile 文件。已有 DPAPI 安装保持旧后端；在原 Windows 账户执行 `arp config migrate --from dpapi` 才显式迁移，保留原存储，仅报告冲突键名且不覆盖。详见[配置说明](skills/acquire-research-papers/references/credentials-and-cache.md)。
 
 ## 命名院校、现有论文库与作者论文发现
 
@@ -141,7 +161,7 @@ python "$skill/scripts/arp.py" fetch `
 
 ### 建立主题论文集
 
-用户通常只需要用自然语言描述任务，由 Codex 生成论文集规范。下面的精简示例展示系统会明确哪些边界：
+用户通常只需要用自然语言描述任务，由当前 Agent 生成论文集规范。下面的精简示例展示系统会明确哪些边界：
 
 ```yaml
 schema_version: 1
@@ -204,7 +224,7 @@ python "$skill/scripts/arp.py" discover corpus --progress `
   --spec .\corpus.yaml --output C:\Research\corpus-run
 ```
 
-Codex 随后阅读 `evidence-packets.jsonl`，根据标题和摘要生成绑定哈希的评审决定。导入这些决定并冻结选集：
+当前 Agent 随后阅读 `evidence-packets.jsonl`，根据标题和摘要生成绑定哈希的评审决定。导入这些决定并冻结选集：
 
 ```powershell
 python "$skill/scripts/arp.py" review corpus `
@@ -250,7 +270,7 @@ python "$skill/scripts/arp.py" discover research `
   --brief .\research-brief.yaml --output C:\Research\literature-review
 ```
 
-发现阶段返回 `status: review_required`。随后由 Codex 评审经过哈希绑定的候选，冻结最相近论文，获取正式文件，阅读 MinerU 解析结果并导入证据：
+发现阶段返回 `status: review_required`。随后由 Agent 评审经过哈希绑定的候选，冻结最相近论文，获取正式文件，阅读 MinerU 解析结果并导入证据：
 
 ```powershell
 python "$skill/scripts/arp.py" review research `
@@ -261,17 +281,17 @@ python "$skill/scripts/arp.py" evidence research `
   --run C:\Research\literature-review --records .\evidence-review.jsonl
 ```
 
-评审和证据 JSONL 由 Codex 根据不可变候选包和解析后的全文生成，并遵守 `schemas/` 中的公开格式。最终 `status: complete` 表示冻结的最相近论文都已完成评审，不表示已经找到世界上所有论文，也不表示创新性得到无条件证明。
+评审和证据 JSONL 由当前 Agent 根据不可变候选包和解析后的全文生成，并遵守 `schemas/` 中的公开格式。最终 `status: complete` 表示冻结的最相近论文都已完成评审，不表示已经找到世界上所有论文，也不表示创新性得到无条件证明。
 
 ## 论文集检索实际如何工作
 
 论文集模式适合“指定这些 venue、这些年份，查找这些主题”的有边界任务，实际经过以下步骤：
 
-1. **定义边界。** Codex 记录准确的期刊/会议、年份、论文类型、主题、排除项、总数和配额。
+1. **定义边界。** 当前 Agent 记录准确的期刊/会议、年份、论文类型、主题、排除项、总数和配额。
 2. **先枚举再筛选。** ACL 和 IJCAI 使用官方 proceedings；期刊和已知会议集通过 ISSN、collection DOI、venue 和年份分页读取 Crossref；OpenAlex 和 Semantic Scholar 可以补充基于查询的候选。
 3. **记录覆盖状态。** 每个“venue × 年份”都会标记为 complete、partial 或 failed。缺少 proceedings 页面或准确标识符时，会生成诊断信息，不会把空结果伪装成完整覆盖。
 4. **合并并补全。** 优先按 DOI 去重。缺少摘要时，先按 DOI 查询 Semantic Scholar，配置 OpenAlex 后再进行第二轮补全；每个字段保留来源记录。
-5. **依据证据评审。** 确定性规则排除错误年份、venue、track、论文类型和明显的目录/封面信息。关键词只负责提出候选；正式接受必须由 Codex 同时判断标题和摘要，并记录理由。
+5. **依据证据评审。** 确定性规则排除错误年份、venue、track、论文类型和明显的目录/封面信息。关键词只负责提出候选；正式接受必须由当前 Agent 同时判断标题和摘要，并记录理由。
 6. **满足配额后冻结。** 最终清单和规范都会绑定哈希。进入下载阶段后不能再添加、删除或替换论文。
 
 两种 pending 状态是正常工作流的一部分：
@@ -295,7 +315,7 @@ python "$skill/scripts/arp.py" evidence research `
 Research mode 是明确分阶段、可恢复的流程，不是无人参与的一键系统综述：
 
 - `discover research` 使用 Crossref 以及已配置的 Semantic Scholar/OpenAlex 搜索，按 DOI 去重，并执行有边界的后向参考文献、前向引用和 related-paper 扩展。可选来源可以独立失败，只留下脱敏诊断，不会抹掉其他来源的结果。
-- `review research` 要求 Codex 对每个哈希绑定候选明确给出 include/exclude 决定，然后只冻结需要全文核验的最相近论文。规范化决定和审核清单也会通过哈希绑定到选集。
+- `review research` 要求当前 Agent 对每个哈希绑定候选明确给出 include/exclude 决定，然后只冻结需要全文核验的最相近论文。规范化决定和审核清单也会通过哈希绑定到选集。
 - `acquire research` 复用正式出版社获取流程，保留人工和重试队列，并通过内容寻址的 MinerU 缓存解析已核验 PDF。获取待办和解析待办分别计数；顶层状态指向最早尚未完成的关口，混合失败也不会互相遮蔽。
 - `evidence research` 校验论文 ID、PDF 和 Markdown 哈希、claim ID、阅读范围、位置和摘录，之后填充证据图、最相近工作矩阵、claim 覆盖表和有边界的 gap 报告。
 
@@ -337,7 +357,7 @@ IEEE 使用独立、可见的 Chrome profile，因为机构认证和 PDF 请求�
 
 1. 进入院校档案中配置的准确 CARSI IEEE 资源入口；
 2. 选择准确的院校候选，并写入、校验 IdP entity ID；
-3. 只有当前域名与配置的 IdP 域名完全一致时，才读取 DPAPI 凭据，并且最多提交一次；
+3. 只有当前域名与配置的 IdP 域名完全一致时，才读取当前 profile 凭据，并且最多提交一次；
 4. 处理单“继续”按钮或“接受/拒绝”属性释放页，永远不点击拒绝；
 5. CARSI 返回但尚未获得 IEEE 权限时，只重新访问配置的同一资源入口；
 6. 必须确认同一上下文已经返回准确的 `ieeexplore.ieee.org`，才请求 PDF 和 BibTeX。
@@ -355,7 +375,7 @@ IEEE 使用独立、可见的 Chrome profile，因为机构认证和 PDF 请求�
 ScienceDirect 按设计保持人工模式。需要解析官方预期身份时，先配置 Elsevier API key：
 
 ```powershell
-& "$skill\scripts\setup-discovery-api-keys.ps1" -Provider elsevier
+python "$skill/scripts/arp.py" config setup elsevier
 ```
 
 下载前先启动监听：
@@ -390,7 +410,7 @@ python "$skill/scripts/arp.py" manual-fetch `
 | --- | --- |
 | `coverage.jsonl` | 每个来源对请求的 venue/year 切片覆盖到什么程度 |
 | `candidates.jsonl` | 去重后的发现账本，不是最终引用库 |
-| `evidence-packets.jsonl` | Codex 实际评审的不可变标题/摘要证据 |
+| `evidence-packets.jsonl` | 当前 Agent 实际评审的不可变标题/摘要证据 |
 | `pending-metadata.csv` | 因缺少摘要等证据而暂时无法评审的候选 |
 | `pending-review.csv` | 元数据足够但尚无语义决定的候选 |
 | `selected-papers.jsonl` | 唯一允许进入获取阶段的冻结论文 |
@@ -402,7 +422,7 @@ python "$skill/scripts/arp.py" manual-fetch `
 | `research-candidates.jsonl` | 用于明确评审最相近论文的哈希绑定候选 |
 | `citation-graph.json` | 有边界的后向、前向和 related-paper 边、已使用/被截断的种子边界，以及脱敏来源诊断 |
 | `full-text-manifest.jsonl` | 冻结论文、正式 PDF 哈希、MinerU Markdown 哈希、解析模式和 pending 状态 |
-| `validated-evidence-reviews.jsonl` | 绑定到准确 PDF 和解析 Markdown 的 Codex 证据评审 |
+| `validated-evidence-reviews.jsonl` | 绑定到准确 PDF 和解析 Markdown 的 Agent 证据评审 |
 | `claim-coverage.csv` | 每个 claim 的关系、证据论文和未解决状态 |
 | `evidence-map.md` / `gap-analysis.md` | 可审计的证据位置和限定在检索范围内的结论 |
 
@@ -413,7 +433,7 @@ python "$skill/scripts/arp.py" manual-fetch `
 项目从三个不同层面提高可靠性：
 
 - **覆盖可追溯：**按 venue/year 枚举并记录覆盖状态，比只相信关键词搜索首页更可靠，但不能保证上游索引包含世界上每一篇论文。
-- **相关性可复查：**确定性 hard gate 和预筛选降低噪声，正式接受还必须由 Codex 根据标题和摘要作出有理由的判断。这比纯关键词接受更可审计，但不是语义判断永远正确的证明。
+- **相关性可复查：**确定性 hard gate 和预筛选降低噪声，正式接受还必须由当前 Agent 根据标题和摘要作出有理由的判断。这比纯关键词接受更可审计，但不是语义判断永远正确的证明。
 - **文件身份可靠：**正式域名边界、出版社原始 BibTeX、元数据比较、provenance 和哈希提供系统中最强的保证：交付文件确实对应冻结论文。
 
 仓库为这些行为提供回归测试，也已经完成真实的跨 venue 批量任务。但目前没有大型、独立人工标注的跨领域基准，因此不能宣传经过测量的 precision/recall 数字。缺少摘要、当年索引不完整、身份歧义和边界相关性都会明确报告，不会通过猜测隐藏。
@@ -421,11 +441,11 @@ python "$skill/scripts/arp.py" manual-fetch `
 ## 当前限制
 
 - 完整 IEEE/CARSI 流程目前已在一个 CARSI 院校完成真实验证；每个新增院校虽然由通用 profile 驱动，仍需要首次观察和适配。
-- 安全机构凭据和当前引导式配置主要面向 Windows、PowerShell 和 DPAPI。
+- 本地文件凭据与核心命令可跨平台；当前 IEEE 浏览器及旧 DPAPI 仍依赖 Windows。Claude Code、Kiro 的交互执行尚未实机验证。
 - IEEE 期刊发现主要依赖 Crossref 和可选元数据 API；当前版本没有 IEEE 官方 venue 枚举器。
 - ACM 自动获取没有生产级浏览器 adapter；HTTP 客户端被正式页面拦截时转人工。
 - ScienceDirect 只支持人工获取；项目有意不自动操作 organization login 或文章页面。
-- Research mode 分阶段运行，并要求 Codex 明确给出候选评审和证据决定；它不是无人参与的一键系统综述。
+- Research mode 分阶段运行，并要求当前 Agent 明确给出候选评审和证据决定；它不是无人参与的一键系统综述。
 - 引用图覆盖受到种子、邻居上限、来源覆盖和 API 可用性的共同限制，不能据此宣称普遍召回率。
 - 没有可信摘要的论文保持 `pending_abstract`，禁止只按题名接受。
 - 尚未发布的 proceedings 和上游元数据不一致会造成覆盖不完整。
@@ -445,14 +465,14 @@ python "$skill/scripts/arp.py" manual-fetch `
 2. **改善 IEEE 院校诊断。**在现有命名 profile 和 doctor 基础上改进首次适配及实时访问诊断，继续保护凭据。
 3. **产品化 ACM 授权访问。**设计独立、可见、隔离并限制准确域名的浏览器契约，采用与 IEEE 相同的 fail-closed 原则；访问或页面形态未知时继续转人工。
 4. **扩展安全增量获取。**在现有论文库导入、更新计划基础上让新冻结选集复用已验证用户文件。
-5. **提供可复制模板。**增加 `arp init corpus`、`arp init research`、示例规范和面向用户的运行摘要。
+5. **扩展组合指南。**在已有七个配方、输入模板与运行摘要基础上改进示例，后续再评估 init 命令。
 
 ### 中期
 
 6. **量化发现质量。**建立标注过的 venue/topic fixture，按来源和领域统计覆盖率、precision、recall、摘要缺失率和评审分歧。
 7. **扩展官方枚举。**在存在官方索引或 API 时增加准确、可审计的 venue adapter，优先考虑 IEEE 和 ACM collection，同时保留严格标识符要求。
 8. **改善批量操作。**增加遵守出版社限制的安全并发、进度快照、重试调度和人工队列批量接管，同时保护限流和共享会话。
-9. **提高可移植性。**把 secret store 抽象到不同操作系统 keychain，保留 Windows DPAPI 兼容，绝不退回明文文件。
+9. **扩展实测平台。**分别验证各宿主与各系统的 IEEE 浏览器能力，保留显式本地文件配置和 Windows DPAPI 迁移兼容。
 10. **开放出版社插件契约。**允许用户为通用 adapter 注册准确批准域名和经过测试的页面契约，同时继续拒绝任意跳转和模型生成引用。
 
 除非出版社政策和安全的官方集成条件发生变化，否则 ScienceDirect 浏览器自动化不会进入路线图。

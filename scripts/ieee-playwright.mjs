@@ -252,27 +252,27 @@ export function assertAutomationPathBoundaries({
   dependencyRoot,
   secretPath = "",
   localAppData = process.env.LOCALAPPDATA,
+  dataRoot,
   testMode = false,
 }) {
   if (testMode === true) return;
-  for (const [name, value] of Object.entries({ workDir, profileDir, dependencyRoot, localAppData })) {
+  for (const [name, value] of Object.entries({ workDir, profileDir, dependencyRoot,
+    root: dataRoot || localAppData })) {
     if (!String(value ?? "").trim()) {
       throw new IeeeFlowError("path-boundary", `${name} is required for production automation.`);
     }
   }
-  const localRoot = path.resolve(localAppData);
-  const expectedWorkRoot = path.join(localRoot, "Codex", "paper-acquisition", "runs");
+  const localRoot = dataRoot ? path.resolve(dataRoot) : path.join(path.resolve(localAppData), "Codex");
+  const expectedWorkRoot = path.join(localRoot, "paper-acquisition", "runs");
   const expectedProfile = path.join(
     localRoot,
-    "Codex",
     "browser-profiles",
     "acquire-research-papers",
     "ieee",
   );
-  const expectedDependencies = path.join(localRoot, "Codex", "deps", "acquire-research-papers");
+  const expectedDependencies = path.join(localRoot, "deps", "acquire-research-papers");
   const expectedSecret = path.join(
     localRoot,
-    "Codex",
     "secrets",
     "acquire-research-papers",
     "secrets.clixml",
@@ -965,6 +965,24 @@ export async function readCredentialForHost(
   }
 }
 
+export function credentialReaderFromPayload(payload) {
+  const credentialsMissing = payload?.username === null && payload?.password === null;
+  if (!payload || !DNS_HOST.test(String(payload.host ?? "")) ||
+      (!credentialsMissing && (!String(payload.username ?? "") || !String(payload.password ?? "")))) {
+    throw new IeeeFlowError("credential-read", "Invalid local credential input.");
+  }
+  return async (hostname, { institutionProfile } = {}) => {
+    if (!isApprovedCredentialHost(hostname, institutionProfile) ||
+        hostname.toLowerCase() !== payload.host.toLowerCase()) {
+      throw new IeeeFlowError("unexpected-auth-host", "Credential release denied for an unapproved hostname.");
+    }
+    if (credentialsMissing) {
+      throw new IeeeFlowError("credential-read", "Institution credentials are not configured.");
+    }
+    return { username: String(payload.username), password: String(payload.password) };
+  };
+}
+
 async function openCarsiInstitutionLogin(page, timeoutMs, institutionProfile) {
   const currentHost = hostnameOf(page.url(), "unexpected-auth-host");
   if (currentHost !== CARSI_HOST) return currentHost;
@@ -1652,6 +1670,7 @@ export async function runAutomatedRetrieval(options) {
     dependencyRoot: options.dependencyRoot,
     secretPath: options.secretPath,
     localAppData: options.localAppData,
+    dataRoot: options.dataRoot,
     testMode: options.testMode === true,
   });
   await mkdir(profileDir, { recursive: true });
@@ -1768,10 +1787,22 @@ async function main() {
   const chromium = loadPlaywrightChromium(options.dependencyRoot);
   const accessProfile = options.accessProfile
     ? JSON.parse(await readFile(options.accessProfile, "utf8")) : undefined;
+  let credentialReader;
+  if (options.credentialStdin === "true") {
+    let input = "";
+    for await (const chunk of process.stdin) {
+      input += chunk.toString("utf8");
+      if (Buffer.byteLength(input) > 65536) throw new IeeeFlowError("credential-read", "Local credential input is too large.");
+    }
+    try { credentialReader = credentialReaderFromPayload(JSON.parse(input)); }
+    catch { throw new IeeeFlowError("credential-read", "Invalid local credential input."); }
+    input = "";
+  }
   const result = await runAutomatedRetrieval({
     ...options,
     chromium,
     accessProfile,
+    credentialReader,
     timeoutMs: options.timeoutMs ? Number(options.timeoutMs) : undefined,
     acceptAttributeRelease: String(options.acceptAttributeRelease ?? "true").toLowerCase() === "true",
   });

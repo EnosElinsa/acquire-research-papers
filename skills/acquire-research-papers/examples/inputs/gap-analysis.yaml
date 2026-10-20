@@ -1,0 +1,19 @@
+schema_version: 1
+mode: research
+question_type: gap-analysis
+research_question: Replace with a falsifiable gap question and searched scope
+work_under_review:
+  scenario: Replace with the scenario
+  mechanism: Replace with the mechanism
+  decisions: []
+  objectives: []
+  constraints: []
+claims:
+  - id: gap-1
+    text: Replace with the proposed distinction to test against prior work
+seed_papers: []
+analysis:
+  max_full_text_papers: 10
+delivery:
+  write_narrative: false
+  export_markdown: false

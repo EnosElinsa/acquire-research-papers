@@ -13,11 +13,31 @@
     "reviewer"
   ],
   "properties": {
+    "schema_version": {"type": "integer", "enum": [1, 2]},
     "candidate_id": {"type": "string", "pattern": "^[a-f0-9]{24}$"},
     "candidate_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
     "decision": {"enum": ["include", "exclude"]},
     "claims": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
     "reason": {"type": "string", "minLength": 1},
-    "reviewer": {"const": "codex"}
+    "reviewer": {"type": "string", "pattern": "\\S"},
+    "executor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["host"],
+      "properties": {
+        "host": {"type": "string", "pattern": "\\S"},
+        "model": {"type": "string", "pattern": "\\S"},
+        "version": {"type": "string", "pattern": "\\S"}
+      }
+    }
+  },
+  "if": {
+    "required": ["schema_version"],
+    "properties": {"schema_version": {"const": 2}}
+  },
+  "then": {"required": ["executor"]},
+  "else": {
+    "properties": {"reviewer": {"const": "codex"}},
+    "not": {"required": ["executor"]}
   }
 }

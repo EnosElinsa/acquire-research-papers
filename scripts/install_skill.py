@@ -11,6 +11,11 @@ from pathlib import Path
 
 from build_distribution import SKILL_FILES
 
+HOST_DIRECTORIES = {
+    "codex": ".agents", "claude-code": ".claude",
+    "kiro-ide": ".kiro", "kiro-cli": ".kiro",
+}
+
 
 def _git_or_link(path: Path) -> None:
     for current in (path, *path.parents):
@@ -84,11 +89,19 @@ def install(source: Path, target: Path, *, replace: bool = False) -> dict:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", required=True, type=Path)
-    parser.add_argument("--target", required=True, type=Path)
+    destination = parser.add_mutually_exclusive_group(required=True)
+    destination.add_argument("--target", type=Path)
+    destination.add_argument("--host", choices=tuple(HOST_DIRECTORIES))
+    parser.add_argument("--project-root", type=Path,
+                        help="select a project skill directory with --host")
     parser.add_argument("--replace", action="store_true")
     args = parser.parse_args(argv)
+    if args.project_root and not args.host:
+        parser.error("--project-root requires --host")
+    target = args.target or (args.project_root or Path.home()) / HOST_DIRECTORIES[args.host] / (
+        "skills") / "acquire-research-papers"
     try:
-        result = install(args.source, args.target, replace=args.replace)
+        result = install(args.source, target, replace=args.replace)
     except (ValueError, OSError) as exc:
         parser.exit(1, f"Skill installation failed: {exc}\n")
     print(json.dumps(result, indent=2))

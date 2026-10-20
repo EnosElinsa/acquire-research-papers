@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RunContext",
+  "type": "object",
+  "required": ["schema_version", "steps"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "steps": {"type": "object", "additionalProperties": {
+      "type": "object",
+      "required": ["status", "input_sha256", "inputs", "artifacts", "next_actions"],
+      "properties": {
+        "status": {"type": "string", "minLength": 1},
+        "input_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "inputs": {"type": "array", "items": {"$ref": "#/$defs/artifact"}},
+        "artifacts": {"type": "array", "items": {"$ref": "#/$defs/artifact"}},
+        "next_actions": {"type": "array", "items": {"type": "object"}},
+        "result": {"type": "object"},
+        "items": {"type": "object"}
+      },
+      "additionalProperties": false
+    }}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "artifact": {
+      "type": "object",
+      "required": ["type", "path", "sha256", "step"],
+      "properties": {
+        "type": {"type": "string", "minLength": 1},
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "step": {"type": "string"}
+      },
+      "additionalProperties": false
+    }
+  }
+}

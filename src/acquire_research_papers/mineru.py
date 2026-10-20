@@ -5,7 +5,8 @@ import os
 import re
 import shutil
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -13,6 +14,7 @@ from subprocess import CompletedProcess
 from typing import Any
 
 from acquire_research_papers.artifacts import atomic_write_bytes, sha256_file, validate_pdf
+from acquire_research_papers.run_context import RunContext, RunLocked
 
 
 MINERU_CDN_HOST = "cdn-mineru.openxlab.org.cn"
@@ -291,6 +293,10 @@ class MineruCache:
             return None
         if not output_dir.is_dir() or not markdown.is_file():
             return None
+        if metadata.get("markdown_sha256") != sha256_file(markdown):
+            raise MineruExtractionError(
+                "MinerU cache integrity is unverified; preserve or remove this cache entry before reparsing"
+            )
         return (
             MineruResult(
                 mode=str(metadata["mode"]),
@@ -306,24 +312,30 @@ class MineruCache:
             (json.dumps(metadata, ensure_ascii=False, indent=2) + "\n").encode("utf-8"),
         )
 
+    @contextmanager
+    def _entry_lock(self, key: str) -> Iterator[None]:
+        # Keep advisory lock files outside entries so purging an expired entry
+        # never unlinks an active lock inode. Process death releases the OS lock.
+        try:
+            with RunContext(self.root / '.locks' / key).lock():
+                yield
+        except RunLocked:
+            raise MineruExtractionError(
+                'MinerU cache entry is already being parsed; retry after the active parse finishes'
+            ) from None
+
     def parse(self, pdf: Path) -> MineruResult:
         validate_pdf(pdf)
         key = self.key_for(pdf)
         entry = self.root / key
-        entry.mkdir(parents=True, exist_ok=True)
-        cached = self._load(entry, key)
-        if cached:
-            result, metadata = cached
-            metadata["last_accessed"] = datetime.now(UTC).isoformat()
-            self._write_metadata(entry, metadata)
-            return result
-
-        lock = entry / "parse.lock"
-        lock_acquired = False
-        try:
-            with lock.open("x", encoding="utf-8") as handle:
-                handle.write(str(os.getpid()))
-            lock_acquired = True
+        with self._entry_lock(key):
+            entry.mkdir(parents=True, exist_ok=True)
+            if (entry / 'parse.lock').exists():
+                raise MineruExtractionError(
+                    'MinerU cache entry is already being parsed or has a legacy parse.lock; '
+                    'confirm the previous parser has stopped, then preserve the entry and '
+                    'remove that legacy lock explicitly before retrying'
+                )
             cached = self._load(entry, key)
             if cached:
                 result, metadata = cached
@@ -345,31 +357,33 @@ class MineruCache:
                 "mode": result.mode,
                 "output_dir": output_dir.relative_to(entry).as_posix(),
                 "markdown": markdown.relative_to(entry).as_posix(),
+                "markdown_sha256": sha256_file(markdown),
                 "created_at": now,
                 "last_accessed": now,
             }
             self._write_metadata(entry, metadata)
             return result
-        except FileExistsError as exc:
-            raise MineruExtractionError("MinerU cache entry is already being parsed") from exc
-        finally:
-            if lock_acquired:
-                lock.unlink(missing_ok=True)
 
     def purge_expired(self, *, now: datetime | None = None) -> list[str]:
         current = now or datetime.now(UTC)
         removed: list[str] = []
         for entry in sorted(path for path in self.root.iterdir() if path.is_dir()):
+            if entry.name == '.locks':
+                continue
             if (entry / "parse.lock").exists():
                 continue
             try:
-                metadata = json.loads(self._metadata_path(entry).read_text(encoding="utf-8"))
-                last_accessed = datetime.fromisoformat(str(metadata["last_accessed"]))
-            except (OSError, KeyError, ValueError, json.JSONDecodeError):
+                with self._entry_lock(entry.name):
+                    # Recheck after acquiring the lock before removing any data.
+                    if (entry / 'parse.lock').exists():
+                        continue
+                    metadata = json.loads(self._metadata_path(entry).read_text(encoding="utf-8"))
+                    last_accessed = datetime.fromisoformat(str(metadata["last_accessed"]))
+                    if current - last_accessed > self.retention:
+                        shutil.rmtree(entry)
+                        removed.append(entry.name)
+            except (MineruExtractionError, OSError, KeyError, ValueError, json.JSONDecodeError):
                 continue
-            if current - last_accessed > self.retention:
-                shutil.rmtree(entry)
-                removed.append(entry.name)
         return removed
 
     def export(self, result: MineruResult, destination: Path) -> Path:

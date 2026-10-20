@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "package": "acquire-research-papers",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "wheel": {
-    "url": "https://github.com/EnosElinsa/acquire-research-papers/releases/download/v0.4.0/acquire_research_papers-0.4.0-py3-none-any.whl",
-    "sha256": "9f7b795a60337568db10b7cd6dc99c8711440b65ba5be8ed85cfa04fa9a62f9e"
+    "url": "https://github.com/EnosElinsa/acquire-research-papers/releases/download/v0.5.0/acquire_research_papers-0.5.0-py3-none-any.whl",
+    "sha256": "fb2da4ca35497586726aee9bd8d6fc84f5bf6cd4253684f891861e3207a94cab"
   }
 }

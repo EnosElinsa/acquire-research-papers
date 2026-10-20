@@ -635,7 +635,8 @@ test("retries one transient free-document PDF response without authentication", 
       browserContext: context,
       reference: "https://ieeexplore.ieee.org/document/11014597",
       workDir: root,
-      credentialReader: async () => { throw new Error("credentials must not be read"); },
+      credentialReader: subject.credentialReaderFromPayload({host: 'login.example.edu',
+        username: null, password: null}),
     });
     assert.equal(result.status, "downloaded");
     assert.equal(context.request.calls.filter((call) => call.method === "GET").length, 2);
@@ -960,15 +961,17 @@ test("an existing IdP session reaches the configured resource without reading cr
       ],
     });
     const page = new FakePage({ idpSessionActive: true });
+    const missingCredentialReader = subject.credentialReaderFromPayload({host: 'login.example.edu',
+      username: null, password: null});
     const result = await subject.retrieveIeeePaper({
       page,
       browserContext: context,
       reference: "https://ieeexplore.ieee.org/document/11014597",
       workDir: root,
       institutionProfile: INSTITUTION_PROFILE,
-      credentialReader: async () => {
+      credentialReader: async (...args) => {
         reads += 1;
-        throw new Error("credentials must not be read for an existing IdP session");
+        return missingCredentialReader(...args);
       },
     });
     assert.equal(result.status, "downloaded");
@@ -977,6 +980,25 @@ test("an existing IdP session reaches the configured resource without reading cr
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("an automatic login fails at the credential read when no local account is saved", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'arp-ieee-no-saved-account-'));
+  const page = new FakePage();
+  try {
+    await assert.rejects(subject.retrieveIeeePaper({
+      page,
+      browserContext: fakeContext({
+        pdfResponses: [new FakeResponse('denied', {status: 403, contentType: 'text/html'})],
+      }),
+      reference: 'https://ieeexplore.ieee.org/document/11014597', workDir: root,
+      institutionProfile: INSTITUTION_PROFILE,
+      credentialReader: subject.credentialReaderFromPayload({host: 'login.example.edu',
+        username: null, password: null}),
+    }), {phase: 'credential-read'});
+    assert.equal(page.username, undefined);
+    assert.equal(page.password, undefined);
+  } finally {await rm(root, {recursive: true, force: true});}
 });
 
 test("waits for a delayed IdP form before the single credential read", async () => {

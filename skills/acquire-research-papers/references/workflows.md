@@ -1,5 +1,7 @@
 # Acquire Research Papers
 
+Use these existing workflow commands from any supported agent host. See [independent capabilities](capabilities.md), [seven composition recipes](../examples/README.md), and [host installation](hosts.md). The executing agent performs semantic review; new v2 review provenance names the actual host in `reviewer` and `executor.host`, with model/version only when available. Legacy Codex decisions stay readable without rewriting bytes or hashes.
+
 Deliver a verified pair for every paper: the official publisher PDF and the publisher's raw BibTeX export. Discovery services may nominate candidates; they never supply the final citation artifact.
 
 ## Route the request
@@ -7,7 +9,7 @@ Deliver a verified pair for every paper: the official publisher PDF and the publ
 - Use `fetch` for a DOI, official URL, exact title, or explicit paper list.
 - Use `manual-fetch` when an authorized publisher download must be completed by the user in a normal browser, especially subscribed ScienceDirect content.
 - Use `discover corpus` for venue/topic/year/count tasks. It enumerates venue/year slices and creates auditable evidence packets; it does not freeze a selection or download publisher artifacts.
-- Use `review corpus` after Codex has reviewed the evidence packets. It validates structured semantic decisions and freezes the quota-aware selection.
+- Use `review corpus` after the executing agent has reviewed the evidence packets. It validates structured semantic decisions and freezes the quota-aware selection.
 - Use `acquire corpus` to consume a frozen selection, verify supported publisher pairs, and separate manual and retryable items.
 - Use `discover research` for gap analysis, nearest work, claim citations, citation expansion, or Related Work research.
 
@@ -20,7 +22,7 @@ $skill = Join-Path $env:USERPROFILE ".agents/skills/acquire-research-papers"
 python "$skill/scripts/arp.py" --help
 ```
 
-Runtime state belongs under `%LOCALAPPDATA%\Codex`; delivery directories must be outside this public repository.
+Runtime state belongs under the application's platform-data root, with detected legacy roots retained for compatibility; delivery directories must be outside this public repository. Use `arp config path` for the selected local configuration path.
 
 Read [configuration](configuration.md) for named profiles and provider setup. All setup/read helper scripts mentioned in older technical details are bundled inside the runtime wheel; invoke `arp config setup` from the installed skill.
 
@@ -41,7 +43,7 @@ When IEEE access fails for a previously untested institution, retain the visible
 
 ### ScienceDirect manual handoff
 
-Configure the DPAPI-protected Elsevier API key once in an interactive terminal:
+Configure the Elsevier API key once using the selected local backend in an interactive terminal:
 
 ```powershell
 python "$skill/scripts/arp.py" config setup elsevier
@@ -77,7 +79,7 @@ python "$skill/scripts/arp.py" evidence research `
 
 Discovery writes `request-spec.json`, `coverage.jsonl`, `candidates.jsonl`, `evidence-packets.jsonl`, `pending-metadata.csv`, `discovery-errors.jsonl`, and `discovery-manifest.json`. It writes no selection, PDF, BibTeX, acquisition ledger, or manual-download queue. Resume the same run to retry partial coverage; complete venue/year slices are checkpointed.
 
-Codex must inspect `evidence-packets.jsonl` and create hash-bound JSONL decisions for review-ready candidates. Judge relevance from both title and abstract; keywords are optional supporting evidence. Full text is not required for corpus discovery. A missing abstract remains `pending` until metadata enrichment succeeds. Each decision records `candidate_id`, `evidence_hash`, `decision`, `matched_topics`, `evidence_fields`, `reason`, `reviewer: codex`, and `rule_version`. Do not accept by score or keyword alone. Review may stop early only after the explicitly accepted pool satisfies the preferred total and every quota; omitted ready packets remain audited as `ready_unreviewed` in `pending-review.csv` and can never enter the frozen selection.
+The executing agent must inspect `evidence-packets.jsonl` and create hash-bound JSONL decisions for review-ready candidates. Judge relevance from both title and abstract; keywords are optional supporting evidence. Full text is not required for corpus discovery. A missing abstract remains `pending` until metadata enrichment succeeds. Each decision records `candidate_id`, `evidence_hash`, `decision`, `matched_topics`, `evidence_fields`, `reason`, actual-host v2 review provenance, and `rule_version`. Do not accept by score or keyword alone. Review may stop early only after the explicitly accepted pool satisfies the preferred total and every quota; omitted ready packets remain audited as `ready_unreviewed` in `pending-review.csv` and can never enter the frozen selection.
 
 `review corpus` verifies the request, candidate, evidence, and coverage hashes; rejects unknown IDs, duplicate decisions, stale hashes, missing explanations, and acceptance without title-and-abstract evidence; and revalidates an existing frozen selection on every rerun. It writes `reviewed-candidates.jsonl`, `pending-review.csv`, `selected-papers.jsonl`, and `selection-manifest.json`. The selection manifest hashes both the normalized specification and selected list; edit neither file before acquisition.
 
@@ -85,11 +87,11 @@ Acquisition verifies that frozen hash, writes `selection-binding.json` before th
 
 Research is a resumable four-stage workflow. `discover research` runs the four query passes across configured search APIs, performs bounded backward/forward/related graph expansion, and writes `research-candidates.jsonl`, `citation-graph.json`, and `research-run.json`. Optional provider failures remain sanitized diagnostics; they do not erase successful results from other sources.
 
-Codex must inspect every research candidate packet and create one row conforming to `schemas/research-review-decision.schema.json`. `review research` rejects stale candidate hashes, unknown claims, omitted explanations, non-Codex reviewers, duplicate decisions, and selections above `analysis.max_full_text_papers`. It freezes a selection only when every candidate has an explicit include/exclude decision, then binds both the normalized decisions and review manifest by SHA-256.
+The executing agent must inspect every research candidate packet and create one row conforming to `schemas/research-review-decision.schema.json`. `review research` rejects stale candidate hashes, unknown claims, omitted explanations, invalid reviewer provenance, duplicate decisions, and selections above `analysis.max_full_text_papers`. It freezes a selection only when every candidate has an explicit include/exclude decision, then binds both the normalized decisions and review manifest by SHA-256.
 
 `acquire research` reuses the standard official publisher acquisition workflow. It never substitutes metadata APIs or repositories for the official PDF/BibTeX pair. Delivered PDFs are parsed through the content-addressed MinerU cache and recorded in `full-text-manifest.jsonl`; inaccessible publishers and parse failures stay pending so the same run can resume. Inspect both `acquisition_pending` and `parsing_pending`; the top-level status names the earliest unfinished gate so a manual publisher item is never hidden by a parser or evidence task.
 
-After reading each parsed closest paper, Codex must create one row conforming to `schemas/research-evidence-review.schema.json`. `evidence research` verifies the selected paper ID, PDF SHA-256, Markdown SHA-256, claim IDs, relation/read-scope contract, and that every full-text excerpt occurs in the bound Markdown. It then fills `evidence-map.md`, `nearest-work-matrix.csv`, `claim-coverage.csv`, and `gap-analysis.md`. A run is `complete` only when every frozen paper has a completed full-text evidence review; unresolved claims remain explicitly unresolved and never become automatic novelty claims.
+After reading each parsed closest paper, the executing agent must create one row conforming to `schemas/research-evidence-review.schema.json`. `evidence research` verifies the selected paper ID, PDF SHA-256, Markdown SHA-256, claim IDs, relation/read-scope contract, and that every full-text excerpt occurs in the bound Markdown. It then fills `evidence-map.md`, `nearest-work-matrix.csv`, `claim-coverage.csv`, and `gap-analysis.md`. A run is `complete` only when every frozen paper has a completed full-text evidence review; unresolved claims remain explicitly unresolved and never become automatic novelty claims.
 
 Use repeatable `--defer-host <exact-hostname>` options when a publisher must not be contacted during the current run. Matching is exact and case-insensitive: already hash-verified deliveries remain delivered, while undelivered records for those hosts enter `manual-download.csv` as `access_required`. Never remove deferred records from the frozen selection.
 

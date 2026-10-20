@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import tempfile
 from collections.abc import Mapping, Sequence
 from collections.abc import Callable
 from pathlib import Path
@@ -111,9 +112,11 @@ def atomic_write_bytes(
     validator: Callable[[Path], None] | None = None,
 ) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
-    partial = destination.with_suffix(f"{destination.suffix}.partial")
+    descriptor, name = tempfile.mkstemp(prefix=".arp-" + destination.name + "-",
+                                        suffix=".partial", dir=destination.parent)
+    partial = Path(name)
     try:
-        with partial.open("xb") as handle:
+        with os.fdopen(descriptor, "wb") as handle:
             handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())

@@ -21,6 +21,7 @@ from acquire_research_papers.research.state import (
     validate_review_audit,
     write_json,
 )
+from acquire_research_papers.review_contracts import review_metadata
 from acquire_research_papers.selection import SelectionRecord, SelectionStore
 
 
@@ -79,7 +80,7 @@ def _candidate(record: SelectionRecord) -> CandidateMetadata:
 
 
 class ResearchEvidenceWorkflow:
-    """Import Codex evidence only when it matches the frozen parsed full text."""
+    """Import agent evidence only when it matches the frozen parsed full text."""
 
     def run(self, root: Path, decisions_path: Path) -> ResearchEvidenceResult:
         destination = root.resolve()
@@ -111,6 +112,7 @@ class ResearchEvidenceWorkflow:
             seen: set[str] = set()
             for row in source_rows:
                 validate_record(row, "research-evidence-review.schema.json")
+                review_metadata(row)
                 selection_id = str(row.get("selection_id") or "")
                 if not selection_id or selection_id in seen:
                     raise ValueError(
@@ -147,12 +149,10 @@ class ResearchEvidenceWorkflow:
                     {
                         "selection_id": record.selection_id,
                         "title": record.title,
-                        "reason": "Codex full-text evidence review required",
+                        "reason": "agent full-text evidence review required",
                     }
                 )
                 continue
-            if decision.get("reviewer") != "codex":
-                raise ValueError("research evidence reviewer must be codex")
             if decision.get("full_text_sha256") != fulltext.get("pdf_sha256"):
                 raise ValueError("research evidence full-text SHA-256 mismatch")
             if decision.get("markdown_sha256") != fulltext.get("markdown_sha256"):
@@ -197,7 +197,7 @@ class ResearchEvidenceWorkflow:
                     "markdown_sha256": fulltext["markdown_sha256"],
                     "review_status": status,
                     "summary": summary,
-                    "reviewer": "codex",
+                    **review_metadata(decision),
                     "records": validated_records,
                 }
             )

@@ -143,13 +143,13 @@ def test_ieee_policy_covers_direct_pdf_frames_and_retryable_timeouts() -> None:
         assert required in policy
 
 
-def test_release_version_is_synchronized_at_0_4_0() -> None:
+def test_release_version_is_synchronized_at_0_5_0() -> None:
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     package_init = (ROOT / "src/acquire_research_papers/__init__.py").read_text(
         encoding="utf-8"
     )
-    assert project["project"]["version"] == "0.4.0"
-    assert '__version__ = "0.4.0"' in package_init
+    assert project["project"]["version"] == "0.5.0"
+    assert '__version__ = "0.5.0"' in package_init
 
 
 def test_skill_documents_evidence_review_before_selection_and_acquisition() -> None:

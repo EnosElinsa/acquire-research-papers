@@ -56,7 +56,7 @@ Update both READMEs, CHANGELOG.md, the Python version, and the runtime manifest 
 
 Publish only after the source commit is on `main` and CI is green. Tag that exact commit as `v<version>`. Upload the matching wheel, versioned thin-skill ZIP, and a `SHA256SUMS` file listing their hashes. Prepare release notes from the changelog with installation, migration, platform limits, and validation evidence. Never replace assets under an already published version; a correction to published runtime bytes needs a new version and digest.
 
-The `verify public release` workflow runs after publication on Linux and Windows. It installs the tagged skill with the real Skills installer and bootstraps its public wheel URL with no local-wheel override. The workflow can also be dispatched against a named tag or branch. Verify the default-branch installation command as well, since that is the documented user path. GitHub source archives are developer downloads; the skill ZIP is the manual-install artifact.
+The `verify public release` workflow runs after publication on Linux, Windows, and macOS. It installs the tagged skill with the real Skills installer and bootstraps its public wheel URL with no local-wheel override. The workflow can also be dispatched against a named tag or branch. Verify the default-branch installation command as well, since that is the documented user path. GitHub source archives are developer downloads; the skill ZIP is the manual-install artifact.
 
 ## Safe copy and checkout migration
 
@@ -64,6 +64,10 @@ Preserve any existing Git checkout, including one previously used directly as an
 
 ```text
 python scripts/install_skill.py --source dist/skills/acquire-research-papers --target <new-skill-directory>
+python scripts/install_skill.py --source dist/skills/acquire-research-papers --host claude-code
+python scripts/install_skill.py --source dist/skills/acquire-research-papers --host kiro-cli
 ```
 
 The installer accepts only the explicit thin-skill allowlist. It refuses target `.git` files/directories, nested Git metadata, Git-checkout ancestors, source/target overlap, and symbolic links. Existing targets require `--replace` and must already be clean thin skills. Replacement preserves a sibling `.previous-...` backup and restores it if the final rename fails. Runtime state and credentials remain outside the installed skill and are not copied. The installer is developer tooling and is excluded from the CLI wheel and distributed skill.
+
+`--host` chooses the documented user skill directory for Codex, Claude Code, Kiro IDE or Kiro CLI; `--project-root` can select a project path but does not bypass the Git-checkout refusal. See [host setup and resources](skills/acquire-research-papers/references/hosts.md). Validate host discovery/invocation separately from CLI installation, and record version, OS, date and scope. Do not treat synthetic CI or a present `SKILL.md` as real-host certification.

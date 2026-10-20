@@ -1,4 +1,8 @@
+import json
+import os
+import re
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -157,6 +161,103 @@ def test_named_bridge_streams_only_safe_user_action_progress(tmp_path, monkeypat
     output = capsys.readouterr().err
     assert 'requires_user_action' in output
     assert 'private signed query' not in output
+
+
+@pytest.mark.parametrize("named_profile", [False, True])
+def test_inspection_sends_missing_credentials_over_stdin_instead_of_failing(
+    tmp_path, monkeypatch, named_profile
+):
+    script = tmp_path / "inspect_probe.py"
+    script.write_text(
+        "import json, sys\n"
+        "payload = json.load(sys.stdin)\n"
+        "payload['status'] = 'inspected'\n"
+        "payload['operation'] = sys.argv[sys.argv.index('--operation') + 1]\n"
+        "payload['stdin_mode'] = '--credential-stdin' in sys.argv\n"
+        "print(json.dumps(payload))\n",
+        encoding="utf-8",
+    )
+    bridge = IeeeBridge(
+        script=script, node_path=sys.executable, profile_root=tmp_path / "profiles",
+        dependency_root=tmp_path / "deps", work_root=tmp_path / "runs",
+        secret_path=tmp_path / "secrets", credential_provider=lambda host: None,
+        credential_host="login.example.edu",
+        access_profile=tmp_path / "campus.json" if named_profile else None,
+    )
+    monkeypatch.setattr(bridge, "_ensure_dependency", lambda: None)
+
+    assert bridge.operate("inspect") == {
+        "status": "inspected", "operation": "inspect", "stdin_mode": True,
+        "host": "login.example.edu", "username": None, "password": None,
+    }
+
+
+@pytest.mark.skipif(os.name != "nt", reason="DPAPI credential bridge requires Windows")
+def test_optional_dpapi_account_read_preserves_denial_and_corruption_errors(tmp_path):
+    scripts = Path(__file__).resolve().parents[2] / "scripts"
+    prepare = tmp_path / "prepare.ps1"
+    prepare.write_text(
+        "param([string]$Scripts, [string]$Root)\n"
+        "$ErrorActionPreference = 'Stop'\n"
+        ". (Join-Path $Scripts 'secret-store.ps1')\n"
+        "$empty = New-AcquisitionSecretPayload\n"
+        "$empty | Export-Clixml -LiteralPath (Join-Path $Root 'empty.clixml')\n"
+        "$secure = [Security.SecureString]::new()\n"
+        "foreach ($character in 'synthetic-password'.ToCharArray()) {$secure.AppendChar($character)}\n"
+        "$secure.MakeReadOnly()\n"
+        "$credential = [Management.Automation.PSCredential]::new('synthetic-user', $secure)\n"
+        "Set-IeeeNamedCredential -ProfileId 'campus' -CredentialHost 'login.example.edu' "
+        "-Credential $credential -Path (Join-Path $Root 'named.clixml')\n",
+        encoding="utf-8",
+    )
+    subprocess.run(
+        ["powershell", "-NoProfile", "-File", str(prepare), str(scripts), str(tmp_path)],
+        capture_output=True, text=True, check=True, timeout=30,
+    )
+    (tmp_path / "corrupt.clixml").write_text("invalid ciphertext", encoding="utf-8")
+    encrypted = (tmp_path / "named.clixml").read_text(encoding="utf-16")
+    damaged, replacements = re.subn(
+        r'(<SS N="Password">)[^<]+', r'\g<1>invalid-ciphertext', encrypted,
+    )
+    assert replacements == 1
+    (tmp_path / "corrupt-password.clixml").write_text(damaged, encoding="utf-16")
+    reader = scripts / "read-browser-credential.ps1"
+
+    def read(filename, *arguments, host="login.example.edu"):
+        return subprocess.run(
+            ["powershell", "-NoProfile", "-File", str(reader), "-SecretPath",
+             str(tmp_path / filename), "-ExpectedHost", host, *arguments],
+            capture_output=True, text=True, timeout=30,
+        )
+
+    for filename, extra in [
+        ("missing.clixml", []), ("missing.clixml", ["-ProfileId", "campus"]),
+        ("empty.clixml", []), ("empty.clixml", ["-ProfileId", "campus"]),
+        ("named.clixml", ["-ProfileId", "other"]),
+    ]:
+        result = read(filename, "-Optional", *extra)
+        assert result.returncode == 0
+        assert json.loads(result.stdout) is None
+
+    configured = read("named.clixml", "-Optional", "-ProfileId", "campus")
+    assert configured.returncode == 0
+    assert json.loads(configured.stdout) == {
+        "username": "synthetic-user", "password": "synthetic-password",
+    }
+    for filename, extra in [
+        ("missing.clixml", []),
+        ("corrupt.clixml", ["-Optional"]),
+        ("corrupt-password.clixml", ["-Optional", "-ProfileId", "campus"]),
+        ("named.clixml", ["-Optional", "-ProfileId", "invalid-profile!"]),
+    ]:
+        result = read(filename, *extra)
+        assert result.returncode != 0
+        assert "synthetic-password" not in result.stdout + result.stderr
+    denied = read("named.clixml", "-Optional", "-ProfileId", "campus",
+                  host="login.example.edu.evil.test")
+    assert denied.returncode != 0
+    assert "unapproved host" in denied.stderr
+    assert "synthetic-password" not in denied.stdout + denied.stderr
 
 
 def test_ieee_attribute_release_is_automatic_with_an_explicit_opt_out(tmp_path: Path) -> None:

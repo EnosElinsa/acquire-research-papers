@@ -1,0 +1,7 @@
+{
+  "name": "research-papers",
+  "resources": [
+    "skill://.kiro/skills/acquire-research-papers/SKILL.md",
+    "skill://~/.kiro/skills/acquire-research-papers/SKILL.md"
+  ]
+}

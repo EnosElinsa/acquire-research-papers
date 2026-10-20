@@ -14,7 +14,11 @@ If private reporting is unavailable, open a public issue containing only a reque
 
 ## Credential boundary
 
-This repository ships no credentials. Runtime secrets are stored outside the repository under `%LOCALAPPDATA%\Codex\secrets\acquire-research-papers` and encrypted with Windows DPAPI for the current user.
+This repository ships no credentials. New installations use explicitly editable local credential files outside the repository. `arp config path` reports the platform configuration root (`ARP_CONFIG_ROOT` may override it). API values live in one selected `.env`; named institution credentials live only in `credentials/<profile-id>.env`. Files contain plaintext and are restricted to the current user before values are written. Do not commit, share, or include populated files in logs or release assets. Only empty public templates are distributed. Saving a password does not enable automatic login.
+
+API input uses an explicit process-environment snapshot over one selected dotenv file, without upward search, shell execution, or interpolation. File selection is `--env-file`, then `ARP_ENV_FILE`, then the default `.env`. Status exposes configured booleans, never values. Parsing errors report only paths/field names/line numbers. Institution credentials do not merge with API values or another profile.
+
+Existing Windows DPAPI installations retain their legacy backend and original store under the detected data root. Migration requires explicit `arp config migrate --from dpapi` on the original Windows account. It preserves the original store, rejects conflicting destination keys without overwriting them, and reports key names only. There is no silent backend fallback. New runtime data uses the application's platform-data root; existing legacy roots remain compatible.
 
 Authenticated browser adapters and API-key readers fail closed:
 
@@ -27,6 +31,7 @@ Authenticated browser adapters and API-key readers fail closed:
 - Named IEEE profiles keep independent browser sessions and credential references. Switching a profile does not copy another institution's session or credentials.
 - Library changes require a hash-bound plan, source/destination rechecks, backups, and a per-library apply lock. A modified source or output is a conflict, not permission to overwrite it.
 - The thin-skill launcher verifies the exact release-wheel SHA-256 before installation. The safe copy installer refuses Git checkout targets and links.
+- Host doctor defaults to local checks. Optional remote reachability and host-version execution require explicit flags; neither establishes host loading, API entitlement, or institutional access. Shared review v2 records identify the real executing host and available model metadata without rewriting legacy records or hashes.
 
 The project never attaches to a user's everyday browser profile and never exports browser cookies. ScienceDirect organization login and download clicks are user-driven; the manual handoff begins from a directory snapshot and handles only local PDF/BibTeX files after download.
 
