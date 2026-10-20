@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/EnosElinsa/acquire-research-papers/schemas/research-review-decision.schema.json",
+  "title": "ResearchReviewDecision",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "candidate_id",
+    "candidate_sha256",
+    "decision",
+    "claims",
+    "reason",
+    "reviewer"
+  ],
+  "properties": {
+    "candidate_id": {"type": "string", "pattern": "^[a-f0-9]{24}$"},
+    "candidate_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "decision": {"enum": ["include", "exclude"]},
+    "claims": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "reason": {"type": "string", "minLength": 1},
+    "reviewer": {"const": "codex"}
+  }
+}

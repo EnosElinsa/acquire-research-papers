@@ -100,8 +100,12 @@ class AclAnthologyAdapter:
         )
 
     def acquire(self, document: SourceDocument) -> AcquiredPair:
+        bibtex_raw = self.client.get(document.bibtex_url).content
+        from acquire_research_papers.bibliography import decode_bibtex_bytes
+
         return AcquiredPair(
             document=document,
             pdf_bytes=self.client.get(document.pdf_url).content,
-            bibtex_text=self.client.get(document.bibtex_url).text,
+            bibtex_text=decode_bibtex_bytes(bibtex_raw)[0],
+            bibtex_bytes=bibtex_raw,
         )

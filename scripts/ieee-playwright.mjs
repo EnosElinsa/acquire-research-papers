@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { createRequire } from "node:module";
-import { mkdir, open, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
@@ -58,7 +58,9 @@ export function normalizeInstitutionProfile(payload = {}) {
   ];
   const profile = {};
   for (const name of required) {
-    const value = String(payload[name] ?? "").trim();
+    const locatorName = {usernameLabel: "usernameLocator", passwordLabel: "passwordLocator",
+      loginButtonName: "loginLocator"}[name];
+    const value = String(payload[name] ?? (locatorName ? payload[locatorName]?.value : "") ?? "").trim();
     if (!value) throw new IeeeFlowError("credential-read", `Institution profile field is missing: ${name}.`);
     profile[name] = value;
   }
@@ -105,6 +107,15 @@ export function normalizeInstitutionProfile(payload = {}) {
     );
   }
   profile.resourceAccessUrl = resourceAccess.href;
+  const ieeeWayfUrl = String(payload.ieeeWayfUrl ?? "").trim();
+  if (ieeeWayfUrl) {
+    let wayf;
+    try { wayf = new URL(ieeeWayfUrl); } catch { throw new IeeeFlowError("credential-read", "IEEE WAYF URL must be a valid HTTPS URL."); }
+    if (wayf.protocol !== "https:" || wayf.hostname.toLowerCase() !== IEEE_HOST || wayf.port || wayf.username || wayf.password || wayf.hash) {
+      throw new IeeeFlowError("credential-read", `IEEE WAYF URL must use the exact ${IEEE_HOST} HTTPS host.`);
+    }
+    profile.ieeeWayfUrl = wayf.href;
+  }
   profile.attributeReleaseTitle = String(payload.attributeReleaseTitle ?? "").trim();
   profile.attributeReleaseAcceptControlName = String(
     payload.attributeReleaseAcceptControlName ?? "",
@@ -139,7 +150,84 @@ export function normalizeInstitutionProfile(payload = {}) {
       );
     }
   }
+  for (const field of ["usernameLocator", "passwordLocator", "loginLocator", "nextLocator",
+    "credentialProfile", "accessMode", "entryUrl", "profileId"]) {
+    if (payload[field] !== undefined) profile[field] = payload[field];
+  }
   return profile;
+}
+
+export function normalizeAccessProfile(payload) {
+  const value = payload.schema_version === 2 ? {
+    ...payload.contract, organization: payload.organization, accessMode: payload.mode,
+    entryUrl: payload.entry_url, profileId: payload.id,
+    credentialHost: payload.credential_host ?? "",
+    credentialProfile: String(payload.credential_ref ?? "").startsWith("legacy:") ? "" : payload.id,
+  } : {...payload};
+  if (!["direct", "assisted", "carsi"].includes(value.accessMode)) {
+    throw new IeeeFlowError("configuration", "Unsupported institutional access mode.");
+  }
+  let entry;
+  try { entry = new URL(value.entryUrl); } catch {
+    throw new IeeeFlowError("configuration", "An official HTTPS entry URL is required.");
+  }
+  if (entry.protocol !== "https:" || entry.username || entry.password || entry.port || entry.hash) {
+    throw new IeeeFlowError("configuration", "An official HTTPS entry URL is required.");
+  }
+  if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(value.profileId ?? "")) {
+    throw new IeeeFlowError("configuration", "Invalid institutional profile ID.");
+  }
+  return value.accessMode === "carsi" ? normalizeInstitutionProfile(value) : value;
+}
+
+export async function configuredLocator(page, contract) {
+  if (!contract || typeof contract.value !== "string" || !contract.value) {
+    throw new IeeeFlowError("form-contract", "A typed form locator is required.");
+  }
+  let locator;
+  switch (contract.kind) {
+    case "label": locator = page.getByLabel(contract.value, {exact: true}); break;
+    case "placeholder": locator = page.getByPlaceholder(contract.value, {exact: true}); break;
+    case "role":
+      if (!["button", "link", "textbox"].includes(contract.role)) {
+        throw new IeeeFlowError("form-contract", "Unsupported form control role.");
+      }
+      locator = page.getByRole(contract.role, {name: contract.value, exact: true}); break;
+    case "id":
+      if (!/^[A-Za-z][A-Za-z0-9_:.-]*$/.test(contract.value)) {
+        throw new IeeeFlowError("form-contract", "Invalid exact control ID.");
+      }
+      locator = page.locator(`[id="${contract.value}"]`); break;
+    case "name":
+      if (!/^[A-Za-z0-9_-]+$/.test(contract.value)) {
+        throw new IeeeFlowError("form-contract", "Invalid exact control name.");
+      }
+      locator = page.locator(`[name="${contract.value}"]`); break;
+    default: throw new IeeeFlowError("form-contract", "Unsupported locator kind.");
+  }
+  return uniqueLocator(locator, "form-contract", "Configured form control");
+}
+
+export async function waitForAssistedReturn({page, institutionProfile, timeoutMs,
+  preservePage = false,
+  progress = value => process.stderr.write(`${JSON.stringify(value)}\n`)}) {
+  progress({status: "requires_user_action", phase: "institution-login",
+    message: "Complete institution login in the dedicated browser and return to IEEE Xplore."});
+  if (!preservePage) {
+    await page.goto(institutionProfile.entryUrl, {waitUntil: "domcontentloaded", timeout: timeoutMs});
+  }
+  try {
+    await page.waitForURL(url => isExactIeeeHttps(url.href, "institutional-return"),
+      {timeout: timeoutMs, waitUntil: "domcontentloaded"});
+  } catch {
+    throw new IeeeFlowError("manual-login-timeout", "Institutional login requires user action.",
+      {requiresUserAction: true, hostname: hostnameOf(page.url(), "institutional-return")});
+  }
+  if (!isExactIeeeHttps(page.url(), "institutional-return")) {
+    throw new IeeeFlowError("institutional-return", "The browser has not returned to IEEE.",
+      {requiresUserAction: true});
+  }
+  return {returned_to_ieee: true};
 }
 
 export function isApprovedCredentialHost(hostname, institutionProfile) {
@@ -192,7 +280,10 @@ export function assertAutomationPathBoundaries({
   if (!isPathInside(workDir, expectedWorkRoot)) {
     throw new IeeeFlowError("path-boundary", "The browser work directory must remain under the global run root.");
   }
-  if (!samePath(profileDir, expectedProfile)) {
+  const namedProfileRoot = path.join(path.dirname(expectedProfile), "ieee-profiles");
+  const namedProfile = path.dirname(path.resolve(profileDir)) === path.resolve(namedProfileRoot)
+    && /^[a-z0-9][a-z0-9-]{0,62}$/.test(path.basename(profileDir));
+  if (!samePath(profileDir, expectedProfile) && !namedProfile) {
     throw new IeeeFlowError("path-boundary", "A dedicated acquire-research-papers IEEE profile is required.");
   }
   if (!samePath(dependencyRoot, expectedDependencies)) {
@@ -209,6 +300,16 @@ function hostnameOf(value, phase) {
   } catch {
     throw new IeeeFlowError(phase, "The browser returned an invalid URL.");
   }
+}
+
+function officialIeeeWayfUrl(institutionProfile) {
+  if (String(institutionProfile.ieeeWayfUrl ?? "").trim()) {
+    return institutionProfile.ieeeWayfUrl;
+  }
+  const url = new URL(`https://${IEEE_HOST}/servlet/wayf.jsp`);
+  url.searchParams.set("entityId", institutionProfile.carsiEntityId);
+  url.searchParams.set("url", `https://${IEEE_HOST}/Xplore/home.jsp`);
+  return url.href;
 }
 
 function isExactIeeeHttps(value, phase) {
@@ -272,7 +373,9 @@ export function toErrorPayload(error) {
   const payload = {
     status: "error",
     phase: error instanceof IeeeFlowError ? error.phase : "automation",
-    message: sanitizeUrlsInText(error?.message ?? error),
+    message: error instanceof IeeeFlowError
+      ? sanitizeUrlsInText(error.message)
+      : "IEEE browser automation failed.",
   };
   if (error instanceof IeeeFlowError && Object.keys(error.details).length) {
     payload.details = sanitizeErrorValue(error.details);
@@ -374,7 +477,19 @@ async function visitResourceGateway({
     return TRANSIENT_GATEWAY_HOST;
   }
   await waitForDocument(page, timeoutMs);
-  const observedHost = hostnameOf(page.url(), phase);
+  let observedHost = hostnameOf(page.url(), phase);
+  const entityHost = new URL(institutionProfile.carsiEntityId).hostname.toLowerCase();
+  if (observedHost === entityHost && entityHost !== institutionProfile.credentialHost) {
+    try {
+      await page.waitForURL((url) => url.hostname.toLowerCase() !== entityHost, {
+        timeout: Math.min(timeoutMs, 30_000),
+      });
+    } catch {
+      // An incomplete IdP return remains subject to the exact-host checks below.
+    }
+    await waitForDocument(page, timeoutMs);
+    observedHost = hostnameOf(page.url(), phase);
+  }
   const returnHost = observedHost === "chromewebdata"
     ? TRANSIENT_GATEWAY_HOST
     : observedHost;
@@ -443,6 +558,11 @@ async function readPaperMetadata(page, timeoutMs) {
     const doiHref = doiLabel?.nextElementSibling?.getAttribute?.("href") || "";
     const canonicalUrl = document.querySelector('link[rel="canonical"]')?.getAttribute("href")
       || location.href;
+    const bodyText = document.body?.innerText || "";
+    const unableToLoad = /IEEE Xplore\s*-\s*Unable to Load Page/iu.test(bodyText);
+    const pageErrorCode = unableToLoad
+      ? bodyText.match(/Error Code:\s*(\d{3})/iu)?.[1] || ""
+      : "";
     return {
       citation: {
         title: content("citation_title"),
@@ -482,6 +602,7 @@ async function readPaperMetadata(page, timeoutMs) {
       h1Title: document.querySelector("h1.document-title")?.textContent?.trim()
         || document.querySelector("h1")?.textContent?.trim()
         || "",
+      pageErrorCode,
       canonicalUrl,
       locationUrl: location.href,
       userAgent: navigator.userAgent,
@@ -499,9 +620,17 @@ async function readPaperMetadata(page, timeoutMs) {
   let metadata = null;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      metadata = normalizePageMetadata(await page.evaluate(extract));
+      const payload = await page.evaluate(extract);
+      if (String(payload?.pageErrorCode ?? "") === "418") {
+        throw new IeeeFlowError(
+          "paper-http-418",
+          "IEEE Xplore returned a temporary unable-to-load page (418).",
+        );
+      }
+      metadata = normalizePageMetadata(payload);
       if (String(metadata?.title ?? "").trim()) break;
-    } catch {
+    } catch (error) {
+      if (error instanceof IeeeFlowError) throw error;
       metadata = null;
     }
     if (attempt === 2) break;
@@ -812,6 +941,9 @@ export async function readCredentialForHost(
     hostname,
   ];
   if (secretPath) args.push("-SecretPath", secretPath);
+  if (institutionProfile.credentialProfile) {
+    args.push("-ProfileId", institutionProfile.credentialProfile);
+  }
   let stdout;
   try {
     ({ stdout } = await execFileAsync("powershell", args, {
@@ -840,7 +972,14 @@ async function openCarsiInstitutionLogin(page, timeoutMs, institutionProfile) {
     institutionProfile.carsiSchoolPlaceholder,
     { exact: true },
   );
-  if (await schoolCandidate.count() === 0) return CARSI_HOST;
+  if (await schoolCandidate.count() === 0 && typeof schoolCandidate.waitFor === "function") {
+    try {
+      await schoolCandidate.waitFor({state:"visible", timeout:Math.min(timeoutMs,10_000)});
+    } catch {
+      // Existing sessions may omit discovery; the bounded resource return remains authoritative.
+    }
+  }
+  if (await schoolCandidate.count() === 0) return hostnameOf(page.url(), "unexpected-auth-host");
   const school = await uniqueLocator(
     schoolCandidate,
     "carsi-school",
@@ -937,6 +1076,21 @@ async function authenticateThroughCarsi({
     }
   }
   if (authHost === CARSI_HOST) return;
+  const entityHost = new URL(institutionProfile.carsiEntityId).hostname.toLowerCase();
+  if (authHost === entityHost && authHost !== institutionProfile.credentialHost) {
+    // Some IdPs redirect to a separate CAS host before exposing the login form.
+    // This entry host is navigation-only; credentials still require the exact configured host.
+    try {
+      await page.waitForURL((url) => url.hostname.toLowerCase() !== entityHost, {
+        timeout: Math.min(timeoutMs, 30_000),
+      });
+    } catch {
+      // The exact credential-host check below rejects an incomplete or unexpected redirect.
+    }
+    await waitForDocument(page, timeoutMs);
+    authHost = hostnameOf(page.url(), "unexpected-auth-host");
+    if (authHost === IEEE_HOST || authHost === CARSI_HOST) return;
+  }
   if (!isApprovedCredentialHost(authHost, institutionProfile)) {
     throw new IeeeFlowError(
       "unexpected-auth-host",
@@ -945,7 +1099,12 @@ async function authenticateThroughCarsi({
     );
   }
 
-  const usernameCandidate = page.getByLabel(institutionProfile.usernameLabel, { exact: true });
+  const labeledUsername = page.getByLabel(institutionProfile.usernameLabel, { exact: true });
+  const usernameCandidate = institutionProfile.usernameLocator
+    ? await configuredLocator(page, institutionProfile.usernameLocator)
+    : await labeledUsername.count() > 0
+    ? labeledUsername
+    : page.getByPlaceholder(institutionProfile.usernameLabel, { exact: true });
   if (await usernameCandidate.count() === 0) {
     if (typeof usernameCandidate.waitFor === "function") {
       try {
@@ -1001,17 +1160,43 @@ async function authenticateThroughCarsi({
       "institution-username",
       `${institutionProfile.organization} username field`,
     );
+    await username.fill(credential.username);
+    if (institutionProfile.nextLocator) {
+      await (await configuredLocator(page, institutionProfile.nextLocator)).click();
+      await waitForDocument(page, timeoutMs);
+      if (!isApprovedCredentialHost(hostnameOf(page.url(), "institution-password"), institutionProfile)) {
+        throw new IeeeFlowError("unexpected-auth-host", "The password stage reached an unapproved host.");
+      }
+      const pendingPassword = institutionProfile.passwordLocator;
+      if (pendingPassword?.kind === "label") {
+        await page.getByLabel(pendingPassword.value, {exact: true}).waitFor({state: "visible", timeout: timeoutMs});
+      } else if (pendingPassword?.kind === "placeholder") {
+        await page.getByPlaceholder(pendingPassword.value, {exact: true}).waitFor({state: "visible", timeout: timeoutMs});
+      }
+    }
+    const labeledPassword = page.getByLabel(institutionProfile.passwordLabel, { exact: true });
     const password = await uniqueLocator(
-      page.getByLabel(institutionProfile.passwordLabel, { exact: true }),
+      institutionProfile.passwordLocator
+        ? await configuredLocator(page, institutionProfile.passwordLocator)
+        : await labeledPassword.count() > 0
+        ? labeledPassword
+        : page.getByPlaceholder(institutionProfile.passwordLabel, { exact: true }),
       "institution-password",
       `${institutionProfile.organization} password field`,
     );
+    const loginButton = page.getByRole("button", { name: institutionProfile.loginButtonName, exact: true });
+    let loginCandidate = loginButton;
+    if (await loginCandidate.count() === 0) {
+      loginCandidate = page.getByRole("link", { name: institutionProfile.loginButtonName, exact: true });
+    }
+    if (await loginCandidate.count() === 0) {
+      loginCandidate = page.getByText(institutionProfile.loginButtonName, { exact: true });
+    }
     const login = await uniqueLocator(
-      page.getByRole("button", { name: institutionProfile.loginButtonName, exact: true }),
+      institutionProfile.loginLocator ? await configuredLocator(page, institutionProfile.loginLocator) : loginCandidate,
       "institution-login",
       `${institutionProfile.organization} login button`,
     );
-    await username.fill(credential.username);
     await password.fill(credential.password);
     await login.click();
     if (typeof page.waitForURL === "function") {
@@ -1027,6 +1212,23 @@ async function authenticateThroughCarsi({
   } finally {
     credential.username = null;
     credential.password = null;
+  }
+  if (
+    entityHost !== institutionProfile.credentialHost
+    && hostnameOf(page.url(), "authentication-result") === entityHost
+  ) {
+    try {
+      await page.waitForURL((url) => url.hostname.toLowerCase() !== entityHost, {
+        timeout: Math.min(timeoutMs, 30_000),
+      });
+    } catch {
+      throw new IeeeFlowError(
+        "authentication-not-complete",
+        "The configured IdP has not completed its return after CAS login.",
+        {hostname:entityHost,requiresUserAction:true},
+      );
+    }
+    await waitForDocument(page, timeoutMs);
   }
   if (isApprovedCredentialHost(hostnameOf(page.url(), "authentication-result"), institutionProfile)) {
     const handledRelease = await handleConfiguredAttributeRelease({
@@ -1067,93 +1269,123 @@ async function handleConfiguredAttributeRelease({
     if (title !== institutionProfile.attributeReleaseTitle) return false;
   }
 
-  const accept = page.locator(
-    `button[name="${institutionProfile.attributeReleaseAcceptControlName}"]`,
-  );
-  const reject = institutionProfile.attributeReleaseRejectControlName
-    ? page.locator(`button[name="${institutionProfile.attributeReleaseRejectControlName}"]`)
-    : null;
-  let [acceptCount, rejectCount] = await Promise.all([
-    accept.count(),
-    reject ? reject.count() : Promise.resolve(0),
-  ]);
-  if (acceptCount === 0 && rejectCount === 0 && typeof accept.waitFor === "function") {
-    try {
-      await accept.waitFor({ state: "visible", timeout: Math.min(timeoutMs, 10_000) });
-    } catch {
-      // The IdP may auto-return without rendering an attribute-release control.
-    }
-    [acceptCount, rejectCount] = await Promise.all([
+  for (let stage = 0; stage < 3; stage += 1) {
+    const accept = page.locator(
+      `button[name="${institutionProfile.attributeReleaseAcceptControlName}"]`,
+    );
+    const reject = institutionProfile.attributeReleaseRejectControlName
+      ? page.locator(`button[name="${institutionProfile.attributeReleaseRejectControlName}"]`)
+      : null;
+    let [acceptCount, rejectCount] = await Promise.all([
       accept.count(),
       reject ? reject.count() : Promise.resolve(0),
     ]);
-  }
-  if (acceptCount === 0 && rejectCount === 0) {
-    if (typeof page.waitForURL === "function") {
+    if (acceptCount === 0 && rejectCount === 0 && typeof accept.waitFor === "function") {
       try {
-        await page.waitForURL(
-          (url) => url.hostname.toLowerCase() !== institutionProfile.credentialHost,
-          { timeout: Math.min(timeoutMs, 30_000) },
-        );
+        await accept.waitFor({ state: "visible", timeout: Math.min(timeoutMs, 10_000) });
       } catch {
-        // The caller reports the still-visible, unclassified institutional page.
+        // The IdP may auto-return without rendering an attribute-release control.
+      }
+      [acceptCount, rejectCount] = await Promise.all([
+        accept.count(),
+        reject ? reject.count() : Promise.resolve(0),
+      ]);
+    }
+    if (acceptCount === 0 && rejectCount === 0) {
+      if (typeof page.waitForURL === "function") {
+        try {
+          await page.waitForURL(
+            (url) => url.hostname.toLowerCase() !== institutionProfile.credentialHost,
+            { timeout: Math.min(timeoutMs, 30_000) },
+          );
+        } catch {
+          // The caller reports the still-visible, unclassified institutional page.
+        }
+      }
+      await waitForDocument(page, timeoutMs);
+      return !isApprovedCredentialHost(
+        hostnameOf(page.url(), "attribute-release"),
+        institutionProfile,
+      );
+    }
+    if (acceptCount !== 1 || rejectCount > 1) {
+      throw new IeeeFlowError(
+        "attribute-release-controls",
+        "The configured institutional continuation page did not expose exactly one accept/continue control and at most one reject control.",
+        { requiresUserAction: true },
+      );
+    }
+    if (acceptAttributeRelease !== true) {
+      if (typeof page.waitForURL === "function") {
+        try {
+          await page.waitForURL(
+            (url) => url.hostname.toLowerCase() !== institutionProfile.credentialHost,
+            { timeout: timeoutMs },
+          );
+        } catch {
+          // The exact hostname check below distinguishes a completed user action from a bounded pause.
+        }
+      }
+      await waitForDocument(page, timeoutMs);
+      if (!isApprovedCredentialHost(hostnameOf(page.url(), "attribute-release"), institutionProfile)) {
+        return true;
+      }
+      throw new IeeeFlowError(
+        "attribute-release-required",
+        "Institutional continuation requires visible user action because automatic acceptance was disabled.",
+        { requiresUserAction: true },
+      );
+    }
+
+    const consentCheckbox = page.locator('input[type="checkbox"]');
+    const consentCount = await consentCheckbox.count();
+    if (consentCount > 1) {
+      throw new IeeeFlowError(
+        "attribute-release-controls",
+        "The configured institutional continuation page exposed multiple consent checkboxes; automatic selection is unsafe.",
+        { requiresUserAction: true, consentCount },
+      );
+    }
+    if (consentCount === 1) {
+      const consentId = await consentCheckbox.getAttribute("id");
+      if (!consentId) {
+        throw new IeeeFlowError(
+          "attribute-release-controls",
+          "The institutional consent checkbox has no stable associated label.",
+          { requiresUserAction: true },
+        );
+      }
+      const consentLabel = page.locator(`label[for="${consentId}"]`);
+      if (await consentLabel.count() !== 1) {
+        throw new IeeeFlowError(
+          "attribute-release-controls",
+          "The institutional consent checkbox does not have exactly one associated label.",
+          { requiresUserAction: true },
+        );
+      }
+      await consentLabel.click();
+      if (typeof consentCheckbox.isChecked === "function" && !await consentCheckbox.isChecked()) {
+        throw new IeeeFlowError(
+          "attribute-release-controls",
+          "The institutional consent checkbox was not selected.",
+          { requiresUserAction: true },
+        );
       }
     }
-    await waitForDocument(page, timeoutMs);
-    return !isApprovedCredentialHost(
-      hostnameOf(page.url(), "attribute-release"),
-      institutionProfile,
-    );
-  }
-  if (acceptCount !== 1 || rejectCount > 1) {
-    throw new IeeeFlowError(
-      "attribute-release-controls",
-      "The configured institutional continuation page did not expose exactly one accept/continue control and at most one reject control.",
-      { requiresUserAction: true },
-    );
-  }
-  if (acceptAttributeRelease !== true) {
-    if (typeof page.waitForURL === "function") {
-      try {
-        await page.waitForURL(
-          (url) => url.hostname.toLowerCase() !== institutionProfile.credentialHost,
-          { timeout: timeoutMs },
-        );
-      } catch {
-        // The exact hostname check below distinguishes a completed user action from a bounded pause.
-      }
-    }
+    await accept.click();
     await waitForDocument(page, timeoutMs);
     if (!isApprovedCredentialHost(hostnameOf(page.url(), "attribute-release"), institutionProfile)) {
       return true;
     }
-    throw new IeeeFlowError(
-      "attribute-release-required",
-      "Institutional continuation requires visible user action because automatic acceptance was disabled.",
-      { requiresUserAction: true },
-    );
-  }
-
-  await accept.click();
-  if (typeof page.waitForURL === "function") {
-    try {
-      await page.waitForURL(
-        (url) => url.hostname.toLowerCase() !== institutionProfile.credentialHost,
-        { timeout: timeoutMs },
-      );
-    } catch {
-      // The exact hostname check below rejects an incomplete release return.
+    if (typeof page.waitForTimeout === "function") {
+      await page.waitForTimeout(Math.min(1000, timeoutMs));
     }
   }
-  await waitForDocument(page, timeoutMs);
-  if (isApprovedCredentialHost(hostnameOf(page.url(), "attribute-release"), institutionProfile)) {
-    throw new IeeeFlowError(
-      "attribute-release-required",
-      "The configured accept control did not return from the institutional attribute-release page.",
-      { requiresUserAction: true },
-    );
-  }
-  return true;
+  throw new IeeeFlowError(
+    "attribute-release-required",
+    "The configured institutional continuation did not return from the IdP after the maximum number of stages.",
+    { requiresUserAction: true, maxStages: 3 },
+  );
 }
 
 async function authorizeIeeeResource({
@@ -1163,6 +1395,30 @@ async function authorizeIeeeResource({
   timeoutMs,
   gatewayState,
 }) {
+  if (institutionProfile.ieeeWayfUrl && typeof page.goto === "function") {
+    try {
+      await page.goto(officialIeeeWayfUrl(institutionProfile), {
+        waitUntil: "domcontentloaded",
+        timeout: timeoutMs,
+      });
+      await waitForDocument(page, timeoutMs);
+      let wayfHost = hostnameOf(page.url(), "institutional-return");
+      if (wayfHost === IEEE_HOST) return;
+      if (isApprovedCredentialHost(wayfHost, institutionProfile)) {
+        const handledRelease = await handleConfiguredAttributeRelease({
+          page,
+          institutionProfile,
+          acceptAttributeRelease,
+          timeoutMs,
+        });
+        wayfHost = hostnameOf(page.url(), "institutional-return");
+        if (handledRelease && wayfHost === IEEE_HOST) return;
+      }
+    } catch (error) {
+      if (error instanceof IeeeFlowError) throw error;
+      // Fall back to the configured CARSI resource route below; its bounded checks remain authoritative.
+    }
+  }
   while (gatewayState.visits < MAX_RESOURCE_GATEWAY_VISITS) {
     const returnVisit = gatewayState.visits + 1;
     let returnHost = await visitResourceGateway({
@@ -1203,7 +1459,7 @@ async function authorizeIeeeResource({
   throw gatewayLimitError(page, gatewayState);
 }
 
-function resultPayload(paper, downloaded, bibtex) {
+function resultPayload(paper, downloaded, bibtex, access = "unknown") {
   return {
     status: "downloaded",
     title: paper.title,
@@ -1216,6 +1472,8 @@ function resultPayload(paper, downloaded, bibtex) {
     pdfUrl: downloaded.pdfUrl,
     bibtex,
     bibtexUrl: CITATION_URL,
+    access,
+    returned_to_ieee: true,
   };
 }
 
@@ -1246,6 +1504,7 @@ export async function retrieveIeeePaper(options) {
     timeoutMs,
     diagnostic: pdfDiagnostic,
   });
+  let access = (paper.isFreeDocument || paper.isOpenAccess) ? "public" : "existing_session_or_network";
   if (!downloaded && (paper.isFreeDocument || paper.isOpenAccess)) {
     if (typeof options.page.waitForTimeout === "function") {
       await options.page.waitForTimeout(Math.min(750, timeoutMs));
@@ -1258,6 +1517,25 @@ export async function retrieveIeeePaper(options) {
       timeoutMs,
       diagnostic: pdfDiagnostic,
     });
+  }
+  if (!downloaded && options.accessProfile) {
+    const configured = normalizeAccessProfile(options.accessProfile);
+    if (configured.accessMode === "direct") {
+      throw new IeeeFlowError("access-required", "The current network does not provide this IEEE PDF.");
+    }
+    if (configured.accessMode === "assisted") {
+      await waitForAssistedReturn({page: options.page, institutionProfile: configured,
+        timeoutMs, progress: options.progress});
+      downloaded = await tryFetchPdf({page: options.page, browserContext: options.browserContext,
+        paper, workDir, timeoutMs, diagnostic: pdfDiagnostic});
+      if (!downloaded) {
+        throw new IeeeFlowError("access-required", "The browser returned to IEEE but this paper is not accessible.",
+          {requiresUserAction: true});
+      }
+      access = (paper.isFreeDocument || paper.isOpenAccess) ? "public" : "institutional";
+    } else {
+      options.institutionProfile = configured;
+    }
   }
   if (!downloaded) {
     const institutionProfile = options.institutionProfile
@@ -1307,6 +1585,7 @@ export async function retrieveIeeePaper(options) {
         });
       }
     }
+    access = (paper.isFreeDocument || paper.isOpenAccess) ? "public" : "institutional";
     downloaded = await tryFetchPdf({
       page: options.page,
       browserContext: options.browserContext,
@@ -1341,7 +1620,22 @@ export async function retrieveIeeePaper(options) {
     paper,
     timeoutMs,
   });
-  return resultPayload(paper, downloaded, bibtex);
+  return resultPayload(paper, downloaded, bibtex, access);
+}
+
+export async function inspectInstitutionPage(page) {
+  // Deliberately omit input values, page text, HTML, query strings and storage.
+  return {hostname: hostnameOf(page.url(), "inspect"),
+    form: await page.evaluate(() => ({
+      inputs: [...document.querySelectorAll("input")].map(element => ({
+        type: element.type, id: element.id, name: element.name,
+        placeholder: element.getAttribute("placeholder") ?? "",
+        labels: [...(element.labels ?? [])].map(label => label.textContent.trim()),
+      })).filter(element => ["text", "email", "password"].includes(element.type)),
+      controls: [...document.querySelectorAll('button,input[type="submit"],a[role="button"]')]
+        .map(element => ({role: element.tagName === "A" ? "link" : "button",
+          id: element.id, name: element.name ?? "", text: element.textContent.trim()})),
+    }))};
 }
 
 export async function runAutomatedRetrieval(options) {
@@ -1362,18 +1656,83 @@ export async function runAutomatedRetrieval(options) {
   });
   await mkdir(profileDir, { recursive: true });
   await mkdir(workDir, { recursive: true });
-  const browserContext = await options.chromium.launchPersistentContext(profileDir, {
+  const lock = path.join(profileDir, ".arp-context.lock");
+  let lockHandle;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      lockHandle = await open(lock, "wx");
+      await lockHandle.writeFile(String(process.pid));
+      break;
+    } catch (error) {
+      if (error.code !== "EEXIST" || attempt) {
+        throw new IeeeFlowError("profile-in-use", "This institutional browser profile is already in use.");
+      }
+      const owner = Number(await readFile(lock, "utf8").catch(() => ""));
+      if (!Number.isSafeInteger(owner) || owner <= 0) {
+        throw new IeeeFlowError("profile-in-use", "The browser profile lock requires manual inspection.");
+      }
+      try { process.kill(owner, 0); } catch (failure) {
+        if (failure.code === "ESRCH") {await rm(lock, {force: true}); continue;}
+      }
+      throw new IeeeFlowError("profile-in-use", "This institutional browser profile is already in use.");
+    }
+  }
+  let browserContext;
+  let closePromise;
+  const closeContext = () => {
+    if (!closePromise && browserContext) closePromise = browserContext.close();
+    return closePromise;
+  };
+  let watchdog;
+  const onCancel = () => {void closeContext()?.catch(() => {});};
+  try {
+    browserContext = await options.chromium.launchPersistentContext(profileDir, {
     channel: "chrome",
     headless: options.headless === true,
     args: ["--window-size=1280,900"],
     acceptDownloads: true,
     downloadsPath: workDir,
-  });
-  try {
+    });
+    // Closing the context interrupts a pending Playwright wait and flushes the session
+    // before the Python bridge's last-resort process timeout.
+    watchdog = setTimeout(onCancel, Number(options.timeoutMs ?? 900_000));
+    watchdog.unref();
+    process.once("SIGINT", onCancel);
+    process.once("SIGTERM", onCancel);
     const page = browserContext.pages()[0] ?? await browserContext.newPage();
-    return await retrieveIeeePaper({ ...options, page, browserContext, workDir });
+    if (options.operation === "inspect" || options.operation === "login") {
+      const profile = normalizeAccessProfile(options.accessProfile);
+      if (options.operation === "inspect") {
+        await page.goto(profile.entryUrl, {waitUntil: "domcontentloaded", timeout: options.timeoutMs});
+        return {status: "inspected", ...await inspectInstitutionPage(page)};
+      }
+      await waitForAssistedReturn({page, institutionProfile: profile,
+        timeoutMs: options.timeoutMs ?? 900_000, progress: options.progress});
+      if (!options.reference) return {status: "returned_to_ieee", returned_to_ieee: true,
+        download_verified: false, institutional_entitlement_verified: false};
+    }
+    try {
+      return await retrieveIeeePaper({ ...options, page, browserContext, workDir });
+    } catch (error) {
+      const profile = options.accessProfile && normalizeAccessProfile(options.accessProfile);
+      const manualPhases = new Set(["authentication-not-complete", "unexpected-auth-host",
+        "institution-username", "institution-password", "institution-login", "form-contract",
+        "attribute-release-required", "attribute-release-controls", "carsi-institution", "credential-read"]);
+      if (profile?.accessMode !== "carsi" || !(error instanceof IeeeFlowError)
+          || (!error.details?.requiresUserAction && !manualPhases.has(error.phase))) throw error;
+      await waitForAssistedReturn({page, institutionProfile: {...profile, entryUrl: page.url()},
+        preservePage: true, timeoutMs: options.timeoutMs ?? 900_000, progress: options.progress});
+      return await retrieveIeeePaper({...options, page, browserContext, workDir,
+        accessProfile: {...profile, accessMode: "direct"}});
+    }
   } finally {
-    await browserContext.close();
+    clearTimeout(watchdog);
+    process.removeListener("SIGINT", onCancel);
+    process.removeListener("SIGTERM", onCancel);
+    try {await closeContext();} finally {
+      await lockHandle?.close();
+      await rm(lock, {force: true});
+    }
   }
 }
 
@@ -1400,15 +1759,19 @@ function parseArgs(argv) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
-  for (const required of ["reference", "workDir", "profileDir", "dependencyRoot"]) {
+  for (const required of ["workDir", "profileDir", "dependencyRoot",
+    ...(["inspect", "login"].includes(options.operation) ? [] : ["reference"])]) {
     if (!String(options[required] ?? "").trim()) {
       throw new Error(`Missing --${required.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)}`);
     }
   }
   const chromium = loadPlaywrightChromium(options.dependencyRoot);
+  const accessProfile = options.accessProfile
+    ? JSON.parse(await readFile(options.accessProfile, "utf8")) : undefined;
   const result = await runAutomatedRetrieval({
     ...options,
     chromium,
+    accessProfile,
     timeoutMs: options.timeoutMs ? Number(options.timeoutMs) : undefined,
     acceptAttributeRelease: String(options.acceptAttributeRelease ?? "true").toLowerCase() === "true",
   });

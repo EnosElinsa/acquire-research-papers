@@ -1,0 +1,4 @@
+interface:
+  display_name: "Research Papers and Libraries"
+  short_description: "Acquire papers, audit libraries, and discover authors"
+  default_prompt: "Use $acquire-research-papers to acquire official papers, manage a local PDF/BibTeX library, discover author publications, or configure institution access."

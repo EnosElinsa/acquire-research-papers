@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "acquire-research-papers"
-version = "0.3.0"
-description = "Codex skill and CLI for verified academic paper acquisition"
+version = "0.4.0"
+description = "Codex skill and CLI for verified paper acquisition, library management, and author discovery"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -45,6 +45,9 @@ arp = "acquire_research_papers.cli:main"
 Homepage = "https://github.com/EnosElinsa/acquire-research-papers"
 Issues = "https://github.com/EnosElinsa/acquire-research-papers/issues"
 Repository = "https://github.com/EnosElinsa/acquire-research-papers"
+Documentation = "https://github.com/EnosElinsa/acquire-research-papers#readme"
+Changelog = "https://github.com/EnosElinsa/acquire-research-papers/blob/main/CHANGELOG.md"
+Support = "https://github.com/EnosElinsa/acquire-research-papers/blob/main/SUPPORT.md"
 
 [tool.hatch.build]
 exclude = ["/docs"]
@@ -60,7 +63,24 @@ dev = [
 packages = ["src/acquire_research_papers"]
 
 [tool.hatch.build.targets.wheel.force-include]
-"scripts" = "acquire_research_papers/_scripts"
+"scripts/credential-status.ps1" = "acquire_research_papers/_scripts/credential-status.ps1"
+"scripts/ieee-playwright.mjs" = "acquire_research_papers/_scripts/ieee-playwright.mjs"
+"scripts/install-playwright.ps1" = "acquire_research_papers/_scripts/install-playwright.ps1"
+"scripts/migrate-legacy-secrets.ps1" = "acquire_research_papers/_scripts/migrate-legacy-secrets.ps1"
+"scripts/read-browser-credential.ps1" = "acquire_research_papers/_scripts/read-browser-credential.ps1"
+"scripts/read-discovery-api-key.ps1" = "acquire_research_papers/_scripts/read-discovery-api-key.ps1"
+"scripts/read-elsevier-api-key.ps1" = "acquire_research_papers/_scripts/read-elsevier-api-key.ps1"
+"scripts/read-institution-profile.ps1" = "acquire_research_papers/_scripts/read-institution-profile.ps1"
+"scripts/read-mineru-token.ps1" = "acquire_research_papers/_scripts/read-mineru-token.ps1"
+"scripts/secret-store.ps1" = "acquire_research_papers/_scripts/secret-store.ps1"
+"scripts/setup-discovery-api-keys.ps1" = "acquire_research_papers/_scripts/setup-discovery-api-keys.ps1"
+"scripts/setup-elsevier-api-key.ps1" = "acquire_research_papers/_scripts/setup-elsevier-api-key.ps1"
+"scripts/setup-ieee-institution.ps1" = "acquire_research_papers/_scripts/setup-ieee-institution.ps1"
+"scripts/setup-ieee-profile-credential.ps1" = "acquire_research_papers/_scripts/setup-ieee-profile-credential.ps1"
+"scripts/setup-mineru-token.ps1" = "acquire_research_papers/_scripts/setup-mineru-token.ps1"
+"scripts/setup-secrets.ps1" = "acquire_research_papers/_scripts/setup-secrets.ps1"
+"scripts/update-ieee-institution-entity.ps1" = "acquire_research_papers/_scripts/update-ieee-institution-entity.ps1"
+"scripts/update-ieee-institution-route.ps1" = "acquire_research_papers/_scripts/update-ieee-institution-route.ps1"
 "schemas" = "acquire_research_papers/_schemas"
 
 [tool.pytest.ini_options]

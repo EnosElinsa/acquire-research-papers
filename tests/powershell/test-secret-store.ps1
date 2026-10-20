@@ -336,6 +336,7 @@ try {
     "Password field label" = "Passcode"
     "Institution login button name" = "Sign in"
     "CARSI post-login IEEE resource access URL" = "https://ds.carsi.edu.cn/resource/gotoResource.php?id=resource:setup-ieee"
+    "Optional official IEEE WAYF URL" = "https://ieeexplore.ieee.org/servlet/wayf.jsp?entityId=https://setup.example.edu/idp/shibboleth&url=https%3A%2F%2Fieeexplore.ieee.org%2FXplore%2Fhome.jsp"
     "Optional exact attribute-release page title" = ""
     "Optional exact attribute-release accept control name" = ""
     "Optional exact attribute-release reject control name" = ""
@@ -363,6 +364,7 @@ try {
   Assert-Equal $setupPayload.Scopes.ieee_institution.Profile.CarsiEntityId "https://setup.example.edu/idp/shibboleth" "interactive CARSI entity ID"
   Assert-Equal $setupPayload.Scopes.ieee_institution.Profile.CredentialHost "setup.example.edu" "interactive host setup"
   Assert-Equal $setupPayload.Scopes.ieee_institution.Profile.ResourceAccessUrl "https://ds.carsi.edu.cn/resource/gotoResource.php?id=resource:setup-ieee" "interactive resource route setup"
+  Assert-Equal $setupPayload.Scopes.ieee_institution.Profile.IeeeWayfUrl "https://ieeexplore.ieee.org/servlet/wayf.jsp?entityId=https://setup.example.edu/idp/shibboleth&url=https%3A%2F%2Fieeexplore.ieee.org%2FXplore%2Fhome.jsp" "interactive IEEE WAYF setup"
 
   $routeUpdate = & $ieeeRouteUpdatePath `
     -Path $setupPath `
@@ -373,7 +375,11 @@ try {
   Assert-Equal $routeUpdate.status "updated" "route update status"
   $updatedSetupPayload = Import-AcquisitionSecrets -Path $setupPath
   Assert-Equal $updatedSetupPayload.Scopes.ieee_institution.Profile.ResourceAccessUrl "https://ds.carsi.edu.cn/resource/gotoResource.php?id=resource:updated-ieee" "updated resource route"
+  Assert-Equal $updatedSetupPayload.Scopes.ieee_institution.Profile.IeeeWayfUrl "https://ieeexplore.ieee.org/servlet/wayf.jsp?entityId=https://setup.example.edu/idp/shibboleth&url=https%3A%2F%2Fieeexplore.ieee.org%2FXplore%2Fhome.jsp" "route update preserves IEEE WAYF"
   Assert-Equal $updatedSetupPayload.Scopes.ieee_institution.Credential.UserName "setup-user" "route update preserves DPAPI credential"
+  Set-IeeeInstitutionEntityId -CarsiEntityId "https://setup.example.edu/idp/shibboleth-v2" -Path $setupPath
+  $entityUpdatedSetupPayload = Import-AcquisitionSecrets -Path $setupPath
+  Assert-Equal $entityUpdatedSetupPayload.Scopes.ieee_institution.Profile.IeeeWayfUrl "https://ieeexplore.ieee.org/servlet/wayf.jsp?entityId=https://setup.example.edu/idp/shibboleth&url=https%3A%2F%2Fieeexplore.ieee.org%2FXplore%2Fhome.jsp" "entity update preserves IEEE WAYF"
   & $mineruSetupPath -Path $setupPath -Force | Out-Null
   Assert-Equal (ConvertFrom-AcquisitionSecureString (Import-AcquisitionSecrets -Path $setupPath).Scopes.mineru.Token) "setup-token" "interactive MinerU setup"
   $discoverySetupOnlyPath = Join-Path $tempRoot "discovery-setup\secrets.clixml"

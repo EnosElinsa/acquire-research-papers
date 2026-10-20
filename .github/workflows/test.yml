@@ -25,14 +25,18 @@ jobs:
       - name: Install dependencies
         run: uv sync --locked --all-groups
       - name: Lint
-        run: uv run ruff check src tests scripts/validate_skill.py
+        run: uv run ruff check src tests scripts skills/acquire-research-papers/scripts
       - name: Test Python
         run: uv run pytest -q
       - name: Validate skill
         run: uv run python scripts/validate_skill.py .
+      - name: Build thin skill and wheel
+        run: uv run python scripts/build_distribution.py --update-source-manifest
+      - name: Validate exported skill
+        run: uv run python scripts/validate_skill.py dist/skills/acquire-research-papers
       - name: Test browser helpers
         if: runner.os == 'Windows'
-        run: node --test tests/node/test-ieee-playwright.mjs
+        run: node --test tests/node/test-ieee-playwright.mjs tests/node/test-ieee-profiles.mjs
       - name: Test credential store
         if: runner.os == 'Windows'
         shell: powershell
@@ -41,3 +45,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: powershell
         run: ./tests/powershell/test-install-playwright.ps1
+      - name: Test named profile credential isolation
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ./tests/powershell/test-ieee-profiles.ps1

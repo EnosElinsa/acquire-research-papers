@@ -108,8 +108,11 @@ class DirectOfficialAdapter:
     def acquire(self, document: SourceDocument) -> AcquiredPair:
         pdf_response = self.client.get(document.pdf_url)
         bibtex_response = self.client.get(document.bibtex_url)
+        from acquire_research_papers.bibliography import decode_bibtex_bytes
+
         return AcquiredPair(
             document=document,
             pdf_bytes=pdf_response.content,
-            bibtex_text=bibtex_response.text,
+            bibtex_text=decode_bibtex_bytes(bibtex_response.content)[0],
+            bibtex_bytes=bibtex_response.content,
         )

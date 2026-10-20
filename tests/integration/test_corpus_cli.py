@@ -287,6 +287,7 @@ def test_invalid_dpapi_payload_is_not_silently_treated_as_missing(
         def optional(self):
             raise ApiKeyLoadError("Encrypted API key could not be loaded.")
 
+    monkeypatch.setattr(cli_module, "_supports_dpapi", lambda: True)
     monkeypatch.setattr(cli_module, "DpapiApiKeyProvider", BrokenProvider)
 
     with pytest.raises(ApiKeyLoadError, match="could not be loaded"):
@@ -295,6 +296,43 @@ def test_invalid_dpapi_payload_is_not_silently_treated_as_missing(
             secret_path=tmp_path / "secrets.clixml",
             environment={},
         )
+
+
+def test_non_windows_discovery_does_not_open_dpapi_payloads(tmp_path: Path, monkeypatch) -> None:
+    def forbidden_provider(**kwargs):
+        raise AssertionError("non-Windows discovery must not read DPAPI credentials")
+
+    monkeypatch.setattr(cli_module, "_supports_dpapi", lambda: False)
+    monkeypatch.setattr(cli_module, "DpapiApiKeyProvider", forbidden_provider)
+
+    assert _load_optional_discovery_api_keys(
+        script_root=tmp_path,
+        secret_path=tmp_path / "secrets.clixml",
+        environment={},
+    ) == {}
+
+
+@pytest.mark.parametrize("discovery_key,expected", [("configured", True), ("  ", False)])
+def test_non_windows_status_reports_only_supported_environment_providers(
+    monkeypatch, discovery_key: str, expected: bool
+) -> None:
+    def forbidden_provider(**kwargs):
+        raise AssertionError("non-Windows status must not read DPAPI credentials")
+
+    monkeypatch.setattr(cli_module, "_supports_dpapi", lambda: False)
+    monkeypatch.setattr(cli_module, "DpapiCredentialStatusProvider", forbidden_provider)
+    monkeypatch.setenv("MINERU_API_TOKEN", "configured-but-unsupported")
+    monkeypatch.setenv("ELSEVIER_API_KEY", "configured-but-unsupported")
+    monkeypatch.setenv("OPENALEX_API_KEY", discovery_key)
+    monkeypatch.setenv("SEMANTIC_SCHOLAR_API_KEY", discovery_key)
+
+    assert cli_module._default_credential_status() == {
+        "ieee": False,
+        "mineru": False,
+        "elsevier": False,
+        "openalex": expected,
+        "semantic_scholar": expected,
+    }
 
 
 def test_discovery_reports_sanitized_dpapi_configuration_failure(

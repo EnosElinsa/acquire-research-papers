@@ -20,6 +20,16 @@ class MetadataMismatch(ValueError):
     """Publisher PDF metadata and publisher BibTeX do not identify the same work."""
 
 
+def decode_bibtex_bytes(raw: bytes) -> tuple[str, str]:
+    """Decode only the parsing view; callers retain the original bytes for delivery."""
+    for encoding in ("utf-8-sig" if raw.startswith(b"\xef\xbb\xbf") else "utf-8", "gb18030"):
+        try:
+            return raw.decode(encoding), encoding
+        except UnicodeDecodeError:
+            continue
+    raise MetadataMismatch("BibTeX encoding is unsupported; retain the source for manual review")
+
+
 @dataclass(frozen=True)
 class ParsedBibliography:
     key: str

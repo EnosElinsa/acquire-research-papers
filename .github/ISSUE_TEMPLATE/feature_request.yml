@@ -1,0 +1,20 @@
+name: Feature request / 功能建议
+description: Describe a concrete research workflow and the result you need.
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Workflow and problem / 工作流与问题
+      description: Explain the task, current limitation, and expected user benefit without sharing private research data.
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: Desired result and example / 期望结果与示例
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Existing workaround / 当前替代方式

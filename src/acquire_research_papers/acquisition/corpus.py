@@ -219,10 +219,19 @@ def _verified_manual_import(
     pdf_sha256 = sha256_file(expected["pdf"])
     bibtex_sha256 = sha256_file(expected["bibtex"])
     try:
+        metadata_year = int(metadata.get("year") or 0)
+        year_matches = metadata_year == record.year
+        if not year_matches:
+            year_matches = (
+                metadata_year == record.year + 1
+                and int(provenance.get("selection_year") or 0) == record.year
+                and int(provenance.get("publisher_bibliographic_year") or 0)
+                == metadata_year
+            )
         identity_matches = (
             _normalized_identity_text(metadata.get("title"))
             == _normalized_identity_text(record.title)
-            and int(metadata.get("year") or 0) == record.year
+            and year_matches
             and _normalized_identity_text(metadata.get("venue"))
             == _normalized_identity_text(record.venue)
             and normalize_doi(metadata.get("doi")) == normalize_doi(record.doi)
@@ -242,6 +251,7 @@ def _verified_manual_import(
             document_from_selection(record),
             expected["pdf"],
             expected["bibtex"],
+            allow_next_issue_year=True,
         )
     except (OSError, UnicodeError, ValueError):
         return None

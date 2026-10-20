@@ -126,9 +126,13 @@ class AcmDigitalLibraryAdapter:
     def acquire(self, document: SourceDocument) -> AcquiredPair:
         try:
             pdf = self.client.get(document.pdf_url).content
-            bibtex = self.client.get(document.bibtex_url).text
+            bibtex_raw = self.client.get(document.bibtex_url).content
         except HttpStatusError as exc:
             if exc.status_code in {401, 403}:
                 raise AccessRequired("ACM artifact requires authorized access") from exc
             raise
-        return AcquiredPair(document=document, pdf_bytes=pdf, bibtex_text=bibtex)
+        from acquire_research_papers.bibliography import decode_bibtex_bytes
+
+        return AcquiredPair(document=document, pdf_bytes=pdf,
+                            bibtex_text=decode_bibtex_bytes(bibtex_raw)[0],
+                            bibtex_bytes=bibtex_raw)

@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "LibraryAudit",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "root": {
+      "type": "string"
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "status",
+          "doi"
+        ],
+        "properties": {
+          "doi": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pdf": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "bib": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string"
+          },
+          "publication_status": {
+            "enum": [
+              "current",
+              "outdated",
+              "possible_update",
+              "unknown"
+            ]
+          },
+          "citation_status": {
+            "enum": [
+              "current",
+              "outdated",
+              "possible_update",
+              "unknown"
+            ]
+          },
+          "citation_source": {
+            "type": "string"
+          },
+          "local_version": {
+            "type": "object"
+          },
+          "official": {
+            "type": "object"
+          },
+          "pdf_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "bib_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        }
+      }
+    },
+    "duplicates": {
+      "type": "object"
+    },
+    "summary": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "schema_version",
+    "root",
+    "items",
+    "duplicates",
+    "summary"
+  ],
+  "additionalProperties": true,
+  "$id": "https://github.com/EnosElinsa/acquire-research-papers/schemas/library-audit.schema.json"
+}

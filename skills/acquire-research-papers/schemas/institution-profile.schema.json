@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "NamedInstitutionProfile",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 2
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"
+    },
+    "organization": {
+      "type": "string",
+      "minLength": 1
+    },
+    "mode": {
+      "enum": [
+        "direct",
+        "assisted",
+        "carsi"
+      ]
+    },
+    "entry_url": {
+      "type": "string",
+      "format": "uri",
+      "pattern": "^https://"
+    },
+    "credential_host": {
+      "type": "string"
+    },
+    "credential_ref": {
+      "type": "string"
+    },
+    "contract": {
+      "type": "object"
+    },
+    "last_validation": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "schema_version",
+    "id",
+    "organization",
+    "mode",
+    "entry_url"
+  ],
+  "additionalProperties": false,
+  "$id": "https://github.com/EnosElinsa/acquire-research-papers/schemas/institution-profile.schema.json"
+}

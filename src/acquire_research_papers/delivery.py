@@ -16,7 +16,11 @@ from acquire_research_papers.artifacts import (
     sha256_file,
     validate_pdf,
 )
-from acquire_research_papers.bibliography import parse_bibtex, verify_bibliography
+from acquire_research_papers.bibliography import (
+    decode_bibtex_bytes,
+    parse_bibtex,
+    verify_bibliography,
+)
 
 
 @dataclass(frozen=True)
@@ -36,6 +40,8 @@ _RESERVED_PROVENANCE_FIELDS = frozenset(
         "official_bibtex_url",
         "pdf_sha256",
         "bibtex_sha256",
+        "bibtex_source",
+        "bibtex_encoding",
         "delivered_at",
     }
 )
@@ -88,8 +94,8 @@ class GenericDelivery:
         return (
             payload.get("paper_id") == paper_id
             and payload.get("pdf_sha256") == sha256_file(result.pdf) == sha256_bytes(pair.pdf_bytes)
-            and payload.get("bibtex_sha256") == sha256_bytes(pair.bibtex_text.encode("utf-8"))
-            and result.bibtex.read_bytes() == pair.bibtex_text.encode("utf-8")
+            and payload.get("bibtex_sha256") == sha256_bytes(pair.citation_bytes)
+            and result.bibtex.read_bytes() == pair.citation_bytes
             and all(payload.get(key) == value for key, value in provenance_extra.items())
         )
 
@@ -105,7 +111,8 @@ class GenericDelivery:
         collisions = _RESERVED_PROVENANCE_FIELDS & set(extra)
         if collisions:
             raise ValueError(f"provenance extras cannot replace reserved fields: {sorted(collisions)}")
-        parsed = parse_bibtex(pair.bibtex_text)
+        citation_text, citation_encoding = decode_bibtex_bytes(pair.citation_bytes)
+        parsed = parse_bibtex(citation_text)
         verify_bibliography(pair.document.metadata, parsed)
         result = (
             self._reserved_paths(relative_paths)
@@ -116,7 +123,7 @@ class GenericDelivery:
             return result
 
         atomic_write_bytes(result.pdf, pair.pdf_bytes, validator=validate_pdf)
-        atomic_write_bytes(result.bibtex, pair.bibtex_text.encode("utf-8"))
+        atomic_write_bytes(result.bibtex, pair.citation_bytes)
         provenance = {
             "paper_id": paper_id,
             "metadata": asdict(pair.document.metadata),
@@ -124,7 +131,9 @@ class GenericDelivery:
             "official_pdf_url": pair.document.pdf_url,
             "official_bibtex_url": pair.document.bibtex_url,
             "pdf_sha256": sha256_bytes(pair.pdf_bytes),
-            "bibtex_sha256": sha256_bytes(pair.bibtex_text.encode("utf-8")),
+            "bibtex_sha256": sha256_bytes(pair.citation_bytes),
+            "bibtex_source": pair.bibtex_source,
+            "bibtex_encoding": citation_encoding,
             "delivered_at": datetime.now(UTC).isoformat(),
         }
         provenance.update(extra)

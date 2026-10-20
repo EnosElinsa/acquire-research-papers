@@ -25,6 +25,7 @@ $usernameLabel = Read-Host "Username field label"
 $passwordLabel = Read-Host "Password field label"
 $loginButtonName = Read-Host "Institution login button name"
 $resourceAccessUrl = Read-Host "CARSI post-login IEEE resource access URL"
+$ieeeWayfUrl = Read-Host "Optional official IEEE WAYF URL"
 $attributeReleaseTitle = Read-Host "Optional exact attribute-release page title"
 $attributeReleaseAcceptControlName = Read-Host "Optional exact attribute-release accept control name"
 $attributeReleaseRejectControlName = Read-Host "Optional exact attribute-release reject control name"
@@ -47,6 +48,7 @@ try {
     PasswordLabel = $passwordLabel
     LoginButtonName = $loginButtonName
     ResourceAccessUrl = $resourceAccessUrl
+    IeeeWayfUrl = $ieeeWayfUrl
     AttributeReleaseTitle = $attributeReleaseTitle
     AttributeReleaseAcceptControlName = $attributeReleaseAcceptControlName
     AttributeReleaseRejectControlName = $attributeReleaseRejectControlName

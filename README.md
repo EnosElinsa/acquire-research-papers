@@ -3,14 +3,19 @@
 [简体中文](README.zh-CN.md)
 
 [![CI](https://github.com/EnosElinsa/acquire-research-papers/actions/workflows/test.yml/badge.svg)](https://github.com/EnosElinsa/acquire-research-papers/actions/workflows/test.yml)
+[![Release](https://img.shields.io/github/v/release/EnosElinsa/acquire-research-papers)](https://github.com/EnosElinsa/acquire-research-papers/releases/latest)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Acquire Research Papers is a public Codex skill and deterministic CLI for three related jobs:
+Acquire Research Papers is a public Codex skill and deterministic CLI for paper acquisition and library management:
 
 - fetch a known paper from its DOI or official publisher page;
 - build an auditable corpus for specified venues, years, topics, and quotas;
-- prepare and carry out literature research for nearest work, claim evidence, Related Work, or gap analysis.
+- prepare and carry out literature research for nearest work, claim evidence, Related Work, or gap analysis;
+- audit, update, import, and organize local PDF/BibTeX libraries with reviewable plans and backups;
+- discover an author's publications with explicit identity, date, and source-coverage evidence.
+
+[Latest release](https://github.com/EnosElinsa/acquire-research-papers/releases/latest) · [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [Help and feedback](SUPPORT.md) · [Security](SECURITY.md)
 
 A completed acquisition is an identity-verified pair: the official publisher PDF and the publisher's raw BibTeX export. Crossref, OpenAlex, and Semantic Scholar can discover and enrich candidates, but they never replace those official artifacts. The project does not use mirrors, generate citations with an LLM, or bypass publisher access controls.
 
@@ -19,6 +24,9 @@ A completed acquisition is an identity-verified pair: the official publisher PDF
 | Your task | Workflow | What you get |
 | --- | --- | --- |
 | You have a DOI or official URL | `fetch` | One verified PDF/BibTeX pair, or an actionable access result |
+| You need institution access or a different institution | `config setup ieee` → `config ieee login/doctor` | A named isolated profile, manual login by default, and separate authentication/download diagnostics |
+| You have an existing PDF/BibTeX folder | `library audit/update/import/organize` → `library apply` | Version evidence, paired filenames, native citation bytes, a hash-bound change plan, and backups |
+| You want an author's publication list or missing local papers | `discover author` | Formal, early-access, and preprint groups with identity ambiguity and source-coverage limits |
 | You need papers from specified venues, years, and topics | `discover corpus` → Codex review → `review corpus` → `acquire corpus` | Coverage evidence, a frozen selection, verified deliveries, and manual/retry queues |
 | A publisher requires authorized user interaction | `manual-fetch` | The official files you download are taken over locally, identified, verified, and placed in the reserved delivery paths |
 | You need nearest work, claim citations, Related Work, or a gap check | `discover research` → `review research` → `acquire research` → `evidence research` | A citation graph, frozen closest-paper set, verified full text, and claim-level evidence reports |
@@ -41,52 +49,90 @@ Codex is part of the workflow. The CLI validates, checkpoints, freezes, and acqu
 
 ## Install
 
-The public discovery and non-browser workflows require Git, [uv](https://docs.astral.sh/uv/), and Python 3.11+. IEEE browser automation additionally requires Node.js, Windows PowerShell, and the pinned Playwright runtime. The current secure credential integration uses Windows DPAPI.
+Install the skill with the standard Skills installer (Node.js/npm required); no developer clone or development dependency sync is needed:
 
-```powershell
-$skill = Join-Path $env:USERPROFILE ".codex\skills\acquire-research-papers"
-git clone https://github.com/EnosElinsa/acquire-research-papers.git $skill
-uv sync --project $skill --locked --all-groups
-& "$skill\scripts\install-playwright.ps1"
-uv run --project $skill arp --help
+```text
+npx skills add EnosElinsa/acquire-research-papers --skill acquire-research-papers -a codex -g
 ```
 
-For an existing installation:
+Use Python 3.11+ and [uv](https://docs.astral.sh/uv/). Resolve the actual directory returned by the installer; the shared default is normally `~/.agents/skills/acquire-research-papers`:
 
 ```powershell
-git -C $skill pull --ff-only
-uv sync --project $skill --locked --all-groups
+$skill = Join-Path $env:USERPROFILE ".agents/skills/acquire-research-papers"
+python "$skill/scripts/arp.py" --help
+python "$skill/scripts/arp.py" config status
 ```
 
-Delivery directories must be outside this repository. Runtime registries, encrypted secrets, caches, and dedicated browser profiles live under `%LOCALAPPDATA%\Codex`.
+The standard-library launcher reads `runtime.json`, downloads the fixed release wheel, verifies SHA-256, and installs it with uv into a separate cache. It never needs a developer checkout or installs development tools into the skill. IEEE browser access and DPAPI credentials currently require Windows, PowerShell, and Node.js; public discovery and library operations remain portable.
+
+Update by rerunning the same Skills install command. Registries, credentials, caches, named institution profiles, and browser sessions live outside the installed skill. Use a separate delivery directory. Development builds can use the digest-verified local-wheel procedure in [CONTRIBUTING.md](CONTRIBUTING.md).
+
+If your current skill directory is a Git developer checkout, preserve it. Do not point a third-party installer's overwrite operation at that directory. Build an export and use the repository's safe copy installer into a new directory; it refuses `.git` targets and keeps an explicit backup when replacing a clean previous thin skill. See [safe migration](CONTRIBUTING.md#safe-copy-and-checkout-migration).
+
+### Release downloads and manual installation
+
+The [v0.4.0 release](https://github.com/EnosElinsa/acquire-research-papers/releases/tag/v0.4.0) provides:
+
+| Asset | Use |
+| --- | --- |
+| `acquire-research-papers-skill-0.4.0.zip` | Extract and copy the contained `acquire-research-papers/` folder to a new skill directory. It contains instructions, references, schemas, a launcher, and the pinned runtime manifest. |
+| `acquire_research_papers-0.4.0-py3-none-any.whl` | Install the CLI independently with `uv tool install <wheel-path>`, or supply its absolute path as `ARP_LOCAL_WHEEL` when bootstrapping offline. The launcher still verifies the manifest digest. |
+| `SHA256SUMS` | Compare downloaded asset hashes with `Get-FileHash <path> -Algorithm SHA256` on PowerShell or `sha256sum <path>` on Linux. |
+
+Manual skill installation needs Python 3.11+ and uv. The launcher normally downloads its pinned wheel on first use; dependency installation also needs network access or a populated uv cache. Node.js is additionally required for IEEE browser access. Do not copy the source archive or a developer checkout into the skill directory. See [SUPPORT.md](SUPPORT.md) for bootstrap and migration troubleshooting.
 
 ## First use: configure only what this task needs
 
 Start by asking which optional capabilities are already configured:
 
 ```powershell
-uv run --project $skill arp config status
+python "$skill/scripts/arp.py" config status
 ```
 
-The command returns booleans only. It checks the stored object shape without printing or decrypting any value. A `true` result means a local configuration exists; it does not prove live API or publisher entitlement. The agent should guide configuration only for a capability required by the current task, then test that capability with a representative operation.
+The command returns capability booleans only; `--details` adds non-secret profile/history details. It checks the stored object shape without printing or decrypting any value. A `true` result means a local configuration exists; it does not prove live API or publisher entitlement. The agent should guide configuration only for a capability required by the current task, then test that capability with a representative operation.
 
 | Capability | Configure it when | Setup |
 | --- | --- | --- |
 | None | Public Crossref discovery, ACL discovery/acquisition, or IJCAI discovery/acquisition | No secret setup |
-| Semantic Scholar | You want keyed candidate search, higher limits, and the first DOI abstract-enrichment pass | `& "$skill\scripts\setup-discovery-api-keys.ps1" -Provider semantic_scholar` |
-| OpenAlex | You want additional candidate search and a second DOI abstract-enrichment pass | `& "$skill\scripts\setup-discovery-api-keys.ps1" -Provider openalex` |
-| IEEE | You want automatic access to subscribed IEEE PDFs through your institution and CARSI | `& "$skill\scripts\setup-ieee-institution.ps1"` |
-| Elsevier | You need official metadata resolution for the manual ScienceDirect handoff | `& "$skill\scripts\setup-discovery-api-keys.ps1" -Provider elsevier` |
-| MinerU | You need selected PDFs parsed for internal full-text analysis or explicit Markdown export | `& "$skill\scripts\setup-mineru-token.ps1"` |
+| Semantic Scholar | You want keyed candidate search, higher limits, and the first DOI abstract-enrichment pass | `arp config setup semantic_scholar` |
+| OpenAlex | You want additional candidate search and a second DOI abstract-enrichment pass | `arp config setup openalex` |
+| IEEE | You need institutional IEEE access; start with manual login and optionally enable a supported CARSI form | `arp config setup ieee` |
+| Elsevier | You need official metadata resolution for the manual ScienceDirect handoff | `arp config setup elsevier` |
+| MinerU | You need selected PDFs parsed for internal full-text analysis or explicit Markdown export | `arp config setup mineru` |
 
-All setup prompts are interactive and non-echoing. Never paste a password, API key, token, or cookie into chat, an agent message, a command argument, `.env`, or a repository file. Provider updates are independent: adding an OpenAlex key does not replace IEEE, MinerU, Elsevier, or Semantic Scholar configuration.
+Secret prompts are interactive and non-echoing; institution names and official entry URLs are ordinary non-secret inputs. Never paste a password, API key, token, or cookie into chat, an agent message, a command argument, `.env`, or a repository file. Provider updates are independent: adding an OpenAlex key does not replace IEEE, MinerU, Elsevier, or Semantic Scholar configuration.
+
+## Named institutions, local libraries, and author discovery
+
+The examples below use `arp` as shorthand for `python <skill-directory>/scripts/arp.py`.
+
+```text
+arp config setup ieee --profile my-institution --mode assisted
+arp config ieee list
+arp config ieee use my-institution
+arp config ieee login --profile my-institution
+arp config ieee doctor --profile my-institution --reference <IEEE-URL>
+arp library audit <library-directory> --output <audit-directory>
+arp library update <library-directory> --output <staging-directory>
+arp library import <incoming-directory> --destination <library-directory> --output <plan.json>
+arp library organize <library-directory> --output <plan.json>
+arp library apply --plan <plan.json>
+arp library apply --plan <plan.json> --rollback
+arp discover author --spec <author.json> --output <discovery-directory>
+```
+
+IEEE supports `direct`, `assisted`, and explicit-contract `carsi` profiles, each with an isolated browser context. Profile configuration, identity-provider login, return to IEEE, a verified download, and institutional entitlement are separate states. An open-access download does not establish subscription entitlement. See [configuration](skills/acquire-research-papers/references/configuration.md).
+
+Library audits report identities, duplicates, missing/ambiguous pairs, citation placement, and the PDF's independently evidenced version. A current BibTeX record does not prove the PDF is current. Registry metadata stays discovery evidence. Update stages official pairs; import/organize produce hash-bound plans; explicit apply checks hashes and keeps backups. Raw BibTeX bytes, BOM, encoding, and line endings are preserved. Optional `--metadata` inputs enable offline comparison; `update --verify-only` avoids acquisition. A bounded `--watch` observes user-downloaded ScienceDirect pairs and maintains one queue without automating a browser. See [library mode](skills/acquire-research-papers/references/library-mode.md).
+
+Author specs accept identity IDs, affiliation/coauthors, date range, homepage, and a local library. Public ORCID, DBLP, homepage, and database records retain identity uncertainty and source errors. Exact DOI deduplication, formal/early-access/preprint groups, issue dates primary to online dates, and explicit version relations remain auditable; coverage is never claimed absolutely complete. `--records` supplies offline source evidence. See [author mode](skills/acquire-research-papers/references/author-mode.md).
 
 ## Quick start
 
 ### Fetch one known paper
 
 ```powershell
-uv run --project $skill arp fetch `
+python "$skill/scripts/arp.py" fetch `
   --input "https://aclanthology.org/2024.acl-long.1/" `
   --output "C:\Research\papers"
 ```
@@ -154,14 +200,14 @@ delivery:
 Run discovery first:
 
 ```powershell
-uv run --project $skill arp discover corpus --progress `
+python "$skill/scripts/arp.py" discover corpus --progress `
   --spec .\corpus.yaml --output C:\Research\corpus-run
 ```
 
 Codex then reads `evidence-packets.jsonl`, reviews title and abstract evidence, and writes hash-bound decisions. Import those decisions and freeze the selection:
 
 ```powershell
-uv run --project $skill arp review corpus `
+python "$skill/scripts/arp.py" review corpus `
   --run C:\Research\corpus-run `
   --decisions C:\Research\corpus-run\review-decisions.jsonl
 ```
@@ -169,7 +215,7 @@ uv run --project $skill arp review corpus `
 Acquire only the frozen selection:
 
 ```powershell
-uv run --project $skill arp acquire corpus `
+python "$skill/scripts/arp.py" acquire corpus `
   --selection C:\Research\corpus-run\selection-manifest.json `
   --output C:\Research\corpus-delivery
 ```
@@ -200,18 +246,18 @@ delivery:
 ```
 
 ```powershell
-uv run --project $skill arp discover research `
+python "$skill/scripts/arp.py" discover research `
   --brief .\research-brief.yaml --output C:\Research\literature-review
 ```
 
 Discovery returns `status: review_required`. Codex then reviews the hash-bound candidates, freezes the closest papers, acquires their official files, reads the MinerU parses, and imports evidence:
 
 ```powershell
-uv run --project $skill arp review research `
+python "$skill/scripts/arp.py" review research `
   --run C:\Research\literature-review --decisions .\research-review.jsonl
-uv run --project $skill arp acquire research `
+python "$skill/scripts/arp.py" acquire research `
   --run C:\Research\literature-review
-uv run --project $skill arp evidence research `
+python "$skill/scripts/arp.py" evidence research `
   --run C:\Research\literature-review --records .\evidence-review.jsonl
 ```
 
@@ -315,7 +361,7 @@ ScienceDirect remains manual by design. Configure an Elsevier API key if the tas
 Start the watcher before downloading:
 
 ```powershell
-uv run --project $skill arp manual-fetch `
+python "$skill/scripts/arp.py" manual-fetch `
   --input "10.1016/j.asieco.2024.101746" `
   --watch "$HOME\Downloads" --output C:\Research\papers
 ```
@@ -325,14 +371,14 @@ The CLI opens only the canonical article page. The user completes organization l
 If both files already exist:
 
 ```powershell
-uv run --project $skill arp manual-fetch --input <DOI> `
+python "$skill/scripts/arp.py" manual-fetch --input <DOI> `
   --pdf .\paper.pdf --bibtex .\citation.bib --output C:\Research\papers
 ```
 
 For a frozen corpus item, use its immutable selection ID:
 
 ```powershell
-uv run --project $skill arp manual-fetch `
+python "$skill/scripts/arp.py" manual-fetch `
   --selection C:\Research\corpus-run\selection-manifest.json `
   --key <selection-id> --output C:\Research\corpus-delivery `
   --watch "$HOME\Downloads"
@@ -385,7 +431,7 @@ The repository has regression tests for its contracts and has completed real mul
 - New or not-yet-published proceedings and inconsistent upstream metadata can leave coverage incomplete.
 - `arp config status: true` confirms stored configuration shape, not live credentials, quota, subscription, or API entitlement.
 - Large authenticated batches run conservatively and may be slow.
-- Acquisition expects a clean or already bound delivery root; importing an existing hand-curated folder is not yet a first-class command.
+- Existing-folder library operations require an explicit reviewed hash-bound plan; unknown PDF/citation identity remains a manual review item.
 - The internal generic publisher adapter is not a public plug-in system yet.
 - No cross-domain labeled benchmark currently supports a numeric precision/recall claim.
 
@@ -396,9 +442,9 @@ These are improvement priorities, not claims about current support.
 ### Near term
 
 1. **Measure research-search saturation.** Add repeatable stopping diagnostics for new mechanisms, citation-frontier growth, classic/recent coverage, and unresolved boundary papers without turning them into false universal-recall claims.
-2. **Add an IEEE institution doctor.** Probe non-secret profile fields, show sanitized stage transitions, validate the resource gateway/entity ID/form contract, and run one representative smoke test without exposing credentials.
+2. **Improve IEEE institution diagnostics.** Extend the current named-profile doctor with clearer first-use adaptation and live access diagnostics while keeping secrets private.
 3. **Productize ACM authorized access.** Design a dedicated visible, isolated, exact-host browser contract with the same fail-closed standards as IEEE; retain manual fallback when access or page shape is unknown.
-4. **Support safe delta acquisition and existing-folder import.** Bind a new frozen selection without colliding with already verified user files, and provide an explicit migration command instead of ad hoc copying.
+4. **Extend safe delta acquisition.** Build on the existing library import/update plans to bind new frozen selections while preserving verified files.
 5. **Publish copyable templates.** Add `arp init corpus` and `arp init research`, example specifications, and a human-readable run summary.
 
 ### Medium term
@@ -416,23 +462,13 @@ ScienceDirect browser automation is deliberately not on the roadmap unless publi
 `acquire research` parses selected PDFs into a seven-day SHA-256 MinerU cache for internal evidence review. The cached Markdown is analysis state, not a delivery artifact. Ordinary fetch, manual fetch, and corpus workflows do not produce Markdown. Export only after the user explicitly requests a destination:
 
 ```powershell
-uv run --project $skill arp export-md `
+python "$skill/scripts/arp.py" export-md `
   --pdf .\paper.pdf --output C:\Research\markdown
 ```
 
 ## Development
 
-```powershell
-uv sync --locked --all-groups
-uv run ruff check src tests scripts/validate_skill.py
-uv run pytest -q
-uv run python scripts/validate_skill.py .
-node --test tests/node/test-ieee-playwright.mjs
-./tests/powershell/test-secret-store.ps1
-./tests/powershell/test-install-playwright.ps1
-```
-
-See [references/corpus-mode.md](references/corpus-mode.md), [references/research-mode.md](references/research-mode.md), [references/source-policies.md](references/source-policies.md), [references/credentials-and-cache.md](references/credentials-and-cache.md), and [SECURITY.md](SECURITY.md) for the normative contracts.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, Python/Node/PowerShell checks, wheel/skill builds, isolated installation, and release validation.
 
 ## Responsible use
 

@@ -18,7 +18,7 @@ Configured Semantic Scholar and OpenAlex clients join Crossref as research searc
 Discovery writes an immutable `research-candidates.jsonl` snapshot, `citation-graph.json`, and `research-run.json`. Do not edit them. Review every candidate and write one JSONL decision per packet using `schemas/research-review-decision.schema.json`, preserving `candidate_id` and `candidate_sha256`. Run:
 
 ```powershell
-uv run --project $skill arp review research `
+python "$skill/scripts/arp.py" review research `
   --run <research-run> --decisions <research-review.jsonl>
 ```
 
@@ -29,7 +29,7 @@ The selection freezes only after every candidate has an explicit Codex include/e
 Metadata and abstracts nominate papers. Acquire the official PDF and official BibTeX pair for final candidates:
 
 ```powershell
-uv run --project $skill arp acquire research --run <research-run>
+python "$skill/scripts/arp.py" acquire research --run <research-run>
 ```
 
 This command reuses the frozen-selection acquisition workflow, then parses each verified PDF through the seven-day MinerU cache. `full-text-manifest.jsonl` binds the selection ID, official PDF SHA-256, cached Markdown SHA-256, parser mode, and pending reason. Rerunning reuses verified publisher artifacts and content-addressed parses. A manual publisher item remains selected and pending rather than being silently dropped. The result reports separate `acquisition_pending` and `parsing_pending` counts; its top-level status points to the earliest unfinished gate: missing publisher files, then failed parsing, then evidence review.
@@ -37,11 +37,11 @@ This command reuses the frozen-selection acquisition workflow, then parses each 
 For a paper listed in `acquisition/manual-download.csv`, import the user-authorized official pair into the same acquisition root, then resume:
 
 ```powershell
-uv run --project $skill arp manual-fetch `
+python "$skill/scripts/arp.py" manual-fetch `
   --selection <research-run\selection\selection-manifest.json> `
   --key <selection-id> --output <research-run\acquisition> `
   --pdf <official.pdf> --bibtex <official.bib> --no-open
-uv run --project $skill arp acquire research --run <research-run>
+python "$skill/scripts/arp.py" acquire research --run <research-run>
 ```
 
 Resume accepts the pair only when the reserved paths, manual provenance, selection ID, metadata identity, and recorded file hashes all verify.
@@ -65,7 +65,7 @@ Keep excerpts short. Use them to anchor reasoning, not to reproduce the paper.
 Create one evidence-review row for every frozen paper using `schemas/research-evidence-review.schema.json`, then run:
 
 ```powershell
-uv run --project $skill arp evidence research `
+python "$skill/scripts/arp.py" evidence research `
   --run <research-run> --records <evidence-review.jsonl>
 ```
 

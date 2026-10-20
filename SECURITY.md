@@ -6,7 +6,7 @@ Security fixes are applied to the latest release and the current `main` branch. 
 
 ## Report a vulnerability
 
-Use GitHub's private vulnerability reporting for this repository. Do not open a public issue containing an account name, password, API token, cookie, browser profile, signed URL, institution session, or decrypted value.
+Use [GitHub's private vulnerability reporting](https://github.com/EnosElinsa/acquire-research-papers/security/advisories/new) for this repository. Do not open a public issue containing an account name, password, API token, cookie, browser profile, signed URL, institution session, or decrypted value.
 
 Include the affected version, operating system, the smallest reproducible sequence, and a redacted description of the observed host or redirect. Replace every secret and URL query string before attaching logs. Please allow time for triage before public disclosure.
 
@@ -22,8 +22,11 @@ Authenticated browser adapters and API-key readers fail closed:
 - The Elsevier metadata API key may be released only to exact host `api.elsevier.com`.
 - The Semantic Scholar API key may be released only to exact host `api.semanticscholar.org`.
 - The OpenAlex API key may be released only to exact host `api.openalex.org`.
-- Publisher artifacts must remain on the exact hosts defined in [`references/source-policies.md`](references/source-policies.md).
-- CAPTCHA, OTP, an unexpected host, an incomplete login, or a metadata mismatch stops the run.
+- Publisher artifacts must remain on the exact hosts defined in [source policies](skills/acquire-research-papers/references/source-policies.md).
+- IEEE defaults to manual login in a dedicated visible browser. CAPTCHA, OTP, and unsupported page shapes require user action; automatic credential submission is not repeated. An unexpected credential host is rejected. Artifact identity mismatches prevent delivery.
+- Named IEEE profiles keep independent browser sessions and credential references. Switching a profile does not copy another institution's session or credentials.
+- Library changes require a hash-bound plan, source/destination rechecks, backups, and a per-library apply lock. A modified source or output is a conflict, not permission to overwrite it.
+- The thin-skill launcher verifies the exact release-wheel SHA-256 before installation. The safe copy installer refuses Git checkout targets and links.
 
 The project never attaches to a user's everyday browser profile and never exports browser cookies. ScienceDirect organization login and download clicks are user-driven; the manual handoff begins from a directory snapshot and handles only local PDF/BibTeX files after download.
 

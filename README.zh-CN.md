@@ -3,14 +3,19 @@
 [English](README.md)
 
 [![CI](https://github.com/EnosElinsa/acquire-research-papers/actions/workflows/test.yml/badge.svg)](https://github.com/EnosElinsa/acquire-research-papers/actions/workflows/test.yml)
+[![Release](https://img.shields.io/github/v/release/EnosElinsa/acquire-research-papers)](https://github.com/EnosElinsa/acquire-research-papers/releases/latest)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Acquire Research Papers 是一个公开的 Codex skill 和确定性命令行工具，用来完成三类相互关联的任务：
+Acquire Research Papers 是一个公开的 Codex skill 和确定性命令行工具，用来获取论文和管理本地论文库：
 
 - 根据 DOI 或出版社正式页面获取已知论文；
 - 按指定期刊/会议、年份、主题和配额建立可审计的论文集；
-- 为相近工作、观点证据、Related Work 或创新 gap 分析准备并开展文献调研。
+- 为相近工作、观点证据、Related Work 或创新 gap 分析准备并开展文献调研；
+- 审计、更新、导入和整理本地 PDF/BibTeX，使用可审阅的变更计划和备份；
+- 按作者查漏论文，明确区分身份、出版日期和来源覆盖证据。
+
+[最新版本](https://github.com/EnosElinsa/acquire-research-papers/releases/latest) · [更新记录](CHANGELOG.md) · [开发指南](CONTRIBUTING.md) · [使用帮助与反馈](SUPPORT.md) · [安全说明](SECURITY.md)
 
 每项完成的获取都必须形成经过身份核验的一对文件：出版社托管的 PDF 和出版社导出的原始 BibTeX。Crossref、OpenAlex 和 Semantic Scholar 可以发现候选并补全元数据，但不能代替正式文件。本项目不使用论文镜像，不让模型生成引用，也不绕过出版社访问控制。
 
@@ -19,6 +24,9 @@ Acquire Research Papers 是一个公开的 Codex skill 和确定性命令行工�
 | 你的任务 | 工作流 | 最终结果 |
 | --- | --- | --- |
 | 已有 DOI 或出版社正式链接 | `fetch` | 一对经过核验的 PDF/BibTeX，或明确可操作的访问结果 |
+| 需要机构访问或切换学校 | `config setup ieee` → `config ieee login/doctor` | 命名隔离档案、默认人工登录，以及分开的认证和下载诊断 |
+| 已有 PDF/BibTeX 文件夹 | `library audit/update/import/organize` → `library apply` | 版本证据、配对文件名、原始引用字节、带哈希的变更计划和备份 |
+| 需要作者论文列表或本地查漏 | `discover author` | 正式发表、Early Access 和预印本分组，以及身份歧义和来源覆盖说明 |
 | 要从指定 venue、年份和主题中建立论文集 | `discover corpus` → Codex 评审 → `review corpus` → `acquire corpus` | 覆盖证据、冻结选集、正式文件以及人工/重试队列 |
 | 出版社要求用户在授权浏览器中操作 | `manual-fetch` | 接管用户下载的正式文件，核验身份后放入预留交付位置 |
 | 要找相近工作、观点引用、Related Work 或验证 gap | `discover research` → `review research` → `acquire research` → `evidence research` | 引用图、冻结的最相近论文、经过核验的全文和 claim 级证据报告 |
@@ -41,52 +49,90 @@ Codex 是这条工作流的一部分。CLI 负责确定性校验、断点记录�
 
 ## 安装
 
-公开数据发现和非浏览器流程需要 Git、[uv](https://docs.astral.sh/uv/) 和 Python 3.11+。IEEE 浏览器自动化还需要 Node.js、Windows PowerShell 和固定版本的 Playwright。目前安全凭据集成使用 Windows DPAPI。
+普通用户通过标准 Skills 安装器安装，需要 Node.js/npm，无需克隆开发仓库或运行开发依赖同步：
 
-```powershell
-$skill = Join-Path $env:USERPROFILE ".codex\skills\acquire-research-papers"
-git clone https://github.com/EnosElinsa/acquire-research-papers.git $skill
-uv sync --project $skill --locked --all-groups
-& "$skill\scripts\install-playwright.ps1"
-uv run --project $skill arp --help
+```text
+npx skills add EnosElinsa/acquire-research-papers --skill acquire-research-papers -a codex -g
 ```
 
-更新已有安装：
+需要 Python 3.11+ 和 [uv](https://docs.astral.sh/uv/)。使用安装器返回的实际 skill 目录；默认共享目录通常是 `~/.agents/skills/acquire-research-papers`：
 
 ```powershell
-git -C $skill pull --ff-only
-uv sync --project $skill --locked --all-groups
+$skill = Join-Path $env:USERPROFILE ".agents/skills/acquire-research-papers"
+python "$skill/scripts/arp.py" --help
+python "$skill/scripts/arp.py" config status
 ```
 
-交付目录必须位于本仓库之外。运行注册表、加密密钥、缓存和独立浏览器 profile 均保存在 `%LOCALAPPDATA%\Codex` 下。
+启动器只使用 Python 标准库，根据 `runtime.json` 获取固定版本 wheel、校验 SHA-256，再通过 uv 安装到独立缓存。不会依赖开发 checkout 或把开发工具装进 skill。IEEE 浏览器和 DPAPI 凭据当前需要 Windows、PowerShell、Node.js；公开检索和论文库操作可跨平台运行。
+
+更新时重新运行同一条 Skills 安装命令。注册表、凭据、缓存、院校 profile 和浏览器会话保存在 skill 目录之外；交付文件也应使用独立目录。开发构建可按[开发指南](CONTRIBUTING.md)使用经过摘要校验的本地 wheel 验证。
+
+如果现有 skill 目录本身是 Git 开发 checkout，请保留它，不要让第三方安装器覆盖此目录。先构建导出，再用仓库的安全复制安装器放入新目录；它拒绝含 `.git` 的目标，明确替换旧版纯 skill 时也保留备份。详见[安全迁移](CONTRIBUTING.md#safe-copy-and-checkout-migration)。
+
+### 发布文件与手动安装
+
+[v0.4.0 发布页](https://github.com/EnosElinsa/acquire-research-papers/releases/tag/v0.4.0)提供：
+
+| 文件 | 用途 |
+| --- | --- |
+| `acquire-research-papers-skill-0.4.0.zip` | 解压后，将其中的 `acquire-research-papers/` 文件夹复制到新的 skill 目录。包含指令、参考资料、schemas、启动器和固定运行版本清单。 |
+| `acquire_research_papers-0.4.0-py3-none-any.whl` | 用 `uv tool install <wheel-path>` 单独安装 CLI；也可将其绝对路径设置为 `ARP_LOCAL_WHEEL`，供启动器从本地加载。摘要校验仍然生效。 |
+| `SHA256SUMS` | PowerShell 使用 `Get-FileHash <path> -Algorithm SHA256`，Linux 使用 `sha256sum <path>`，与清单核对下载文件。 |
+
+手动安装 skill 需要 Python 3.11+ 和 uv。启动器默认在首次运行时下载固定 wheel；依赖安装仍需网络或已有 uv 缓存。IEEE 浏览器另外需要 Node.js。不要把源码压缩包或开发 checkout 整体复制为 skill。启动和迁移问题见 [SUPPORT.md](SUPPORT.md)。
 
 ## 首次使用：只配置当前任务需要的能力
 
 先检查哪些可选能力已经配置：
 
 ```powershell
-uv run --project $skill arp config status
+python "$skill/scripts/arp.py" config status
 ```
 
-该命令只返回布尔值。它检查本地保存对象的结构，不打印或解密任何值。`true` 表示本地已有配置，不代表远端 API 或出版社权限一定可用。Agent 应只引导配置当前任务真正需要的能力，然后用一项有代表性的实际操作验证它。
+该命令默认只返回能力布尔值；`--details` 可附加非敏感 profile/历史验证摘要。它检查本地保存对象的结构，不打印或解密任何值。`true` 表示本地已有配置，不代表远端 API 或出版社权限一定可用。Agent 应只引导配置当前任务真正需要的能力，然后用一项有代表性的实际操作验证它。
 
 | 能力 | 何时配置 | 配置方式 |
 | --- | --- | --- |
 | 无需配置 | 公开 Crossref 发现、ACL 发现/获取、IJCAI 发现/获取 | 不需要密钥 |
-| Semantic Scholar | 需要带 key 的候选搜索、更高额度和第一轮 DOI 摘要补全 | `& "$skill\scripts\setup-discovery-api-keys.ps1" -Provider semantic_scholar` |
-| OpenAlex | 需要额外候选搜索和第二轮 DOI 摘要补全 | `& "$skill\scripts\setup-discovery-api-keys.ps1" -Provider openalex` |
-| IEEE | 需要通过本校和 CARSI 自动获取订阅的 IEEE PDF | `& "$skill\scripts\setup-ieee-institution.ps1"` |
-| Elsevier | ScienceDirect 人工接管前需要解析官方预期身份 | `& "$skill\scripts\setup-discovery-api-keys.ps1" -Provider elsevier` |
-| MinerU | 需要为内部全文分析解析 PDF，或明确要求导出 Markdown | `& "$skill\scripts\setup-mineru-token.ps1"` |
+| Semantic Scholar | 需要带 key 的候选搜索、更高额度和第一轮 DOI 摘要补全 | `arp config setup semantic_scholar` |
+| OpenAlex | 需要额外候选搜索和第二轮 DOI 摘要补全 | `arp config setup openalex` |
+| IEEE | 需要本校 IEEE 访问；默认先人工登录，可另行启用支持的 CARSI 表单 | `arp config setup ieee` |
+| Elsevier | ScienceDirect 人工接管前需要解析官方预期身份 | `arp config setup elsevier` |
+| MinerU | 需要为内部全文分析解析 PDF，或明确要求导出 Markdown | `arp config setup mineru` |
 
-所有配置提示均为交互式且不回显。不要把密码、API key、token 或 Cookie 粘贴到聊天、Agent 消息、命令参数、`.env` 或仓库文件中。各 Provider 独立更新：增加 OpenAlex key 不会覆盖 IEEE、MinerU、Elsevier 或 Semantic Scholar 配置。
+秘密输入采用交互式、不回显提示；机构名称和官方入口是普通非敏感输入。不要把密码、API key、token 或 Cookie 粘贴到聊天、Agent 消息、命令参数、`.env` 或仓库文件中。各 Provider 独立更新：增加 OpenAlex key 不会覆盖 IEEE、MinerU、Elsevier 或 Semantic Scholar 配置。
+
+## 命名院校、现有论文库与作者论文发现
+
+下列 `arp` 是 `python <skill-directory>/scripts/arp.py` 的简写。
+
+```text
+arp config setup ieee --profile my-institution --mode assisted
+arp config ieee list
+arp config ieee use my-institution
+arp config ieee login --profile my-institution
+arp config ieee doctor --profile my-institution --reference <IEEE-URL>
+arp library audit <library-directory> --output <audit-directory>
+arp library update <library-directory> --output <staging-directory>
+arp library import <incoming-directory> --destination <library-directory> --output <plan.json>
+arp library organize <library-directory> --output <plan.json>
+arp library apply --plan <plan.json>
+arp library apply --plan <plan.json> --rollback
+arp discover author --spec <author.json> --output <discovery-directory>
+```
+
+IEEE 支持 `direct`、`assisted` 与明确表单契约下的 `carsi` 命名 profile，各自使用隔离浏览器上下文。已配置、IdP 登录成功、返回 IEEE、核验下载及证明机构权限是不同状态；开放获取论文下载成功不等于订阅权限已验证。详见[配置说明](skills/acquire-research-papers/references/configuration.md)。
+
+论文库审计报告身份、重复、缺失和歧义，分别核验引用出版信息与 PDF 版本。BibTeX 已更新不能证明 PDF 已更新；注册库元数据仍属于发现证据。更新只暂存正式文件，导入和整理只生成带哈希计划；明确执行 apply 后才修改文件，并保留备份。原始 BibTeX 字节、BOM、编码和换行保持不变。`--metadata` 可供离线核验，`update --verify-only` 不获取文件。有界 `--watch` 只观察用户已下载的 ScienceDirect PDF/BIB，使用单一人工队列，绝不自动操作页面。详见[论文库模式](skills/acquire-research-papers/references/library-mode.md)。
+
+作者规范支持身份 ID、机构/合作者、日期范围、主页及本地目录。ORCID、DBLP、主页和数据库记录保留身份歧义及来源错误；只按准确 DOI 去重，区分正式发表、early access 与预印本，期刊卷期日期优先于在线日期，只用明确关系关联不同版本，绝不声称绝对完整。`--records` 可提供离线证据。详见[作者模式](skills/acquire-research-papers/references/author-mode.md)。
 
 ## 快速开始
 
 ### 获取一篇已知论文
 
 ```powershell
-uv run --project $skill arp fetch `
+python "$skill/scripts/arp.py" fetch `
   --input "https://aclanthology.org/2024.acl-long.1/" `
   --output "C:\Research\papers"
 ```
@@ -154,14 +200,14 @@ delivery:
 先运行发现：
 
 ```powershell
-uv run --project $skill arp discover corpus --progress `
+python "$skill/scripts/arp.py" discover corpus --progress `
   --spec .\corpus.yaml --output C:\Research\corpus-run
 ```
 
 Codex 随后阅读 `evidence-packets.jsonl`，根据标题和摘要生成绑定哈希的评审决定。导入这些决定并冻结选集：
 
 ```powershell
-uv run --project $skill arp review corpus `
+python "$skill/scripts/arp.py" review corpus `
   --run C:\Research\corpus-run `
   --decisions C:\Research\corpus-run\review-decisions.jsonl
 ```
@@ -169,7 +215,7 @@ uv run --project $skill arp review corpus `
 下载阶段只读取冻结清单：
 
 ```powershell
-uv run --project $skill arp acquire corpus `
+python "$skill/scripts/arp.py" acquire corpus `
   --selection C:\Research\corpus-run\selection-manifest.json `
   --output C:\Research\corpus-delivery
 ```
@@ -200,18 +246,18 @@ delivery:
 ```
 
 ```powershell
-uv run --project $skill arp discover research `
+python "$skill/scripts/arp.py" discover research `
   --brief .\research-brief.yaml --output C:\Research\literature-review
 ```
 
 发现阶段返回 `status: review_required`。随后由 Codex 评审经过哈希绑定的候选，冻结最相近论文，获取正式文件，阅读 MinerU 解析结果并导入证据：
 
 ```powershell
-uv run --project $skill arp review research `
+python "$skill/scripts/arp.py" review research `
   --run C:\Research\literature-review --decisions .\research-review.jsonl
-uv run --project $skill arp acquire research `
+python "$skill/scripts/arp.py" acquire research `
   --run C:\Research\literature-review
-uv run --project $skill arp evidence research `
+python "$skill/scripts/arp.py" evidence research `
   --run C:\Research\literature-review --records .\evidence-review.jsonl
 ```
 
@@ -315,7 +361,7 @@ ScienceDirect 按设计保持人工模式。需要解析官方预期身份时，
 下载前先启动监听：
 
 ```powershell
-uv run --project $skill arp manual-fetch `
+python "$skill/scripts/arp.py" manual-fetch `
   --input "10.1016/j.asieco.2024.101746" `
   --watch "$HOME\Downloads" --output C:\Research\papers
 ```
@@ -325,14 +371,14 @@ CLI 只打开规范的论文页面。用户在正常 Chrome（或其他授权浏
 如果两个文件已经存在：
 
 ```powershell
-uv run --project $skill arp manual-fetch --input <DOI> `
+python "$skill/scripts/arp.py" manual-fetch --input <DOI> `
   --pdf .\paper.pdf --bibtex .\citation.bib --output C:\Research\papers
 ```
 
 冻结论文集中的人工条目应使用不可变 selection ID：
 
 ```powershell
-uv run --project $skill arp manual-fetch `
+python "$skill/scripts/arp.py" manual-fetch `
   --selection C:\Research\corpus-run\selection-manifest.json `
   --key <selection-id> --output C:\Research\corpus-delivery `
   --watch "$HOME\Downloads"
@@ -385,7 +431,7 @@ uv run --project $skill arp manual-fetch `
 - 尚未发布的 proceedings 和上游元数据不一致会造成覆盖不完整。
 - `arp config status: true` 只说明本地配置结构存在，不代表凭据、额度、订阅或 API entitlement 实时有效。
 - 大批量认证下载采取保守顺序执行，可能耗时较长。
-- acquisition 需要干净或已经绑定的交付根目录；导入现有人工整理目录还不是一等命令。
+- 现有目录的导入和整理要求明确评审带哈希计划；PDF/引用身份不明的记录仍需人工核验。
 - 内部通用出版社 adapter 尚未成为公开插件系统。
 - 目前没有跨领域标注基准支持数值化 precision/recall 声明。
 
@@ -396,9 +442,9 @@ uv run --project $skill arp manual-fetch `
 ### 近期
 
 1. **量化 research 检索饱和度。**增加可重复的停止诊断，报告新机制、引用前沿增长、经典/近期工作覆盖和未解决边界论文，同时避免把这些指标误写成普遍召回率证明。
-2. **增加 IEEE 院校诊断器。**探测非敏感 profile 字段，显示脱敏阶段跳转，校验资源入口、entity ID 和表单契约，并在不泄露凭据的情况下运行一篇代表论文冒烟测试。
+2. **改善 IEEE 院校诊断。**在现有命名 profile 和 doctor 基础上改进首次适配及实时访问诊断，继续保护凭据。
 3. **产品化 ACM 授权访问。**设计独立、可见、隔离并限制准确域名的浏览器契约，采用与 IEEE 相同的 fail-closed 原则；访问或页面形态未知时继续转人工。
-4. **支持安全增量获取和现有目录导入。**让新的冻结选集能够复用已验证用户文件，提供明确迁移命令，不再依赖临时复制。
+4. **扩展安全增量获取。**在现有论文库导入、更新计划基础上让新冻结选集复用已验证用户文件。
 5. **提供可复制模板。**增加 `arp init corpus`、`arp init research`、示例规范和面向用户的运行摘要。
 
 ### 中期
@@ -416,23 +462,13 @@ uv run --project $skill arp manual-fetch `
 `acquire research` 会把选定 PDF 解析到七天 SHA-256 MinerU 缓存，用于内部证据评审。缓存 Markdown 属于分析状态，不是交付文件。普通 fetch、manual fetch 和论文集流程不会产生 Markdown。只有用户明确指定目标目录时才导出：
 
 ```powershell
-uv run --project $skill arp export-md `
+python "$skill/scripts/arp.py" export-md `
   --pdf .\paper.pdf --output C:\Research\markdown
 ```
 
 ## 开发与验证
 
-```powershell
-uv sync --locked --all-groups
-uv run ruff check src tests scripts/validate_skill.py
-uv run pytest -q
-uv run python scripts/validate_skill.py .
-node --test tests/node/test-ieee-playwright.mjs
-./tests/powershell/test-secret-store.ps1
-./tests/powershell/test-install-playwright.ps1
-```
-
-规范性契约见 [references/corpus-mode.md](references/corpus-mode.md)、[references/research-mode.md](references/research-mode.md)、[references/source-policies.md](references/source-policies.md)、[references/credentials-and-cache.md](references/credentials-and-cache.md) 和 [SECURITY.md](SECURITY.md)。
+开发安装、Python/Node/PowerShell 测试、wheel/skill 构建、隔离安装及发布校验见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## 负责任使用
 

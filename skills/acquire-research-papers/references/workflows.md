@@ -1,8 +1,3 @@
----
-name: acquire-research-papers
-description: Use when a task concerns acquiring specified research papers, building a venue/topic/year corpus, investigating literature gaps or related work, finding claim citations, using IEEE or ScienceDirect institutional access, or optionally converting selected PDFs with MinerU.
----
-
 # Acquire Research Papers
 
 Deliver a verified pair for every paper: the official publisher PDF and the publisher's raw BibTeX export. Discovery services may nominate candidates; they never supply the final citation artifact.
@@ -21,44 +16,26 @@ An attached DOCX, Markdown, TXT, CSV, or role assignment is only an input adapte
 ## Invoke the CLI
 
 ```powershell
-$skill = Join-Path $env:USERPROFILE ".codex\skills\acquire-research-papers"
-uv run --project $skill arp --help
+$skill = Join-Path $env:USERPROFILE ".agents/skills/acquire-research-papers"
+python "$skill/scripts/arp.py" --help
 ```
 
 Runtime state belongs under `%LOCALAPPDATA%\Codex`; delivery directories must be outside this public repository.
 
-### First use and optional configuration
-
-Start every task by checking capabilities without reading or decrypting any key value:
-
-```powershell
-uv run --project $skill arp config status
-```
-
-`arp credentials status` is a compatibility alias. IEEE, MinerU, Elsevier, Semantic Scholar, and OpenAlex are optional and independent. Configure only the missing capability required by the current task; never require a full setup wizard before an unrelated workflow can run. Crossref, ACL Anthology, and IJCAI discovery do not require these credentials.
-
-| Capability | Configure when the task needs | Setup |
-| --- | --- | --- |
-| IEEE | automatic access to subscribed IEEE PDFs through the user's institution | `scripts/setup-ieee-institution.ps1` |
-| MinerU | optional full-text parsing or an explicit Markdown export | `scripts/setup-mineru-token.ps1` |
-| Elsevier | official ScienceDirect metadata resolution for manual handoff | `scripts/setup-discovery-api-keys.ps1 -Provider elsevier` |
-| Semantic Scholar | higher-rate candidate search and first DOI abstract enrichment | `scripts/setup-discovery-api-keys.ps1 -Provider semantic_scholar` |
-| OpenAlex | candidate search and second DOI abstract enrichment | `scripts/setup-discovery-api-keys.ps1 -Provider openalex` |
-
-All prompts are interactive and non-echoing. Do not ask the user to paste a secret into chat, an agent message, a command argument, or a repository file. After setup, rerun `arp config status` and continue with the capabilities that report `true`; missing optional capabilities remain valid and use available fallbacks.
+Read [configuration](configuration.md) for named profiles and provider setup. All setup/read helper scripts mentioned in older technical details are bundled inside the runtime wheel; invoke `arp config setup` from the installed skill.
 
 ### Automatic fetch
 
 ```powershell
-uv run --project $skill arp fetch --input <DOI-or-official-URL> --output <directory>
+python "$skill/scripts/arp.py" fetch --input <DOI-or-official-URL> --output <directory>
 ```
 
 Use output only when the JSON status is `delivered`. A title that is not uniquely resolved must go through discovery.
 
-For subscribed IEEE content, use only the institution profile configured by the current user through `scripts/setup-ieee-institution.ps1`. The profile includes the exact CARSI option and IdP entity ID, identity-provider host, and form contract. The repository provides no institution name, identity-provider host, form label, or credential default.
+For subscribed IEEE content, use only the named institution profile configured by the current user through `arp config setup ieee`. Assisted access leaves authentication to the user. A CARSI automatic profile includes the exact CARSI option and IdP entity ID, identity-provider host, form contract, and may include an official IEEE WAYF URL supplied by the institution. The repository provides no institution name, identity-provider host, form label, credential default, or WAYF default.
 If the profile is absent or the page contract does not match it, classify the paper as `access_required`, add it to the corpus manual-download list, and continue; never guess an institution or selector.
 
-After the unauthenticated PDF attempt fails, enter the profile's exact `ResourceAccessUrl` before institution selection so the IEEE SAML return target survives login. Write and verify the configured CARSI IdP entity ID before submitting discovery. Re-enter only that same URL after CARSI or an accepted attribute-release page returns without IEEE entitlement; never click a portal card. Allow at most three total gateway visits for initial discovery, post-login authorization, and one post-release/post-portal recovery. If a configured institutional continuation page appears, require exactly one accept/continue control and allow at most one reject control, because some IdPs expose only a continue button. Never click reject. The configured accept/continue control is automatic by default; use `--no-accept-ieee-attribute-release` to keep the headful page visible for manual action instead. After either path, report `access_required` if the page remains incomplete. A PDF request is forbidden until the same browser context has returned to the exact `ieeexplore.ieee.org` host.
+After the unauthenticated PDF attempt fails, enter the profile's exact `ResourceAccessUrl` before institution selection. Write and verify the configured CARSI IdP entity ID before submitting discovery. If the profile contains an institution-supplied `IeeeWayfUrl`, use that exact IEEE-hosted route after the initial institutional login; otherwise revisit only the same `ResourceAccessUrl`. Never click a portal card. Allow at most three total gateway visits for the CARSI fallback path. If a configured institutional continuation page appears, require exactly one accept/continue control and allow at most one reject control; process at most three consecutive same-host continuation stages because some IdPs separate terms acceptance from attribute release. Never click reject. If a stage exposes one consent checkbox, select it only through its unique associated label and verify its checked state. The configured accept/continue control is automatic by default; use `--no-accept-ieee-attribute-release` to keep the headful page visible for manual action instead. After either path, report `access_required` if the page remains incomplete. A PDF request is forbidden until the same browser context has returned to the exact `ieeexplore.ieee.org` host.
 
 When IEEE access fails for a previously untested institution, retain the visible browser and use the returned error payload to report only the sanitized stage and hostname. Adapt the institution profile first: correct its exact CARSI option, entity ID, IdP hostname, accessible form labels, resource gateway, and continuation controls, then retry one representative paper. Do not add a school-name branch or selector to the generic script. Change `ieee-playwright.mjs` only when observation proves a new generic page shape that cannot be expressed by the profile; add a regression test for that page shape before the implementation change. Preserve the exact-host credential boundary, one credential submission, shared persistent context, three-visit gateway limit, reject-button prohibition, visible manual continuation, and query-value redaction throughout adaptation.
 
@@ -67,13 +44,13 @@ When IEEE access fails for a previously untested institution, retain the visible
 Configure the DPAPI-protected Elsevier API key once in an interactive terminal:
 
 ```powershell
-& "$skill\scripts\setup-elsevier-api-key.ps1"
+python "$skill/scripts/arp.py" config setup elsevier
 ```
 
 Then start the watcher before the user downloads the official PDF and raw BibTeX:
 
 ```powershell
-uv run --project $skill arp manual-fetch --input <DOI-or-ScienceDirect-URL> `
+python "$skill/scripts/arp.py" manual-fetch --input <DOI-or-ScienceDirect-URL> `
   --watch $HOME\Downloads --output <directory>
 ```
 
@@ -82,19 +59,19 @@ The command opens only the canonical article page. The user completes organizati
 ### Corpus discovery, corpus acquisition, and research
 
 ```powershell
-uv run --project $skill arp discover corpus --progress `
+python "$skill/scripts/arp.py" discover corpus --progress `
   --spec <job.yaml> --output <discovery-run>
-uv run --project $skill arp review corpus `
+python "$skill/scripts/arp.py" review corpus `
   --run <discovery-run> --decisions <review-decisions.jsonl>
-uv run --project $skill arp acquire corpus `
+python "$skill/scripts/arp.py" acquire corpus `
   --selection <discovery-run\selection-manifest.json> --output <delivery-root> `
   --defer-host <publisher.example>
-uv run --project $skill arp discover research --brief <brief.yaml> --output <directory>
-uv run --project $skill arp review research `
+python "$skill/scripts/arp.py" discover research --brief <brief.yaml> --output <directory>
+python "$skill/scripts/arp.py" review research `
   --run <directory> --decisions <research-review.jsonl>
-uv run --project $skill arp acquire research --run <directory> `
+python "$skill/scripts/arp.py" acquire research --run <directory> `
   --defer-host <publisher.example>
-uv run --project $skill arp evidence research `
+python "$skill/scripts/arp.py" evidence research `
   --run <directory> --records <evidence-review.jsonl>
 ```
 
@@ -119,21 +96,21 @@ Use repeatable `--defer-host <exact-hostname>` options when a publisher must not
 For a queued manual item, use the selection ID rather than copying editable CSV metadata:
 
 ```powershell
-uv run --project $skill arp manual-fetch `
+python "$skill/scripts/arp.py" manual-fetch `
   --selection <discovery-run\selection-manifest.json> --key <selection-id> `
   --output <delivery-root> --watch $HOME\Downloads
 ```
 
 The user downloads from the official page, and the command verifies the local PDF/BibTeX pair against the frozen identity before filling its reserved paths.
 
-Read [references/corpus-mode.md](references/corpus-mode.md) or [references/research-mode.md](references/research-mode.md) before running the corresponding mode. Read [references/source-policies.md](references/source-policies.md) before changing a publisher contract and [references/credentials-and-cache.md](references/credentials-and-cache.md) before institutional access or MinerU.
+Read [corpus mode](corpus-mode.md) or [research mode](research-mode.md) before running the corresponding mode. Read [source policies](source-policies.md) before changing a publisher contract and [credentials and cache](credentials-and-cache.md) before institutional access or MinerU. Use `arp schema <name.json>` for the authoritative runtime schema; bundled schema files are consultation snapshots.
 
 ## Markdown policy
 
 `acquire research` uses a seven-day SHA-256 MinerU cache for internal reading. Do not copy that Markdown into publisher delivery. Export it only after the user explicitly requests and approves a destination:
 
 ```powershell
-uv run --project $skill arp export-md --pdf <paper.pdf> --output <directory>
+python "$skill/scripts/arp.py" export-md --pdf <paper.pdf> --output <directory>
 ```
 
 ## Completion rules

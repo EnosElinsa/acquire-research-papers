@@ -35,7 +35,7 @@ Discovery and selection are separate phases. Discovery prepares immutable eviden
 Run discovery as its own phase:
 
 ```powershell
-uv run --project $skill arp discover corpus --progress `
+python "$skill/scripts/arp.py" discover corpus --progress `
   --spec <job.yaml> --output <discovery-run>
 ```
 
@@ -66,7 +66,7 @@ Read `evidence-packets.jsonl` and write `review-decisions.jsonl`. Each record mu
 Use title and abstract for the decision; keywords are optional. Do not require publisher login or full text. Missing abstracts remain pending. Then import decisions:
 
 ```powershell
-uv run --project $skill arp review corpus `
+python "$skill/scripts/arp.py" review corpus `
   --run <discovery-run> --decisions <review-decisions.jsonl>
 ```
 
@@ -77,7 +77,7 @@ The importer verifies the request and all discovery artifact hashes, then reject
 Acquire the frozen selection explicitly:
 
 ```powershell
-uv run --project $skill arp acquire corpus `
+python "$skill/scripts/arp.py" acquire corpus `
   --selection <discovery-run\selection-manifest.json> --output <delivery-root> `
   --defer-host <publisher.example>
 ```
@@ -107,7 +107,7 @@ It also writes `manual-download.csv`, `retryable-downloads.csv`, and `delivery-m
 Import a manual pair with the immutable selection identity:
 
 ```powershell
-uv run --project $skill arp manual-fetch `
+python "$skill/scripts/arp.py" manual-fetch `
   --selection <discovery-run\selection-manifest.json> --key <selection-id> `
   --output <delivery-root> --watch <download-directory>
 ```

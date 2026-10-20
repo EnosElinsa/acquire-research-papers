@@ -39,7 +39,7 @@ def test_repository_contains_no_runtime_or_delivery_artifacts() -> None:
 
 
 def test_skill_routes_all_three_modes_and_explicit_markdown_policy() -> None:
-    text = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+    text = (ROOT / "skills/acquire-research-papers/SKILL.md").read_text(encoding="utf-8")
     assert "fetch" in text
     assert "discover corpus" in text
     assert "discover research" in text
@@ -50,7 +50,7 @@ def test_skill_routes_all_three_modes_and_explicit_markdown_policy() -> None:
 
 
 def test_skill_documents_two_stage_corpus_contract() -> None:
-    text = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+    text = (ROOT / "skills/acquire-research-papers/SKILL.md").read_text(encoding="utf-8")
     assert "arp discover corpus" in text
     assert "arp acquire corpus" in text
     assert "selected-papers.jsonl" in text
@@ -66,8 +66,8 @@ def test_progressive_disclosure_references_exist() -> None:
         "source-policies.md",
         "credentials-and-cache.md",
     }
-    reference_root = ROOT / "references"
-    assert required == {path.name for path in reference_root.glob("*.md")}
+    reference_root = ROOT / "skills/acquire-research-papers/references"
+    assert required <= {path.name for path in reference_root.glob("*.md")}
 
 
 def test_public_documentation_is_present_and_has_no_placeholders() -> None:
@@ -75,8 +75,8 @@ def test_public_documentation_is_present_and_has_no_placeholders() -> None:
         ROOT / "README.md",
         ROOT / "README.zh-CN.md",
         ROOT / "SECURITY.md",
-        ROOT / "SKILL.md",
-        *(ROOT / "references").glob("*.md"),
+        ROOT / "skills/acquire-research-papers/SKILL.md",
+        *(ROOT / "skills/acquire-research-papers/references").glob("*.md"),
     ]
     assert all(path.is_file() for path in public_files)
     placeholder = re.compile(r"\b(?:TODO|TBD|FIXME|XXX)\b|\[TODO", re.IGNORECASE)

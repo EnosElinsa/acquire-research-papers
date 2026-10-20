@@ -1,0 +1,36 @@
+name: Institution adaptation / 机构接入
+description: A new institution or unsupported login page shape; assisted manual login is the default.
+body:
+  - type: markdown
+    attributes:
+      value: Share only public entry URLs without query strings, hostnames, and non-sensitive form descriptions. Do not submit usernames, passwords, session data, cookies, SAML payloads, or screenshots containing personal information.
+  - type: input
+    id: version
+    attributes:
+      label: Release version and OS / 版本和系统
+    validations:
+      required: true
+  - type: input
+    id: entry
+    attributes:
+      label: Public official entry and hostname / 公开官方入口和主机名
+      description: Remove the entire query string. Omit any URL that contains session information in its path.
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Access mode / 访问方式
+      options:
+        - assisted manual login
+        - direct campus/network access
+        - explicit-contract CARSI form
+    validations:
+      required: true
+  - type: textarea
+    id: stage
+    attributes:
+      label: Observed page shape and failed stage / 页面类型与失败阶段
+      description: For example single-page, two-step, CAS return, consent, QR code, or MFA. Include only redacted doctor states; a successful open-access download does not prove subscription access.
+    validations:
+      required: true

@@ -31,6 +31,12 @@ class AcquiredPair:
     document: SourceDocument
     pdf_bytes: bytes
     bibtex_text: str
+    bibtex_bytes: bytes | None = None
+    bibtex_source: str = "publisher_download"
+
+    @property
+    def citation_bytes(self) -> bytes:
+        return self.bibtex_bytes if self.bibtex_bytes is not None else self.bibtex_text.encode("utf-8")
 
 
 class SourceAdapter(Protocol):

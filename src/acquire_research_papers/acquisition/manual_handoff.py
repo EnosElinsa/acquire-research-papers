@@ -6,7 +6,7 @@ import time
 import unicodedata
 import webbrowser
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Protocol
 from urllib.parse import quote, urlsplit
@@ -17,7 +17,11 @@ from pypdf.errors import PdfReadError
 from acquire_research_papers.acquisition.base import AcquiredPair, SourceDocument
 from acquire_research_papers.acquisition.adapters.elsevier_api import ElsevierSearchRecord
 from acquire_research_papers.artifacts import sha256_file, validate_pdf
-from acquire_research_papers.bibliography import parse_bibtex, verify_bibliography
+from acquire_research_papers.bibliography import (
+    decode_bibtex_bytes,
+    parse_bibtex,
+    verify_bibliography,
+)
 from acquire_research_papers.models import PaperMetadata
 from acquire_research_papers.selection import SelectionRecord
 
@@ -80,6 +84,10 @@ def _normalized_words(value: str) -> str:
     return " ".join(re.findall(r"\w+", normalized))
 
 
+def _compact_words(value: str) -> str:
+    return _normalized_words(value).replace(" ", "")
+
+
 def _compact_doi(value: str) -> str:
     return re.sub(r"\s+", "", unicodedata.normalize("NFKC", value).casefold())
 
@@ -111,7 +119,14 @@ def validate_pdf_identity(path: Path, document: SourceDocument) -> None:
     identity_text = "\n".join((embedded_title, *page_texts))
     doi = document.metadata.doi
     expected_title = _normalized_words(document.metadata.title)
-    title_matches = bool(expected_title and expected_title in _normalized_words(title_text))
+    normalized_title_text = _normalized_words(title_text)
+    title_matches = bool(
+        expected_title
+        and (
+            expected_title in normalized_title_text
+            or _compact_words(document.metadata.title) in _compact_words(title_text)
+        )
+    )
     doi_matches = bool(doi and _compact_doi(doi) in _compact_doi(identity_text))
     if title_matches and (not doi or doi_matches):
         return
@@ -122,6 +137,8 @@ def validate_manual_pair(
     document: SourceDocument,
     pdf_path: Path,
     bibtex_path: Path,
+    *,
+    allow_next_issue_year: bool = False,
 ) -> ManualHandoffSelection:
     source_pdf = pdf_path.resolve()
     source_bibtex = bibtex_path.resolve()
@@ -130,8 +147,24 @@ def validate_manual_pair(
     pdf_before = _file_state(source_pdf)
     bibtex_before = _file_state(source_bibtex)
     validate_pdf_identity(source_pdf, document)
-    bibtex_text = source_bibtex.read_bytes().decode("utf-8")
-    verify_bibliography(document.metadata, parse_bibtex(bibtex_text))
+    bibtex_raw = source_bibtex.read_bytes()
+    bibtex_text, _ = decode_bibtex_bytes(bibtex_raw)
+    if bibtex_raw.startswith(b"\xef\xbb\xbf"):
+        # Preserve the legacy text view too; citation_bytes remains authoritative.
+        bibtex_text = bibtex_raw.decode("utf-8")
+    parsed = parse_bibtex(bibtex_text)
+    delivery_document = document
+    actual_year_text = parsed.fields.get("year", "").strip()
+    if (
+        allow_next_issue_year
+        and actual_year_text.isdigit()
+        and int(actual_year_text) == document.metadata.year + 1
+    ):
+        delivery_document = replace(
+            document,
+            metadata=replace(document.metadata, year=int(actual_year_text)),
+        )
+    verify_bibliography(delivery_document.metadata, parsed)
     pdf_bytes = source_pdf.read_bytes()
     if _file_state(source_pdf) != pdf_before or _file_state(source_bibtex) != bibtex_before:
         raise ManualSourceChanged("manual source changed during identity verification")
@@ -139,9 +172,11 @@ def validate_manual_pair(
         source_pdf=source_pdf,
         source_bibtex=source_bibtex,
         pair=AcquiredPair(
-            document=document,
+            document=delivery_document,
             pdf_bytes=pdf_bytes,
             bibtex_text=bibtex_text,
+            bibtex_bytes=bibtex_raw,
+            bibtex_source="manual_publisher_download",
         ),
     )
 
@@ -203,6 +238,7 @@ class ManualDownloadWatcher:
         baseline: DownloadSnapshot,
         *,
         timeout_seconds: float,
+        allow_next_issue_year: bool = False,
     ) -> ManualHandoffSelection:
         if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
             raise ValueError("manual download timeout must be positive")
@@ -251,7 +287,16 @@ class ManualDownloadWatcher:
                         validate_pdf_identity(path, document)
                     else:
                         raw = path.read_text(encoding="utf-8")
-                        verify_bibliography(document.metadata, parse_bibtex(raw))
+                        parsed = parse_bibtex(raw)
+                        actual_year_text = parsed.fields.get("year", "").strip()
+                        metadata = document.metadata
+                        if (
+                            allow_next_issue_year
+                            and actual_year_text.isdigit()
+                            and int(actual_year_text) == metadata.year + 1
+                        ):
+                            metadata = replace(metadata, year=int(actual_year_text))
+                        verify_bibliography(metadata, parsed)
                     digest = sha256_file(path)
                     validation_cache[path] = (state, digest)
                     (valid_pdfs if kind == "pdf" else valid_bibtex).setdefault(digest, path)
@@ -269,6 +314,12 @@ class ManualDownloadWatcher:
                     next(iter(valid_bibtex.values())),
                 )
                 try:
+                    if allow_next_issue_year:
+                        return validate_manual_pair(
+                            document,
+                            *selected_paths,
+                            allow_next_issue_year=True,
+                        )
                     return validate_manual_pair(document, *selected_paths)
                 except ManualSourceChanged:
                     for path in selected_paths:
@@ -394,7 +445,12 @@ class ManualSelectionWorkflow:
             raise ValueError("manual download timeout must be positive")
         document = document_from_selection(record)
         if pdf is not None and bibtex is not None:
-            return validate_manual_pair(document, pdf, bibtex)
+            return validate_manual_pair(
+                document,
+                pdf,
+                bibtex,
+                allow_next_issue_year=True,
+            )
 
         watch_root = (watch or (Path.home() / "Downloads")).resolve()
         watcher = self.watcher_factory(watch_root)
@@ -416,4 +472,5 @@ class ManualSelectionWorkflow:
             document,
             baseline,
             timeout_seconds=timeout_seconds,
+            allow_next_issue_year=True,
         )

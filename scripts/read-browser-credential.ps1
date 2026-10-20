@@ -1,6 +1,7 @@
 param(
   [Parameter(Mandatory)][string]$ExpectedHost,
-  [string]$SecretPath = ""
+  [string]$SecretPath = "",
+  [string]$ProfileId = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -11,6 +12,12 @@ if ([string]::IsNullOrWhiteSpace($SecretPath)) { $SecretPath = Get-AcquisitionSe
 $password = $null
 try {
   $payload = Import-AcquisitionSecrets -Path $SecretPath
+  if (-not [string]::IsNullOrWhiteSpace($ProfileId)) {
+    $credential = Get-IeeeNamedCredential -ProfileId $ProfileId -ExpectedHost $ExpectedHost -Payload $payload
+    $password = ConvertFrom-AcquisitionSecureString $credential.Password
+    [pscustomobject]@{ username = $credential.UserName; password = $password } | ConvertTo-Json -Compress
+    exit 0
+  }
   if ($payload.Scopes.PSObject.Properties.Name -notcontains "ieee_institution") {
     throw "IEEE institution profile is not configured."
   }

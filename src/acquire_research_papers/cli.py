@@ -127,6 +127,9 @@ _IEEE_ACCESS_PHASES = frozenset(
         "attribute-release-required",
         "institutional-return",
         "download-after-auth",
+        "access-required",
+        "manual-login-timeout",
+        "assisted-login-timeout",
     }
 )
 
@@ -228,12 +231,18 @@ def _production_discovery_enrichers(
     return enrichers
 
 
+def _supports_dpapi() -> bool:
+    return os.name == "nt"
+
+
 def _load_optional_discovery_api_keys(
     *,
     script_root: Path,
     secret_path: Path,
     environment: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
+    if not _supports_dpapi():
+        return {}
     configured = os.environ if environment is None else environment
     overrides = {
         "semantic_scholar": "SEMANTIC_SCHOLAR_API_KEY",
@@ -255,6 +264,10 @@ def _load_optional_discovery_api_keys(
 
 
 def _default_credential_status() -> dict[str, bool]:
+    if not _supports_dpapi():
+        return {"ieee": False, "mineru": False, "elsevier": False,
+                "openalex": bool(os.environ.get("OPENALEX_API_KEY", "").strip()),
+                "semantic_scholar": bool(os.environ.get("SEMANTIC_SCHOLAR_API_KEY", "").strip())}
     paths = AppPaths.default()
     repository_root = Path(__file__).resolve().parents[2]
     script_root = _resolve_script_root(repository_root, Path(__file__).resolve().parent)
@@ -330,6 +343,7 @@ class Application:
         accept_ieee_attribute_release: bool = True,
         discovery_progress: Callable[[str, Mapping[str, object]], None] | None = None,
         load_discovery_api_keys: bool = True,
+        ieee_profile: str | None = None,
     ) -> Application:
         paths = AppPaths.default()
         paths.create_directories()
@@ -339,8 +353,16 @@ class Application:
         ijcai = IjcaiProceedingsAdapter(SafeHttpClient(allowed_hosts={"www.ijcai.org"}))
         acm = AcmDigitalLibraryAdapter.for_production()
         sciencedirect = ScienceDirectAdapter.for_production()
-        ieee = IeeeXploreAdapter(
-            IeeeBridge(
+        from acquire_research_papers import configuration_commands
+        store = configuration_commands.store_for(paths)
+        configuration_commands.migrate_legacy(store, paths)
+        profile = store.get(ieee_profile) if ieee_profile else store.active()
+        if profile:
+            bridge = configuration_commands.bridge_for(profile, paths)
+            bridge.accept_attribute_release = (bridge.accept_attribute_release
+                                               and accept_ieee_attribute_release)
+        else:
+            bridge = IeeeBridge(
                 script=script_root / "ieee-playwright.mjs",
                 profile_root=paths.profiles / "ieee",
                 dependency_root=paths.dependencies,
@@ -348,7 +370,7 @@ class Application:
                 secret_path=paths.secrets / "secrets.clixml",
                 accept_attribute_release=accept_ieee_attribute_release,
             )
-        )
+        ieee = IeeeXploreAdapter(bridge)
         crossref = CrossrefClient(
             client=SafeHttpClient(allowed_hosts={"api.crossref.org"}),
         )
@@ -670,6 +692,14 @@ class Application:
             "source_pdf_filename": selection.source_pdf.name,
             "source_bibtex_filename": selection.source_bibtex.name,
         }
+        if selection.pair.document.metadata.year != record.year:
+            provenance.update(
+                {
+                    "selection_year": record.year,
+                    "selection_publication_date": record.publication_date,
+                    "publisher_bibliographic_year": selection.pair.document.metadata.year,
+                }
+            )
         return self._deliver_pair(
             pair=selection.pair,
             destination=destination,
@@ -770,6 +800,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="arp")
     parser.add_argument("--version", action="store_true")
     subparsers = parser.add_subparsers(dest="command")
+    from acquire_research_papers import configuration_commands, library_cli
+    library_cli.register(subparsers)
+    schema_command = subparsers.add_parser("schema", help="print a bundled public JSON schema")
+    schema_command.add_argument("name")
 
     for config_command in ("config", "credentials"):
         config = subparsers.add_parser(
@@ -777,11 +811,14 @@ def build_parser() -> argparse.ArgumentParser:
             help="show optional capability configuration without revealing secrets",
         )
         config_modes = config.add_subparsers(dest="config_mode", required=True)
-        config_modes.add_parser("status", help="show configured capability booleans")
+        config_status = config_modes.add_parser("status", help="show configured capability booleans")
+        config_status.add_argument("--details", action="store_true")
+        configuration_commands.register(config_modes)
 
     fetch = subparsers.add_parser("fetch", help="fetch an official PDF and BibTeX pair")
     fetch.add_argument("--input", required=True)
     fetch.add_argument("--output", type=Path, required=True)
+    fetch.add_argument("--ieee-profile", help="use a named institution for this operation")
     fetch.add_argument(
         "--accept-ieee-attribute-release",
         action=argparse.BooleanOptionalAction,
@@ -830,6 +867,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     discover = subparsers.add_parser("discover", help="discover a corpus or research evidence")
     discover_modes = discover.add_subparsers(dest="discover_mode", required=True)
+    library_cli.register_author(discover_modes)
     corpus = discover_modes.add_parser("corpus", help="plan a quota-driven paper corpus")
     corpus.add_argument("--spec", type=Path, required=True)
     corpus.add_argument("--output", type=Path, required=True)
@@ -847,6 +885,7 @@ def build_parser() -> argparse.ArgumentParser:
     acquire_corpus = acquire_modes.add_parser("corpus", help="acquire selected paper pairs")
     acquire_corpus.add_argument("--selection", type=Path, required=True)
     acquire_corpus.add_argument("--output", type=Path, required=True)
+    acquire_corpus.add_argument("--ieee-profile")
     acquire_corpus.add_argument(
         "--accept-ieee-attribute-release",
         action=argparse.BooleanOptionalAction,
@@ -863,6 +902,7 @@ def build_parser() -> argparse.ArgumentParser:
         "research", help="acquire and parse a frozen closest-paper selection"
     )
     acquire_research.add_argument("--run", type=Path, required=True)
+    acquire_research.add_argument("--ieee-profile")
     acquire_research.add_argument(
         "--accept-ieee-attribute-release",
         action=argparse.BooleanOptionalAction,
@@ -903,12 +943,43 @@ def run_cli(
     if args.version:
         _emit({"name": "acquire-research-papers", "version": __version__})
         return 0
+    from acquire_research_papers import configuration_commands
+    if args.command == "schema":
+        from acquire_research_papers.schema_resources import schema
+        try:
+            _emit(schema(args.name))
+            return 0
+        except ValueError as exc:
+            _emit({"status": "error", "message": str(exc)})
+            return 78
+    if args.command in {"config", "credentials"} and args.config_mode != "status":
+        try:
+            _emit(configuration_commands.dispatch(args))
+            return 0
+        except (ValueError, OSError, IeeeBridgeError, NetworkTransient,
+                MetadataMismatch, BibMissing, InvalidPdfError) as exc:
+            phase = getattr(exc, "phase", "configuration")
+            retryable = (isinstance(exc, NetworkTransient) or
+                         isinstance(exc, configuration_commands.IeeeDiagnosticError) and exc.retryable)
+            code = ("network_transient" if retryable else
+                    "access_required" if _is_ieee_access_phase(phase) else "configuration_error")
+            payload = {"status": "error", "error_code": code, "phase": phase, "message": str(exc)}
+            if isinstance(exc, configuration_commands.IeeeDiagnosticError):
+                payload["diagnostics"] = exc.diagnostics
+            _emit(payload)
+            return 75 if code == "network_transient" else 69 if code == "access_required" else 78
     if args.command in {"config", "credentials"} and args.config_mode == "status":
         status_provider = credential_status or _default_credential_status
         try:
-            _emit(dict(status_provider()))
+            status = dict(status_provider())
+            store = configuration_commands.store_for(configuration_commands.runtime_paths())
+            if store.active():
+                status["ieee"] = True
+            if args.details:
+                status["ieee_details"] = store.details()
+            _emit(status)
             return 0
-        except CredentialStatusError as exc:
+        except (CredentialStatusError, ValueError, OSError) as exc:
             _emit(
                 {
                     "status": "error",
@@ -917,6 +988,19 @@ def run_cli(
                 }
             )
             return 78
+    if args.command == "library" or (args.command == "discover" and args.discover_mode == "author"):
+        from acquire_research_papers import library_cli
+        try:
+            library_app = application
+            if (args.command == "library" and args.library_mode == "update"
+                    and not args.verify_only and args.watch is None and library_app is None):
+                library_app = Application.default(load_discovery_api_keys=False)
+            result = library_cli.dispatch(args, application=library_app)
+            _emit(result)
+            return 78 if result.get("status") == "failed" else 0
+        except (ValueError, OSError, KeyError, TypeError) as exc:
+            _emit({"status": "error", "error_code": "invalid_input", "message": str(exc)})
+            return 64
     discovery_progress = (
         _stderr_discovery_progress if bool(getattr(args, "progress", False)) else None
     )
@@ -927,8 +1011,9 @@ def run_cli(
             ),
             discovery_progress=discovery_progress,
             load_discovery_api_keys=(args.command == "discover"),
+            ieee_profile=getattr(args, "ieee_profile", None),
         )
-    except ApiKeyLoadError as exc:
+    except (ApiKeyLoadError, ValueError) as exc:
         _emit(
             {
                 "status": "error",

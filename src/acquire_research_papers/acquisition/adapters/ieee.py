@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import sys
+import threading
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -43,6 +45,7 @@ class IeeeBridgeResult:
     bibtex_url: str
     pdf_bytes: bytes
     bibtex: str
+    access: str = "unknown"
 
 
 class IeeeBridgeProtocol(Protocol):
@@ -60,8 +63,9 @@ class IeeeBridge:
         secret_path: Path,
         node_path: str | None = None,
         installer: Path | None = None,
-        timeout_seconds: int = 180,
+        timeout_seconds: int = 900,
         accept_attribute_release: bool = True,
+        access_profile: Path | None = None,
     ) -> None:
         self.script = script.resolve()
         self.profile_root = profile_root.resolve()
@@ -72,6 +76,7 @@ class IeeeBridge:
         self.installer = (installer or self.script.parent / "install-playwright.ps1").resolve()
         self.timeout_seconds = timeout_seconds
         self.accept_attribute_release = accept_attribute_release
+        self.access_profile = access_profile.resolve() if access_profile else None
 
     def command(self, reference: str, *, run_dir: Path) -> list[str]:
         command = [
@@ -93,7 +98,83 @@ class IeeeBridge:
         command.extend(
             ["--accept-attribute-release", str(self.accept_attribute_release).lower()]
         )
+        if self.access_profile:
+            command.extend(["--access-profile", str(self.access_profile)])
         return command
+
+    def _execute(self, command: list[str]) -> subprocess.CompletedProcess[str]:
+        if self.access_profile is None:
+            return subprocess.run(command, check=False, capture_output=True, text=True,
+                                  encoding="utf-8", errors="replace",
+                                  timeout=self.timeout_seconds + 30,
+                                  creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   text=True, encoding="utf-8", errors="replace",
+                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        errors: list[str] = []
+
+        def consume_progress() -> None:
+            assert process.stderr is not None
+            for line in process.stderr:
+                errors.append(line)
+                try:
+                    event = json.loads(line)
+                    if event.get("status") == "requires_user_action":
+                        print(json.dumps({"status": "requires_user_action",
+                                          "phase": event.get("phase", "institution-login"),
+                                          "message": "Complete login in the dedicated browser."}),
+                              file=sys.stderr, flush=True)
+                except (ValueError, AttributeError):
+                    pass
+
+        reader = threading.Thread(target=consume_progress, daemon=True)
+        reader.start()
+        expired = threading.Event()
+
+        def stop() -> None:
+            expired.set()
+            process.kill()
+
+        timer = threading.Timer(self.timeout_seconds + 30, stop)
+        timer.daemon = True
+        timer.start()
+        try:
+            assert process.stdout is not None
+            output = process.stdout.read()
+            process.wait()
+            reader.join(timeout=5)
+            if expired.is_set():
+                raise subprocess.TimeoutExpired(command, self.timeout_seconds + 30)
+            return subprocess.CompletedProcess(command, process.returncode, output, "".join(errors))
+        finally:
+            timer.cancel()
+            if process.poll() is None:
+                process.kill()
+            process.wait()
+            for stream in (process.stdout, process.stderr):
+                if stream:
+                    stream.close()
+
+    def operate(self, operation: str, reference: str | None = None) -> dict:
+        if operation not in {"inspect", "login"}:
+            raise ValueError("unsupported institution operation")
+        self._ensure_dependency()
+        run_dir = self.work_root / f"ieee-{uuid.uuid4().hex}"
+        run_dir.mkdir(parents=True, exist_ok=False)
+        command = self.command(reference or "https://ieeexplore.ieee.org/", run_dir=run_dir)
+        if reference is None:
+            del command[command.index("--reference"):command.index("--reference") + 2]
+        command.extend(["--operation", operation])
+        try:
+            result = self._execute(command)
+        except subprocess.TimeoutExpired:
+            raise IeeeBridgeError("assisted-login-timeout", "Institution login timed out; retry login.") from None
+        if result.returncode:
+            raise self._failure(result.stderr)
+        try:
+            return json.loads(result.stdout)
+        except ValueError:
+            raise IeeeBridgeError("automation-output", "IEEE bridge returned invalid diagnostics") from None
 
     def _dependency_ready(self) -> bool:
         package_path = self.dependency_root / "node_modules" / "playwright-core" / "package.json"
@@ -137,7 +218,11 @@ class IeeeBridge:
                 continue
             phase = str(payload.get("phase") or "automation")
             message = str(payload.get("message") or "IEEE browser automation failed")
-            if phase in {"pdf-request-timeout", "citation-request-timeout"}:
+            if phase in {
+                "pdf-request-timeout",
+                "citation-request-timeout",
+                "paper-http-418",
+            }:
                 return NetworkTransient(message)
             return IeeeBridgeError(phase, message)
         return IeeeBridgeError("automation", "IEEE browser automation failed")
@@ -147,16 +232,7 @@ class IeeeBridge:
         run_dir = self.work_root / f"ieee-{uuid.uuid4().hex}"
         run_dir.mkdir(parents=True, exist_ok=False)
         try:
-            process = subprocess.run(
-                self.command(reference, run_dir=run_dir),
-                check=False,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=self.timeout_seconds + 30,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
+            process = self._execute(self.command(reference, run_dir=run_dir))
         except subprocess.TimeoutExpired as exc:
             raise NetworkTransient("IEEE browser automation timed out.") from exc
         if process.returncode != 0:
@@ -187,6 +263,7 @@ class IeeeBridge:
                 bibtex_url=str(payload["bibtexUrl"]),
                 pdf_bytes=pdf_path.read_bytes(),
                 bibtex=str(payload["bibtex"]),
+                access=str(payload.get("access", "unknown")),
             )
         except (KeyError, TypeError, ValueError, OSError) as exc:
             raise IeeeBridgeError("automation-output", "IEEE bridge result is incomplete") from exc
@@ -243,6 +320,8 @@ class IeeeXploreAdapter:
             document=document,
             pdf_bytes=result.pdf_bytes,
             bibtex_text=result.bibtex,
+            bibtex_bytes=result.bibtex.encode("utf-8"),
+            bibtex_source="publisher_export_api",
         )
 
     def resolve(self, landing_url: str) -> SourceDocument:

@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Help and troubleshooting / 使用帮助
+    url: https://github.com/EnosElinsa/acquire-research-papers/blob/main/SUPPORT.md
+    about: Installation, institution access, library plans, and safe diagnostics.
+  - name: Private security report / 私密安全报告
+    url: https://github.com/EnosElinsa/acquire-research-papers/security/advisories/new
+    about: Report credential exposure or security issues privately; never paste secrets in an issue.

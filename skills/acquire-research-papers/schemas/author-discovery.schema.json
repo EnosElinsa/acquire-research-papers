@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AuthorDiscoveryResult",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "spec": {
+      "type": "object"
+    },
+    "identity": {
+      "type": "object"
+    },
+    "papers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "doi",
+          "sources",
+          "identity_status",
+          "date_basis",
+          "local_status"
+        ],
+        "properties": {
+          "doi": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "identity_status": {
+            "enum": [
+              "ambiguous",
+              "supported",
+              "linked_id"
+            ]
+          },
+          "issue_date": {
+            "type": "string"
+          },
+          "online_date": {
+            "type": "string"
+          },
+          "publication_stage": {
+            "type": "string"
+          },
+          "version_of": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "date_basis": {
+            "type": "string"
+          },
+          "local_status": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "groups": {
+      "type": "object"
+    },
+    "coverage": {
+      "type": "object",
+      "required": [
+        "complete",
+        "sources"
+      ],
+      "properties": {
+        "complete": {
+          "const": false
+        },
+        "sources": {
+          "type": "object"
+        }
+      }
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  },
+  "required": [
+    "schema_version",
+    "spec",
+    "identity",
+    "papers",
+    "coverage",
+    "sha256"
+  ],
+  "additionalProperties": true,
+  "$id": "https://github.com/EnosElinsa/acquire-research-papers/schemas/author-discovery.schema.json"
+}

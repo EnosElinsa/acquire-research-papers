@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "LibraryPlan",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "mode": {
+      "enum": [
+        "organize",
+        "import",
+        "update"
+      ]
+    },
+    "source_root": {
+      "type": "string"
+    },
+    "target_root": {
+      "type": "string"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "operation",
+          "source",
+          "target",
+          "sha256"
+        ],
+        "properties": {
+          "operation": {
+            "enum": [
+              "copy",
+              "move",
+              "replace"
+            ]
+          },
+          "source": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "target_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "doi": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "provenance": {
+            "type": "object"
+          },
+          "identity_evidence": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "citation_source": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "mode",
+    "source_root",
+    "target_root",
+    "actions",
+    "sha256"
+  ],
+  "additionalProperties": true,
+  "$id": "https://github.com/EnosElinsa/acquire-research-papers/schemas/library-plan.schema.json"
+}

@@ -24,6 +24,7 @@ $profile = $payload.Scopes.ieee_institution.Profile
   passwordLabel = $profile.PasswordLabel
   loginButtonName = $profile.LoginButtonName
   resourceAccessUrl = $profile.ResourceAccessUrl
+  ieeeWayfUrl = $profile.IeeeWayfUrl
   attributeReleaseTitle = $profile.AttributeReleaseTitle
   attributeReleaseAcceptControlName = $profile.AttributeReleaseAcceptControlName
   attributeReleaseRejectControlName = $profile.AttributeReleaseRejectControlName

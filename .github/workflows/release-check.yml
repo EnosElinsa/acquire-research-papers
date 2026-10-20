@@ -1,0 +1,63 @@
+name: verify public release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Release tag or branch to install
+        default: main
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  public-install:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      RELEASE_REF: ${{ github.event.release.tag_name || inputs.ref || 'main' }}
+      ARP_RUNTIME_ROOT: ${{ runner.temp }}/arp-public-runtime
+      ARP_DATA_ROOT: ${{ runner.temp }}/arp-public-data
+    steps:
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+      - name: Install uv
+        run: python -m pip install uv
+      - name: Install published skill
+        shell: python
+        run: |
+          import os, shutil, subprocess
+          source = "EnosElinsa/acquire-research-papers@" + os.environ["RELEASE_REF"]
+          subprocess.run([shutil.which("npx"), "--yes", "skills", "add", source,
+                          "--skill", "acquire-research-papers", "-a", "codex", "-g", "-y"], check=True)
+      - name: Bootstrap the actual release wheel and run offline commands
+        shell: python
+        run: |
+          import json, os, pathlib, subprocess, sys
+          assert not os.environ.get("ARP_LOCAL_WHEEL")
+          skill = pathlib.Path.home() / ".agents/skills/acquire-research-papers"
+          command = [sys.executable, str(skill / "scripts/arp.py")]
+          def run(*arguments):
+              result = subprocess.run(command + list(arguments), check=True, capture_output=True, text=True)
+              return json.loads(result.stdout)
+          manifest = json.loads((skill / "runtime.json").read_text())
+          assert run("--version")["version"] == manifest["version"]
+          assert run("schema", "institution-profile.schema.json")["type"] == "object"
+          root = pathlib.Path(os.environ["ARP_DATA_ROOT"])
+          library = root / "empty-library"
+          library.mkdir(parents=True)
+          metadata = root / "metadata.json"
+          metadata.write_text("{}")
+          report = run("library", "audit", str(library), "--metadata", str(metadata),
+                       "--output", str(root / "audit"))
+          assert report["items"] == []

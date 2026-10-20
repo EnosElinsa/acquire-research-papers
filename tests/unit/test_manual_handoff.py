@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from acquire_research_papers.acquisition.base import SourceDocument
+from acquire_research_papers.bibliography import MetadataMismatch
 from acquire_research_papers.models import PaperMetadata
 
 try:
@@ -138,6 +139,75 @@ def test_direct_pair_validates_pdf_and_raw_bibtex(tmp_path: Path) -> None:
     assert selected.pair.bibtex_text == _bibtex()
 
 
+def test_selection_pair_accepts_next_issue_year_after_full_identity_check(
+    tmp_path: Path,
+) -> None:
+    pdf, bib = _write_pair(tmp_path, "online-first")
+    bib.write_text(_bibtex().replace("year={2026}", "year={2027}"), encoding="utf-8")
+    document = SourceDocument(
+        metadata=PaperMetadata(
+            title="Manual Verified Paper",
+            authors=("Lovelace",),
+            authors_complete=False,
+            year=2026,
+            venue="Journal of Manual Acquisition",
+            doi="10.1016/j.manual.2026.1",
+            publisher="Publisher",
+            landing_url="https://publisher.example/article/1",
+        ),
+        pdf_url="https://publisher.example/article/1.pdf",
+        bibtex_url="https://publisher.example/article/1.bib",
+        allowed_hosts=frozenset({"publisher.example"}),
+    )
+
+    selected = _module().validate_manual_pair(
+        document,
+        pdf,
+        bib,
+        allow_next_issue_year=True,
+    )
+
+    assert selected.pair.document.metadata.year == 2027
+
+
+@pytest.mark.parametrize("actual_year", [2025, 2028])
+def test_selection_pair_rejects_nonconsecutive_issue_year(
+    tmp_path: Path,
+    actual_year: int,
+) -> None:
+    pdf, bib = _write_pair(tmp_path, f"wrong-year-{actual_year}")
+    bib.write_text(
+        _bibtex().replace("year={2026}", f"year={{{actual_year}}}"),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(MetadataMismatch, match="year mismatch"):
+        _module().validate_manual_pair(
+            _document(),
+            pdf,
+            bib,
+            allow_next_issue_year=True,
+        )
+
+
+def test_selection_pair_does_not_use_year_tolerance_to_hide_title_mismatch(
+    tmp_path: Path,
+) -> None:
+    pdf, bib = _write_pair(tmp_path, "wrong-title-next-year")
+    bib.write_text(
+        _bibtex(title="Different Published Paper").replace("year={2026}", "year={2027}"),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(MetadataMismatch, match="title mismatch"):
+        _module().validate_manual_pair(
+            _document(),
+            pdf,
+            bib,
+            allow_next_issue_year=True,
+        )
+
+
 def test_direct_pair_preserves_utf8_bom_and_crlf_bibtex_bytes(tmp_path: Path) -> None:
     pdf, bib = _write_pair(tmp_path, "raw-bytes")
     raw = ("\ufeff" + _bibtex().replace(",", ",\r\n")).encode("utf-8")
@@ -177,6 +247,20 @@ def test_pdf_identity_requires_both_target_title_and_doi(
 
     with pytest.raises(module.PdfIdentityMismatch):
         module.validate_manual_pair(_document(), pdf, bib)
+
+
+def test_pdf_identity_accepts_pdf_text_with_collapsed_title_whitespace(
+    tmp_path: Path,
+) -> None:
+    pdf, bib = _write_pair(
+        tmp_path,
+        "collapsed-title",
+        pdf_text="ManualVerifiedPaper DOI 10.1016/j.manual.2026.1",
+    )
+
+    selected = _module().validate_manual_pair(_document(), pdf, bib)
+
+    assert selected.source_pdf == pdf.resolve()
 
 
 def test_direct_pair_rejects_source_changed_after_identity_validation(

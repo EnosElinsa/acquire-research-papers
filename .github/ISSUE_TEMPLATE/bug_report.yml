@@ -1,0 +1,31 @@
+name: Bug report / 问题报告
+description: A reproducible failure in installation, discovery, acquisition, or library management.
+body:
+  - type: markdown
+    attributes:
+      value: Please use synthetic files and redact private paths. Never upload credentials, browser state, cookies, signed URLs, SAML payloads, or your paper collection. Security issues belong in private reporting.
+  - type: input
+    id: version
+    attributes:
+      label: Version, OS, and installation method / 版本、系统、安装方式
+      description: Include Python/uv/Node versions when relevant, and whether you used npx, the ZIP, or a developer checkout.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Minimal reproduction / 最小复现
+      description: Command shape and synthetic inputs; replace private paths and remove URL queries.
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and actual behavior / 预期与实际行为
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Redacted diagnostics / 脱敏诊断
+      description: Error code, phase, exact public hostname, and relevant non-secret states. Inspect every line before posting.

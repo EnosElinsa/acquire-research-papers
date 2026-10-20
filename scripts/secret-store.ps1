@@ -72,6 +72,41 @@ function Get-AcquisitionProfileValue([object]$Profile, [string]$Name) {
   return [string]$property.Value
 }
 
+function Set-IeeeNamedCredential(
+  [string]$ProfileId,
+  [string]$CredentialHost,
+  [Management.Automation.PSCredential]$Credential,
+  [string]$Path = (Get-AcquisitionSecretPath)
+) {
+  if ($ProfileId -cnotmatch '^[a-z0-9][a-z0-9-]{0,62}$') { throw 'Invalid institutional profile ID.' }
+  if ($CredentialHost -match '[/:*]' -or $CredentialHost.EndsWith('.') -or
+      [Uri]::CheckHostName($CredentialHost) -ne [UriHostNameType]::Dns -or
+      -not $CredentialHost.Contains('.')) { throw 'An exact credential hostname is required.' }
+  if ($null -eq $Credential -or [string]::IsNullOrWhiteSpace($Credential.UserName)) { throw 'Credential is missing.' }
+  $payload = Get-OrCreateAcquisitionSecretPayload -Path $Path
+  if ($payload.Scopes.PSObject.Properties.Name -notcontains 'ieee_profiles') {
+    $payload.Scopes | Add-Member -NotePropertyName 'ieee_profiles' -NotePropertyValue ([pscustomobject]@{})
+  }
+  $scope = [pscustomobject]@{ CredentialHost = $CredentialHost.ToLowerInvariant(); Credential = $Credential }
+  $profiles = $payload.Scopes.ieee_profiles
+  if ($profiles.PSObject.Properties.Name -contains $ProfileId) { $profiles.$ProfileId = $scope }
+  else { $profiles | Add-Member -NotePropertyName $ProfileId -NotePropertyValue $scope }
+  Save-AcquisitionSecretPayload -Payload $payload -Path $Path
+}
+
+function Get-IeeeNamedCredential([string]$ProfileId, [string]$ExpectedHost, [object]$Payload) {
+  if ($ProfileId -cnotmatch '^[a-z0-9][a-z0-9-]{0,62}$' -or
+      $Payload.Scopes.PSObject.Properties.Name -notcontains 'ieee_profiles' -or
+      $Payload.Scopes.ieee_profiles.PSObject.Properties.Name -notcontains $ProfileId) {
+    throw 'Named institutional credential is not configured.'
+  }
+  $scope = $Payload.Scopes.ieee_profiles.$ProfileId
+  if ($ExpectedHost.EndsWith('.') -or $ExpectedHost.ToLowerInvariant() -ne $scope.CredentialHost) {
+    throw 'Credential release denied for unapproved host.'
+  }
+  return $scope.Credential
+}
+
 function ConvertTo-IeeeInstitutionProfile([object]$Institution) {
   $required = @(
     "Organization",
@@ -122,6 +157,19 @@ function ConvertTo-IeeeInstitutionProfile([object]$Institution) {
     }
     $resourceAccessUrl = $resourceUri.AbsoluteUri
   }
+  $ieeeWayfUrl = (Get-AcquisitionProfileValue -Profile $Institution -Name "IeeeWayfUrl").Trim()
+  if (-not [string]::IsNullOrWhiteSpace($ieeeWayfUrl)) {
+    $wayfUri = $null
+    if (-not [Uri]::TryCreate($ieeeWayfUrl, [UriKind]::Absolute, [ref]$wayfUri) -or
+        $wayfUri.Scheme -ne "https" -or
+        $wayfUri.DnsSafeHost -ne "ieeexplore.ieee.org" -or
+        -not $wayfUri.IsDefaultPort -or
+        -not [string]::IsNullOrWhiteSpace($wayfUri.UserInfo) -or
+        -not [string]::IsNullOrWhiteSpace($wayfUri.Fragment)) {
+      throw "IEEE WAYF URL must use the exact ieeexplore.ieee.org HTTPS host without credentials, a custom port, or a fragment."
+    }
+    $ieeeWayfUrl = $wayfUri.AbsoluteUri
+  }
   $attributeReleaseTitle = (
     Get-AcquisitionProfileValue -Profile $Institution -Name "AttributeReleaseTitle"
   ).Trim()
@@ -156,6 +204,7 @@ function ConvertTo-IeeeInstitutionProfile([object]$Institution) {
     PasswordLabel = $values.PasswordLabel
     LoginButtonName = $values.LoginButtonName
     ResourceAccessUrl = $resourceAccessUrl
+    IeeeWayfUrl = $ieeeWayfUrl
     AttributeReleaseTitle = $attributeReleaseTitle
     AttributeReleaseAcceptControlName = $attributeReleaseAccept
     AttributeReleaseRejectControlName = $attributeReleaseReject
@@ -194,6 +243,7 @@ function Set-IeeeInstitutionCredential(
 
 function Set-IeeeInstitutionRoute(
   [string]$ResourceAccessUrl,
+  [AllowNull()][string]$IeeeWayfUrl = $null,
   [string]$AttributeReleaseTitle = "",
   [string]$AttributeReleaseAcceptControlName = "",
   [string]$AttributeReleaseRejectControlName = "",
@@ -216,6 +266,7 @@ function Set-IeeeInstitutionRoute(
     PasswordLabel = $existing.PasswordLabel
     LoginButtonName = $existing.LoginButtonName
     ResourceAccessUrl = $ResourceAccessUrl
+    IeeeWayfUrl = if ([string]::IsNullOrWhiteSpace($IeeeWayfUrl)) { $existing.IeeeWayfUrl } else { $IeeeWayfUrl }
     AttributeReleaseTitle = $AttributeReleaseTitle
     AttributeReleaseAcceptControlName = $AttributeReleaseAcceptControlName
     AttributeReleaseRejectControlName = $AttributeReleaseRejectControlName
@@ -249,6 +300,7 @@ function Set-IeeeInstitutionEntityId(
     PasswordLabel = $existing.PasswordLabel
     LoginButtonName = $existing.LoginButtonName
     ResourceAccessUrl = $existing.ResourceAccessUrl
+    IeeeWayfUrl = $existing.IeeeWayfUrl
     AttributeReleaseTitle = $existing.AttributeReleaseTitle
     AttributeReleaseAcceptControlName = $existing.AttributeReleaseAcceptControlName
     AttributeReleaseRejectControlName = $existing.AttributeReleaseRejectControlName

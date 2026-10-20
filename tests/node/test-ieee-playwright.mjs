@@ -31,6 +31,7 @@ const INSTITUTION_PROFILE = Object.freeze({
   attributeReleaseAcceptControlName: "_eventId_proceed",
   attributeReleaseRejectControlName: "_eventId_AttributeReleaseRejected",
 });
+const IEEE_WAYF_URL = "https://ieeexplore.ieee.org/servlet/wayf.jsp?entityId=https://login.example.edu/idp/shibboleth&url=https%3A%2F%2Fieeexplore.ieee.org%2FXplore%2Fhome.jsp";
 
 class FakeResponse {
   constructor(body, { status = 200, contentType = "application/pdf" } = {}) {
@@ -102,6 +103,14 @@ class FakeLocator {
       if (this.key === "attribute-reject" && this.page.attributeRejectMissing) return 0;
       return this.page.attributeReleaseReady && this.page.attributeControlsReady ? 1 : 0;
     }
+    if (this.key === "attribute-consent-checkbox") {
+      return this.page.attributeReleaseReady
+        && this.page.attributeConsentRequired
+        && (!this.page.attributeReleaseTwoStages || this.page.attributeReleaseStage === 0)
+        ? 1
+        : 0;
+    }
+    if (this.key === "school" && this.page.delayedCarsiForm && !this.page.carsiFormReady) return 0;
     if (this.key === "school" && this.page.requireCurrentCarsiLoginUrl) {
       return this.page.currentUrl === "https://ds.carsi.edu.cn/login/index.html" ? 1 : 0;
     }
@@ -110,6 +119,7 @@ class FakeLocator {
   }
 
   async waitFor() {
+    if (this.key === "school" && this.page.delayedCarsiForm) this.page.carsiFormReady = true;
     if (this.key === "institution") this.page.institutionReady = true;
     if (this.key === "username" && this.page.delayedIdpForm) this.page.idpFormReady = true;
     if (this.key === "attribute-accept" || this.key === "attribute-reject") {
@@ -118,6 +128,7 @@ class FakeLocator {
   }
 
   async getAttribute(name) {
+    if (this.key === "attribute-consent-checkbox" && name === "id") return "accept";
     if (this.key === "pdf-primary" && name === "href") {
       return this.page.pdfStampHref;
     }
@@ -175,6 +186,14 @@ class FakeLocator {
         this.page.currentUrl = "https://ds.carsi.edu.cn/ds/index.html";
       }
     } else if (this.key === "attribute-accept") {
+      if (this.page.attributeReleaseTwoStages && this.page.attributeReleaseStage === 0) {
+        this.page.attributeReleaseStage = 1;
+        this.page.attributeConsentChecked = false;
+        this.page.attributeReleaseReady = true;
+        this.page.attributeReleaseAccepted = false;
+        this.page.currentUrl = `https://${this.page.redirectHost}/idp/profile/SAML2/Redirect/SSO?execution=e1s4`;
+        return;
+      }
       this.page.attributeReleaseReady = false;
       this.page.attributeReleaseAccepted = true;
       this.page.authenticated = true;
@@ -189,8 +208,11 @@ class FakeLocator {
         );
     } else if (this.key === "attribute-reject") {
       this.page.attributeReleaseRejected = true;
+    } else if (this.key === "attribute-consent-label") {
+      this.page.attributeConsentChecked = true;
     }
   }
+
 }
 
 class FakePage {
@@ -210,6 +232,8 @@ class FakePage {
     attributeRejectMissing = false,
     attributeReleaseReturnsCarsiOnce = false,
     delayedAttributeReleaseControls = false,
+    attributeConsentRequired = false,
+    attributeReleaseTwoStages = false,
     requiresAttributeRelease = false,
     resourceGatewayReturnsIeee = true,
     resourceGatewayRequiresLogin = true,
@@ -222,6 +246,7 @@ class FakePage {
     paperLandingUrl = "",
     titleResultHref = "/document/11014597",
     xplMetadata = {},
+    paperErrorCode = "",
   } = {}) {
     this.currentUrl = "about:blank";
     this.redirectHost = redirectHost;
@@ -242,6 +267,10 @@ class FakePage {
     this.attributeRejectMissing = attributeRejectMissing;
     this.attributeReleaseReturnsCarsiOnce = attributeReleaseReturnsCarsiOnce;
     this.attributeControlsReady = !delayedAttributeReleaseControls;
+    this.attributeConsentRequired = attributeConsentRequired;
+    this.attributeConsentChecked = false;
+    this.attributeReleaseTwoStages = attributeReleaseTwoStages;
+    this.attributeReleaseStage = 0;
     this.attributeReleaseOrigin = "";
     this.requiresAttributeRelease = requiresAttributeRelease;
     this.resourceGatewayReturnsIeee = resourceGatewayReturnsIeee;
@@ -259,6 +288,7 @@ class FakePage {
     this.attributeReleaseAccepted = false;
     this.attributeReleaseRejected = false;
     this.xplMetadata = xplMetadata;
+    this.paperErrorCode = paperErrorCode;
     this.actions = [];
     this.navigations = [];
     this.authenticated = false;
@@ -332,15 +362,18 @@ class FakePage {
     }
     return {
       citation: {
-        title: "A Synthetic IEEE Paper",
-        authors: ["Ada Lovelace", "Alan Turing"],
-        date: "2026",
-        venue: "IEEE Transactions on Testing",
-        doi: "10.1109/TEST.2026.1",
+        title: this.paperErrorCode ? "" : "A Synthetic IEEE Paper",
+        authors: this.paperErrorCode ? [] : ["Ada Lovelace", "Alan Turing"],
+        date: this.paperErrorCode ? "" : "2026",
+        venue: this.paperErrorCode ? "" : "IEEE Transactions on Testing",
+        doi: this.paperErrorCode ? "" : "10.1109/TEST.2026.1",
         articleNumber: "11014597",
       },
       xpl: this.xplMetadata,
-      h1Title: "A Synthetic IEEE Paper",
+      h1Title: this.paperErrorCode
+        ? "IEEE Xplore - Unable to Load Page"
+        : "A Synthetic IEEE Paper",
+      pageErrorCode: this.paperErrorCode,
       canonicalUrl: this.canonicalUrl,
       locationUrl: this.currentUrl,
       userAgent: "Synthetic Chrome",
@@ -367,10 +400,18 @@ class FakePage {
     if (selector === `button[name="${INSTITUTION_PROFILE.attributeReleaseRejectControlName}"]`) {
       return new FakeLocator(this, "attribute-reject");
     }
+    if (selector === 'input[type="checkbox"]') {
+      return new FakeLocator(this, "attribute-consent-checkbox");
+    }
+    if (selector === 'label[for="accept"]') {
+      return new FakeLocator(this, "attribute-consent-label");
+    }
     throw new Error(`Unexpected selector: ${selector}`);
   }
 
   getByPlaceholder(name) {
+    if (name === INSTITUTION_PROFILE.usernameLabel) return new FakeLocator(this, "username");
+    if (name === INSTITUTION_PROFILE.passwordLabel) return new FakeLocator(this, "password");
     assert.equal(name, INSTITUTION_PROFILE.carsiSchoolPlaceholder);
     return new FakeLocator(this, "school");
   }
@@ -408,6 +449,14 @@ test("uses a configured institution profile and exact credential host", () => {
   assert.equal(subject.classifyPaperReference("https://ieeexplore.ieee.org/document/11014597").kind, "url");
   assert.equal(subject.classifyPaperReference("10.1109/TAP.2025.3571069").kind, "doi");
   assert.deepEqual(subject.normalizeInstitutionProfile(INSTITUTION_PROFILE), INSTITUTION_PROFILE);
+  assert.equal(
+    subject.normalizeInstitutionProfile({ ...INSTITUTION_PROFILE, ieeeWayfUrl: IEEE_WAYF_URL }).ieeeWayfUrl,
+    IEEE_WAYF_URL,
+  );
+  assert.throws(
+    () => subject.normalizeInstitutionProfile({ ...INSTITUTION_PROFILE, ieeeWayfUrl: "https://example.org/wayf" }),
+    /exact ieeexplore\.ieee\.org HTTPS host/,
+  );
   assert.equal(subject.isApprovedCredentialHost("LOGIN.EXAMPLE.EDU", INSTITUTION_PROFILE), true);
   assert.equal(subject.isApprovedCredentialHost("login.example.edu.evil.example", INSTITUTION_PROFILE), false);
   assert.equal(subject.isApprovedCredentialHost("login.example.edu.", INSTITUTION_PROFILE), false);
@@ -452,6 +501,13 @@ test("sanitizes URL query values at the automation error boundary", () => {
   for (const key of ["RelayState", "SAMLRequest", "Signature", "OSSAccessKeyId", "token"]) {
     assert.equal(serialized.includes(`${key}=[redacted]`), true);
   }
+});
+
+test("does not expose request call logs from an unexpected transport exception", () => {
+  const payload=subject.toErrorPayload(new Error("apiRequestContext.get: read ECONNRESET\nCall log:\n - cookie: SESSION_SECRET\n - set-cookie: RESPONSE_SECRET"));
+  assert.equal(payload.phase,"automation");
+  assert.equal(payload.message,"IEEE browser automation failed.");
+  assert.ok(!JSON.stringify(payload).includes("SECRET"));
 });
 
 test("keeps only sanitized stage and host evidence for institution adaptation", () => {
@@ -665,6 +721,157 @@ test("authenticates once and retries PDF without releasing credentials to lookal
   }
 });
 
+for (const controlKind of ["link", "text"]) {
+test(`authenticates with exact placeholders and a ${controlKind} submit control`, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "arp-ieee-placeholder-auth-"));
+  const page = new FakePage();
+  const absent = { count: async () => 0, waitFor: async () => {} };
+  page.getByLabel = () => absent;
+  const originalPlaceholder = page.getByPlaceholder.bind(page);
+  page.getByPlaceholder = (name) => {
+    if (name === "Account") return new FakeLocator(page, "username");
+    if (name === "Passcode") return new FakeLocator(page, "password");
+    return originalPlaceholder(name);
+  };
+  const originalRole = page.getByRole.bind(page);
+  page.getByRole = (role, options = {}) => {
+    if (options.name === "Sign in") {
+      if (role === "button") return absent;
+      if (role === "link") return controlKind === "link" ? new FakeLocator(page, "institution-login") : absent;
+    }
+    return originalRole(role, options);
+  };
+  page.getByText = (name, options) => {
+    assert.equal(name, "Sign in");
+    assert.equal(options.exact, true);
+    return new FakeLocator(page, "institution-login");
+  };
+  try {
+    const result = await subject.retrieveIeeePaper({
+      page,
+      browserContext: fakeContext({ pdfResponses: [
+        new FakeResponse("denied", { status: 403 }),
+        new FakeResponse("%PDF-1.7\nauthorized\n%%EOF\n"),
+      ] }),
+      reference: "https://ieeexplore.ieee.org/document/11014597",
+      workDir: root,
+      institutionProfile: INSTITUTION_PROFILE,
+      credentialReader: async (host) => {
+        assert.equal(host, "login.example.edu");
+        return { username: "synthetic-user", password: "synthetic-password" };
+      },
+    });
+    assert.equal(result.status, "downloaded");
+    assert.equal(page.username, "synthetic-user");
+    assert.equal(page.password, "synthetic-password");
+    assert.equal(page.actions.filter(([action, key]) => action === "click" && key === "institution-login").length, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+}
+
+test("waits for the configured IdP entry to redirect to the exact credential host", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "arp-ieee-idp-cas-"));
+  const page = new FakePage();
+  const profile = { ...INSTITUTION_PROFILE, carsiEntityId: "https://identity.example.edu/idp/shibboleth" };
+  const originalRole = page.getByRole.bind(page);
+  page.getByRole = (role, options = {}) => {
+    const locator = originalRole(role, options);
+    if (role === "button" && options.name === "Continue") {
+      const originalClick = locator.click.bind(locator);
+      locator.click = async () => {
+        await originalClick();
+        page.currentUrl = "https://identity.example.edu/idp/profile/SAML2/Redirect/SSO";
+      };
+    }
+    return locator;
+  };
+  const originalWait = page.waitForURL.bind(page);
+  page.waitForURL = async (predicate) => {
+    if (page.currentUrl.startsWith("https://identity.example.edu/") && !predicate(new URL(page.currentUrl))) {
+      page.currentUrl = "https://login.example.edu/login";
+      return;
+    }
+    return originalWait();
+  };
+  try {
+    const result = await subject.retrieveIeeePaper({
+      page,
+      browserContext: fakeContext({ pdfResponses: [
+        new FakeResponse("denied", { status: 403 }),
+        new FakeResponse("%PDF-1.7\nauthorized\n%%EOF\n"),
+      ] }),
+      reference: "https://ieeexplore.ieee.org/document/11014597",
+      workDir: root,
+      institutionProfile: profile,
+      credentialReader: async (host) => {
+        assert.equal(host, "login.example.edu");
+        assert.equal(new URL(page.url()).hostname, "login.example.edu");
+        return { username: "synthetic-user", password: "synthetic-password" };
+      },
+    });
+    assert.equal(result.status, "downloaded");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("waits for the separate IdP return after CAS before revisiting the resource", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "arp-ieee-idp-return-"));
+  const page = new FakePage();
+  const profile = {...INSTITUTION_PROFILE,carsiEntityId:"https://identity.example.edu/idp/shibboleth"};
+  const originalRole = page.getByRole.bind(page);
+  page.getByRole = (role,options={})=>{
+    const loc=originalRole(role,options);
+    if(role==="button" && options.name===profile.loginButtonName){
+      const click=loc.click.bind(loc);
+      loc.click=async()=>{await click();page.currentUrl="https://identity.example.edu/idp/profile/SAML2/Redirect/SSO";};
+    }
+    return loc;
+  };
+  const originalWait=page.waitForURL.bind(page);
+  page.waitForURL=async(predicate)=>{
+    if(page.currentUrl.startsWith("https://identity.example.edu/") && !predicate(new URL(page.currentUrl))){
+      page.currentUrl="https://ds.carsi.edu.cn/resource/resource.php";
+      return;
+    }
+    return originalWait();
+  };
+  const originalGoto=page.goto.bind(page);
+  page.goto=async(...args)=>{
+    assert.ok(!page.currentUrl.startsWith("https://identity.example.edu/"),"must let the IdP finish its return");
+    return originalGoto(...args);
+  };
+  try {
+    const result=await subject.retrieveIeeePaper({page,browserContext:fakeContext({pdfResponses:[
+      new FakeResponse("denied",{status:403}),new FakeResponse("%PDF-1.7\nauthorized\n%%EOF\n"),
+    ]}),reference:"https://ieeexplore.ieee.org/document/11014597",workDir:root,institutionProfile:profile,
+    credentialReader:async()=>({username:"synthetic-user",password:"synthetic-password"})});
+    assert.equal(result.status,"downloaded");
+  } finally {await rm(root,{recursive:true,force:true});}
+});
+
+test("allows the configured IdP to finish the resource gateway redirect to IEEE", async () => {
+  const root=await mkdtemp(path.join(os.tmpdir(),"arp-ieee-gateway-idp-"));
+  const page=new FakePage();
+  const profile={...INSTITUTION_PROFILE,carsiEntityId:"https://identity.example.edu/idp/shibboleth"};
+  const goto=page.goto.bind(page);
+  page.goto=async(...args)=>{await goto(...args);if(args[0]===profile.resourceAccessUrl && page.authenticated) page.currentUrl="https://identity.example.edu/idp/profile/SAML2/Redirect/SSO";};
+  const wait=page.waitForURL.bind(page);
+  page.waitForURL=async(predicate)=>{
+    if(page.currentUrl.startsWith("https://identity.example.edu/")&&!predicate(new URL(page.currentUrl))){page.currentUrl="https://ieeexplore.ieee.org/Xplore/home.jsp";return;}
+    return wait();
+  };
+  try {
+    const result=await subject.retrieveIeeePaper({page,browserContext:fakeContext({pdfResponses:[
+      new FakeResponse("denied",{status:403}),new FakeResponse("%PDF-1.7\nauthorized\n%%EOF\n"),
+    ]}),reference:"https://ieeexplore.ieee.org/document/11014597",workDir:root,institutionProfile:profile,
+    credentialReader:async()=>({username:"synthetic-user",password:"synthetic-password"})});
+    assert.equal(result.status,"downloaded");
+  } finally {await rm(root,{recursive:true,force:true});}
+});
+
 test("retries one transient CARSI navigation before reading credentials", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "arp-ieee-carsi-retry-"));
   let reads = 0;
@@ -719,6 +926,27 @@ test("opens the current CARSI login endpoint before resolving institution contro
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("waits for the CARSI institution search to render before skipping discovery", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "arp-ieee-delayed-carsi-"));
+  try {
+    const page = new FakePage();
+    page.delayedCarsiForm = true;
+    const result = await subject.retrieveIeeePaper({
+      page,
+      browserContext: fakeContext({pdfResponses: [
+        new FakeResponse("denied", {status:403, contentType:"text/html"}),
+        new FakeResponse("%PDF-1.7\nauthorized\n%%EOF\n"),
+      ]}),
+      reference:"https://ieeexplore.ieee.org/document/11014597",
+      workDir:root,
+      institutionProfile:INSTITUTION_PROFILE,
+      credentialReader:async()=>({username:"synthetic-user",password:"synthetic-password"}),
+    });
+    assert.equal(result.status, "downloaded");
+    assert.equal(page.carsiAttempts, 1);
+  } finally {await rm(root,{recursive:true,force:true});}
 });
 
 test("an existing IdP session reaches the configured resource without reading credentials", async () => {
@@ -903,6 +1131,37 @@ test("automatic attribute release clicks only accept", async () => {
   }
 });
 
+test("checks a required IdP consent box before submitting attribute release", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "arp-ieee-consent-checkbox-"));
+  try {
+    const page = new FakePage({
+      requiresAttributeRelease: true,
+      attributeConsentRequired: true,
+    });
+    const result = await subject.retrieveIeeePaper({
+      page,
+      browserContext: fakeContext({
+        pdfResponses: [
+          new FakeResponse("denied", { status: 403, contentType: "text/html" }),
+          new FakeResponse("%PDF-1.7\nconsent checkbox\n%%EOF\n"),
+        ],
+      }),
+      reference: "https://ieeexplore.ieee.org/document/11014597",
+      workDir: root,
+      institutionProfile: INSTITUTION_PROFILE,
+      credentialReader: async () => ({ username: "user", password: "password" }),
+    });
+    assert.equal(result.status, "downloaded");
+    assert.equal(page.attributeConsentChecked, true);
+    assert.deepEqual(
+      page.actions.filter((action) => action[1].startsWith("attribute-")),
+      [["click", "attribute-consent-label"], ["click", "attribute-accept"]],
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("supports an IdP continuation page with one configured proceed control", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "arp-ieee-single-proceed-"));
   try {
@@ -930,6 +1189,31 @@ test("supports an IdP continuation page with one configured proceed control", as
     assert.equal(result.status, "downloaded");
     assert.equal(page.actions.some((action) => action[1] === "attribute-accept"), true);
     assert.equal(page.actions.some((action) => action[1] === "attribute-reject"), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("handles two consecutive same-host IdP continuation pages", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "arp-ieee-two-stage-release-"));
+  try {
+    const page = new FakePage({ requiresAttributeRelease: true, attributeConsentRequired: true, attributeReleaseTwoStages: true });
+    const result = await subject.retrieveIeeePaper({
+      page,
+      browserContext: fakeContext({
+        pdfResponses: [
+          new FakeResponse("denied", { status: 403, contentType: "text/html" }),
+          new FakeResponse("%PDF-1.7\ntwo stages\n%%EOF\n"),
+        ],
+      }),
+      reference: "https://ieeexplore.ieee.org/document/11014597",
+      workDir: root,
+      institutionProfile: INSTITUTION_PROFILE,
+      credentialReader: async () => ({ username: "user", password: "password" }),
+    });
+    assert.equal(result.status, "downloaded");
+    assert.equal(page.attributeReleaseStage, 1);
+    assert.equal(page.actions.filter((action) => action[1] === "attribute-accept").length, 2);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -1121,6 +1405,32 @@ test("starts at the configured resource gateway before CARSI institution selecti
   }
 });
 
+test("uses an explicitly configured official IEEE WAYF after the initial CARSI login", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "arp-ieee-configured-wayf-"));
+  try {
+    const page = new FakePage();
+    const result = await subject.retrieveIeeePaper({
+      page,
+      browserContext: fakeContext({
+        pdfResponses: [
+          new FakeResponse("denied", { status: 403, contentType: "text/html" }),
+          new FakeResponse("%PDF-1.7\nconfigured wayf\n%%EOF\n"),
+        ],
+      }),
+      reference: "https://ieeexplore.ieee.org/document/11014597",
+      workDir: root,
+      institutionProfile: { ...INSTITUTION_PROFILE, ieeeWayfUrl: IEEE_WAYF_URL },
+      credentialReader: async () => ({ username: "user", password: "password" }),
+    });
+    assert.equal(result.status, "downloaded");
+    assert.equal(page.navigations[0], "https://ieeexplore.ieee.org/document/11014597");
+    assert.ok(page.navigations.includes(INSTITUTION_PROFILE.resourceAccessUrl));
+    assert.ok(page.navigations.includes(IEEE_WAYF_URL));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("handles a configured attribute-release page before CARSI return and still visits the resource", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "arp-ieee-attribute-login-"));
   try {
@@ -1246,6 +1556,27 @@ test("retries one transient metadata execution-context loss", async () => {
       credentialReader: async () => { throw new Error("credentials must not be read"); },
     });
     assert.equal(result.status, "downloaded");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("classifies the IEEE unable-to-load 418 page as retryable", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "arp-ieee-http-418-"));
+  try {
+    await assert.rejects(
+      subject.retrieveIeeePaper({
+        page: new FakePage({ paperErrorCode: "418" }),
+        browserContext: fakeContext(),
+        reference: "https://ieeexplore.ieee.org/document/9345478",
+        workDir: root,
+        credentialReader: async () => { throw new Error("credentials must not be read"); },
+      }),
+      (error) => (
+        error?.phase === "paper-http-418"
+        && error.message === "IEEE Xplore returned a temporary unable-to-load page (418)."
+      ),
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -1542,4 +1873,41 @@ test("enforces global acquisition runtime boundaries", () => {
     ...allowed,
     workDir: path.resolve("C:/repo/raw/tmp"),
   }));
+});
+
+test("two-step forms submit credentials once and recheck the password-stage host", async () => {
+  for (const unexpectedHost of [false, true]) {
+    const root = await mkdtemp(path.join(os.tmpdir(), "arp-two-step-"));
+    let passwordReady = false, reads = 0;
+    const page = new FakePage();
+    const getRole = page.getByRole.bind(page);
+    const getLabel = page.getByLabel.bind(page);
+    page.getByRole = (role, options) => options?.name === "Next" ? {
+      count: async () => 1, click: async () => {
+        passwordReady = true;
+        if (unexpectedHost) page.currentUrl = "https://login.example.edu.evil.test/";
+      }} : getRole(role, options);
+    page.getByLabel = (label, options) => {
+      const result = getLabel(label, options);
+      if (label === INSTITUTION_PROFILE.passwordLabel) {
+        result.count = async () => passwordReady ? 1 : 0;
+      }
+      return result;
+    };
+    const request = subject.retrieveIeeePaper({page, browserContext: fakeContext({pdfResponses:[
+      new FakeResponse("denied", {status:403, contentType:"text/html"}),
+      new FakeResponse("%PDF-1.7\nverified\n%%EOF\n")]}),
+      reference: "https://ieeexplore.ieee.org/document/11014597", workDir: root,
+      institutionProfile: {...INSTITUTION_PROFILE,
+        usernameLocator:{kind:"label", value:"Account"}, passwordLocator:{kind:"label", value:"Passcode"},
+        nextLocator:{kind:"role", role:"button", value:"Next"}},
+      credentialReader: async () => {reads++; return {username:"example", password:"synthetic"};}});
+    try {
+      if (unexpectedHost) {
+        await assert.rejects(request, error => error.phase === "unexpected-auth-host");
+        assert.equal(page.actions.some(action => action[0] === "fill" && action[1] === "password"), false);
+      } else {assert.equal((await request).status, "downloaded");}
+      assert.equal(reads, 1);
+    } finally {await rm(root, {recursive:true, force:true});}
+  }
 });

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 
 from platformdirs import user_data_dir
@@ -17,6 +18,8 @@ class AppPaths:
 
     @classmethod
     def default(cls) -> AppPaths:
+        if os.environ.get("ARP_DATA_ROOT"):
+            return cls.for_root(Path(os.environ["ARP_DATA_ROOT"]).expanduser())
         local = Path(user_data_dir("Codex", appauthor=False))
         return cls.for_root(local)
 

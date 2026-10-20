@@ -2,6 +2,7 @@
 param(
   [string]$Path = "",
   [Parameter(Mandatory)][string]$ResourceAccessUrl,
+  [AllowNull()][string]$IeeeWayfUrl = $null,
   [string]$AttributeReleaseTitle = "",
   [string]$AttributeReleaseAcceptControlName = "",
   [string]$AttributeReleaseRejectControlName = ""
@@ -13,6 +14,7 @@ if ([string]::IsNullOrWhiteSpace($Path)) { $Path = Get-AcquisitionSecretPath }
 
 Set-IeeeInstitutionRoute `
   -ResourceAccessUrl $ResourceAccessUrl `
+  -IeeeWayfUrl $IeeeWayfUrl `
   -AttributeReleaseTitle $AttributeReleaseTitle `
   -AttributeReleaseAcceptControlName $AttributeReleaseAcceptControlName `
   -AttributeReleaseRejectControlName $AttributeReleaseRejectControlName `

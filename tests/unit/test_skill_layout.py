@@ -10,8 +10,8 @@ def test_required_skill_and_package_files_exist() -> None:
         "README.md",
         "README.zh-CN.md",
         "SECURITY.md",
-        "SKILL.md",
-        "agents/openai.yaml",
+        "skills/acquire-research-papers/SKILL.md",
+        "skills/acquire-research-papers/agents/openai.yaml",
         "pyproject.toml",
         "src/acquire_research_papers/__init__.py",
         "src/acquire_research_papers/cli.py",
@@ -51,7 +51,10 @@ def test_public_repository_metadata_is_complete() -> None:
     force_include = configuration["tool"]["hatch"]["build"]["targets"]["wheel"][
         "force-include"
     ]
-    assert force_include["scripts"] == "acquire_research_papers/_scripts"
+    assert "scripts" not in force_include
+    assert force_include["scripts/setup-ieee-profile-credential.ps1"] == (
+        "acquire_research_papers/_scripts/setup-ieee-profile-credential.ps1"
+    )
     assert force_include["schemas"] == "acquire_research_papers/_schemas"
     assert configuration["tool"]["hatch"]["build"]["exclude"] == ["/docs"]
 
@@ -67,8 +70,8 @@ def test_sciencedirect_manual_handoff_contract_is_explicit() -> None:
     public_contract = "\n".join(
         (ROOT / relative).read_text(encoding="utf-8")
         for relative in (
-            "SKILL.md",
-            "references/source-policies.md",
+            "skills/acquire-research-papers/SKILL.md",
+            "skills/acquire-research-papers/references/source-policies.md",
             "README.md",
             "README.zh-CN.md",
         )
@@ -105,8 +108,8 @@ def test_repository_contains_no_built_in_institution_identity() -> None:
         ROOT / "README.md",
         ROOT / "README.zh-CN.md",
         ROOT / "SECURITY.md",
-        ROOT / "SKILL.md",
-        *(ROOT / "references").glob("*.md"),
+        ROOT / "skills/acquire-research-papers/SKILL.md",
+        *(ROOT / "skills/acquire-research-papers/references").glob("*.md"),
         *(ROOT / "scripts").glob("*.ps1"),
         ROOT / "scripts" / "ieee-playwright.mjs",
     ]
@@ -129,7 +132,7 @@ def test_repository_contains_no_built_in_institution_identity() -> None:
 
 
 def test_ieee_policy_covers_direct_pdf_frames_and_retryable_timeouts() -> None:
-    policy = (ROOT / "references/source-policies.md").read_text(encoding="utf-8")
+    policy = (ROOT / "skills/acquire-research-papers/references/source-policies.md").read_text(encoding="utf-8")
 
     for required in (
         "direct `.pdf` iframe",
@@ -140,18 +143,18 @@ def test_ieee_policy_covers_direct_pdf_frames_and_retryable_timeouts() -> None:
         assert required in policy
 
 
-def test_release_version_is_synchronized_at_0_3_0() -> None:
+def test_release_version_is_synchronized_at_0_4_0() -> None:
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     package_init = (ROOT / "src/acquire_research_papers/__init__.py").read_text(
         encoding="utf-8"
     )
-    assert project["project"]["version"] == "0.3.0"
-    assert '__version__ = "0.3.0"' in package_init
+    assert project["project"]["version"] == "0.4.0"
+    assert '__version__ = "0.4.0"' in package_init
 
 
 def test_skill_documents_evidence_review_before_selection_and_acquisition() -> None:
-    skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
-    corpus_reference = (ROOT / "references/corpus-mode.md").read_text(encoding="utf-8")
+    skill = (ROOT / "skills/acquire-research-papers/SKILL.md").read_text(encoding="utf-8")
+    corpus_reference = (ROOT / "skills/acquire-research-papers/references/corpus-mode.md").read_text(encoding="utf-8")
     public_readme = (ROOT / "README.md").read_text(encoding="utf-8")
     combined = "\n".join((skill, corpus_reference, public_readme))
 
@@ -170,10 +173,10 @@ def test_skill_documents_evidence_review_before_selection_and_acquisition() -> N
 
 
 def test_public_docs_explain_task_scoped_optional_first_use() -> None:
-    skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+    skill = (ROOT / "skills/acquire-research-papers/SKILL.md").read_text(encoding="utf-8")
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     chinese = (ROOT / "README.zh-CN.md").read_text(encoding="utf-8")
-    credentials = (ROOT / "references/credentials-and-cache.md").read_text(
+    credentials = (ROOT / "skills/acquire-research-papers/references/credentials-and-cache.md").read_text(
         encoding="utf-8"
     )
     combined = "\n".join((skill, readme, chinese, credentials))
@@ -197,10 +200,10 @@ def test_public_docs_define_safe_ieee_institution_adaptation() -> None:
     combined = "\n".join(
         (ROOT / relative).read_text(encoding="utf-8")
         for relative in (
-            "SKILL.md",
+            "skills/acquire-research-papers/SKILL.md",
             "README.md",
             "README.zh-CN.md",
-            "references/credentials-and-cache.md",
+            "skills/acquire-research-papers/references/credentials-and-cache.md",
         )
     )
     for required in (

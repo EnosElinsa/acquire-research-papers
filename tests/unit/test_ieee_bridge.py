@@ -70,6 +70,25 @@ def test_ieee_bridge_uses_dedicated_runtime_paths(tmp_path: Path) -> None:
     assert manual_command[-2:] == ["--accept-attribute-release", "false"]
 
 
+def test_ieee_bridge_allows_slow_pdf_downloads_by_default(tmp_path: Path) -> None:
+    bridge = IeeeBridge(
+        script=tmp_path / "ieee-playwright.mjs",
+        profile_root=tmp_path / "profiles" / "ieee",
+        dependency_root=tmp_path / "deps",
+        work_root=tmp_path / "runs",
+        secret_path=tmp_path / "secrets" / "secrets.clixml",
+        node_path="node",
+    )
+
+    command = bridge.command(
+        "https://ieeexplore.ieee.org/document/11014597",
+        run_dir=tmp_path / "runs" / "run-slow-pdf",
+    )
+
+    timeout_index = command.index("--timeout-ms")
+    assert command[timeout_index + 1] == "900000"
+
+
 def test_ieee_bridge_classifies_child_timeout_as_network_transient(
     tmp_path: Path,
     monkeypatch,
@@ -100,6 +119,44 @@ def test_ieee_bridge_classifies_publisher_request_timeout_as_network_transient()
     )
 
     assert isinstance(error, NetworkTransient)
+
+
+def test_ieee_bridge_classifies_unable_to_load_418_as_network_transient() -> None:
+    error = IeeeBridge._failure(
+        '{"status":"error","phase":"paper-http-418",'
+        '"message":"IEEE Xplore returned a temporary unable-to-load page (418)."}'
+    )
+
+    assert isinstance(error, NetworkTransient)
+
+
+def test_login_without_reference_does_not_claim_a_paper_was_verified(tmp_path, monkeypatch):
+    import json
+    bridge = IeeeBridge(script=tmp_path/'bridge.mjs', profile_root=tmp_path/'profiles',
+        dependency_root=tmp_path/'deps', work_root=tmp_path/'runs', secret_path=tmp_path/'secrets',
+        access_profile=tmp_path/'campus.json')
+    monkeypatch.setattr(bridge, '_ensure_dependency', lambda: None)
+    def execute(command):
+        assert '--reference' not in command
+        assert command[-2:] == ['--operation', 'login']
+        return subprocess.CompletedProcess(command, 0, json.dumps({
+            'status':'returned_to_ieee', 'download_verified':False}), '')
+    monkeypatch.setattr(bridge, '_execute', execute)
+    assert bridge.operate('login')['download_verified'] is False
+
+
+def test_named_bridge_streams_only_safe_user_action_progress(tmp_path, monkeypatch, capsys):
+    import sys
+    bridge = IeeeBridge(script=tmp_path/'bridge.mjs', profile_root=tmp_path/'profiles',
+        dependency_root=tmp_path/'deps', work_root=tmp_path/'runs', secret_path=tmp_path/'secrets',
+        access_profile=tmp_path/'campus.json')
+    command = [sys.executable, '-c',
+        'import sys; print(\'{"status":"requires_user_action","message":"private signed query"}\', file=sys.stderr); print("{}")']
+    result = bridge._execute(command)
+    assert result.returncode == 0
+    output = capsys.readouterr().err
+    assert 'requires_user_action' in output
+    assert 'private signed query' not in output
 
 
 def test_ieee_attribute_release_is_automatic_with_an_explicit_opt_out(tmp_path: Path) -> None:

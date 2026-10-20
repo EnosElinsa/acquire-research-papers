@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/EnosElinsa/acquire-research-papers/schemas/research-evidence-review.schema.json",
+  "title": "ResearchEvidenceReview",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "selection_id",
+    "full_text_sha256",
+    "markdown_sha256",
+    "review_status",
+    "summary",
+    "reviewer",
+    "records"
+  ],
+  "properties": {
+    "selection_id": {"type": "string", "pattern": "^[a-f0-9]{24}$"},
+    "full_text_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "markdown_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "review_status": {"enum": ["reviewed", "insufficient-text"]},
+    "summary": {"type": "string", "minLength": 1},
+    "reviewer": {"const": "codex"},
+    "records": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "claim_id",
+          "paper_id",
+          "relation",
+          "read_scope",
+          "section",
+          "page",
+          "excerpt",
+          "explanation"
+        ],
+        "properties": {
+          "claim_id": {"type": "string", "minLength": 1},
+          "paper_id": {"type": "string", "pattern": "^[a-f0-9]{24}$"},
+          "relation": {
+            "enum": [
+              "direct-support",
+              "indirect-support",
+              "qualifies",
+              "contradicts",
+              "background"
+            ]
+          },
+          "read_scope": {"const": "full-text"},
+          "section": {"type": ["string", "null"]},
+          "page": {"type": ["integer", "null"], "minimum": 1},
+          "excerpt": {"type": "string", "maxLength": 500},
+          "explanation": {"type": "string", "minLength": 1},
+          "strength": {"type": "string"},
+          "uncertainty": {"type": "string"}
+        }
+      }
+    }
+  }
+}
