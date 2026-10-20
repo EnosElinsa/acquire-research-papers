@@ -83,12 +83,12 @@ Run `arp doctor --host <codex|claude-code|kiro-ide|kiro-cli> --skill-directory <
 
 ### Release downloads and manual installation
 
-The [v0.4.0 release](https://github.com/EnosElinsa/acquire-research-papers/releases/tag/v0.4.0) provides:
+The [v0.5.0 release](https://github.com/EnosElinsa/acquire-research-papers/releases/tag/v0.5.0) provides:
 
 | Asset | Use |
 | --- | --- |
-| `acquire-research-papers-skill-0.4.0.zip` | Extract and copy the contained `acquire-research-papers/` folder to a new skill directory. It contains instructions, references, schemas, a launcher, and the pinned runtime manifest. |
-| `acquire_research_papers-0.4.0-py3-none-any.whl` | Install the CLI independently with `uv tool install <wheel-path>`, or supply its absolute path as `ARP_LOCAL_WHEEL` when bootstrapping offline. The launcher still verifies the manifest digest. |
+| `acquire-research-papers-skill-0.5.0.zip` | Extract and copy the contained `acquire-research-papers/` folder to a new skill directory. It contains instructions, references, schemas, a launcher, and the pinned runtime manifest. |
+| `acquire_research_papers-0.5.0-py3-none-any.whl` | Install the CLI independently with `uv tool install <wheel-path>`, or supply its absolute path as `ARP_LOCAL_WHEEL` when bootstrapping offline. The launcher still verifies the manifest digest. |
 | `SHA256SUMS` | Compare downloaded asset hashes with `Get-FileHash <path> -Algorithm SHA256` on PowerShell or `sha256sum <path>` on Linux. |
 
 Manual skill installation needs Python 3.11+ and uv. The launcher normally downloads its pinned wheel on first use; dependency installation also needs network access or a populated uv cache. Node.js is additionally required for IEEE browser access. Do not copy the source archive or a developer checkout into the skill directory. See [SUPPORT.md](SUPPORT.md) for bootstrap and migration troubleshooting.
