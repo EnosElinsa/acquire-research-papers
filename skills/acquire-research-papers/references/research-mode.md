@@ -71,18 +71,14 @@ python "$skill/scripts/arp.py" evidence research `
 
 The importer rejects stale PDF hashes, changed Markdown, unknown claims, mismatched paper IDs, unsupported read scopes, and full-text excerpts not found in the bound Markdown. Use `insufficient-text` with an empty `records` array when the complete parse was read but cannot support a reliable claim record. Do not submit evidence for a paper that remains pending acquisition or parsing.
 
-## Deliver an evidence package
+## Read the result
 
-The default package contains:
+New discovery runs write only four state files: `research-plan.json`, `research-candidates.jsonl`, `citation-graph.json`, and `research-run.json` (`output_version: 2`). Review and full-text phases append the audit and selection state required for recovery. Do not edit frozen artifacts.
 
-- `research-plan.json`;
-- `research-candidates.jsonl` and `citation-graph.json`;
-- `research-run.json`, `research-review.json`, and `full-text-run.json`;
-- `research-manifest.csv`;
-- `pending-review.csv`;
-- `evidence-map.md`;
-- `nearest-work-matrix.csv`;
-- `claim-coverage.csv`;
-- `gap-analysis.md` when applicable.
+After evidence import, read `reports/report.md`: paper review status, per-claim coverage, exact located evidence, pending work, and a bounded conclusion only for `gap-analysis`. Status `complete` means the frozen papers were reviewed; individual claims can remain unresolved. Search provenance stays in the root plan, rather than being copied into reports.
 
-A gap conclusion must name the searched scope, list the closest counterexamples, disclose incomplete full-text checks, and use bounded wording such as "within the searched scope." The evidence report is not manuscript prose.
+Add `--export-csv` to `evidence research` for `reports/papers.csv` and `reports/claim-coverage.csv`. The papers table combines the old research manifest and nearest-work matrix. Omitting the flag on a later import removes these generated views. Empty research review/evidence queues are omitted; optional CLI paths are null. Keep hand edits under different filenames.
+
+Runs without `output_version` keep their legacy report layout on resume, including `evidence-map.md`, `nearest-work-matrix.csv`, `claim-coverage.csv`, and `gap-analysis.md`. No migration of immutable review state is required.
+
+A gap conclusion names the searched scope, closest counterexamples, incomplete full-text checks and uncertainty. Use bounded wording such as "within the searched scope." The report is not manuscript prose. See [source coverage](sources.md) before interpreting search completeness.

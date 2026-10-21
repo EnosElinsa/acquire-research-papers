@@ -15,7 +15,7 @@ arp library apply --plan <plan.json> --rollback
 
 Audit records PDF/BIB hashes, DOI/title evidence, pairing confidence, invalid/missing/ambiguous items, exact DOI duplicates, and byte duplicates. Existing publisher delivery bundles may pair through matching provenance hashes even when named `paper.pdf` and `citation.bib`. Unidentified or ambiguous pairs are skipped by import/organize and need review.
 
-Audit emits `audit.json`, `audit.csv`, `report.md`, and one consolidated `manual-download.csv`. Read `citation_source`: provenance-confirmed publisher exports remain native publisher artifacts; hand-imported citations remain `manual_import` unless evidence establishes their source. Neither audit nor rename upgrades citation provenance.
+Audit emits `audit.json` and `report.md`, plus `manual-download.csv` only when action is pending. Add `--export-csv` to `library audit` for `audit.csv`. Resolved queues and unrequested generated CSV views are removed on rerun; keep hand edits under other filenames. Read `citation_source`: provenance-confirmed publisher exports remain native publisher artifacts; hand-imported citations remain `manual_import` unless evidence establishes their source. Neither audit nor rename upgrades citation provenance.
 
 ## Publication versions and dates
 

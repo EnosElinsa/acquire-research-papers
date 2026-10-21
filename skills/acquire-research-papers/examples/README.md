@@ -8,8 +8,7 @@ These are copyable applications of independent capabilities, not additional kern
 | Topic corpus | [Topic corpus](02-topic-corpus.md) | [corpus.yaml](inputs/corpus.yaml) |
 | Author gap check | [Author gap check](03-author-gap-check.md) | [author.json](inputs/author.json), [empty-metadata.json](inputs/empty-metadata.json) |
 | Local library update/organization | [Library maintenance](04-library-maintenance.md) | [empty-metadata.json](inputs/empty-metadata.json) |
-| Related Work and claim evidence | [Related Work](05-related-work.md) | [related-work.yaml](inputs/related-work.yaml) |
-| Gap analysis | [Gap analysis](06-gap-analysis.md) | [gap-analysis.yaml](inputs/gap-analysis.yaml) |
+| Related Work, claim evidence and gap analysis | [Research](05-related-work.md) | [related-work.yaml](inputs/related-work.yaml), [gap-analysis.yaml](inputs/gap-analysis.yaml) |
 | Explicit chapters | [Book chapters](07-book-chapters.md) | [chapter-map.json](inputs/chapter-map.json) |
 
 Start with `arp doctor --host <actual-host> --skill-directory <actual-installed-skill-directory>` and `arp config status`. Configure only required optional providers. The agent reads packets and full text and writes real hash-bound decisions. Templates contain no acceptance decisions, output hashes, credentials, model claims, or fabricated publisher artifacts.

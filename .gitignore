@@ -6,6 +6,8 @@
 !/docs/superpowers/plans/
 /docs/superpowers/plans/*
 !/docs/superpowers/plans/2026-10-20-portable-composable-research-workflows.md
+!/docs/superpowers/plans/2026-10-21-lighter-outputs-venue-coverage.md
+.superpowers/
 .venv/
 __pycache__/
 .pytest_cache/

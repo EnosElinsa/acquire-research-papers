@@ -49,7 +49,7 @@ The executing agent is part of the workflow. The CLI validates, checkpoints, fre
 
 ## Capabilities and composition
 
-Identity resolution, discovery, metadata enrichment, exact collection merge/compare, agent review, immutable selection, acquisition, local verification, standalone PDF parsing, evidence validation, library operations, and structured export can run independently. Existing corpus/research/author entrypoints remain available. See [capability contracts](skills/acquire-research-papers/references/capabilities.md) and [seven composition recipes](skills/acquire-research-papers/examples/README.md), each with inputs, expected results, recovery, and limits. These are compositions, not new kernel task types or an agent orchestrator.
+Identity resolution, discovery, metadata enrichment, exact collection merge/compare, agent review, immutable selection, acquisition, local verification, standalone PDF parsing, evidence validation, library operations, and structured export can run independently. Existing corpus/research/author entrypoints remain available. See [capability contracts](skills/acquire-research-papers/references/capabilities.md) and [composition recipes](skills/acquire-research-papers/examples/README.md), each with inputs, expected results, recovery, and limits. These are compositions, not new kernel task types or an agent orchestrator.
 
 New reviews use `schema_version: 2`, the actual host in `reviewer` and `executor.host`, and only available model/version metadata. Legacy Codex v1 reviews remain readable without rewriting their bytes or hashes. Capability commands support optional `--run` records and `arp run status --run <directory>`; legacy runs retain their original manifests and recovery commands. Standalone `parse` accepts PDF without BibTeX while retaining user-supplied trust. Structured `export --format markdown` differs from cached full-text `export-md`.
 
@@ -83,12 +83,12 @@ Run `arp doctor --host <codex|claude-code|kiro-ide|kiro-cli> --skill-directory <
 
 ### Release downloads and manual installation
 
-The [v0.5.0 release](https://github.com/EnosElinsa/acquire-research-papers/releases/tag/v0.5.0) provides:
+The [v0.6.0 release](https://github.com/EnosElinsa/acquire-research-papers/releases/tag/v0.6.0) provides:
 
 | Asset | Use |
 | --- | --- |
-| `acquire-research-papers-skill-0.5.0.zip` | Extract and copy the contained `acquire-research-papers/` folder to a new skill directory. It contains instructions, references, schemas, a launcher, and the pinned runtime manifest. |
-| `acquire_research_papers-0.5.0-py3-none-any.whl` | Install the CLI independently with `uv tool install <wheel-path>`, or supply its absolute path as `ARP_LOCAL_WHEEL` when bootstrapping offline. The launcher still verifies the manifest digest. |
+| `acquire-research-papers-skill-0.6.0.zip` | Extract and copy the contained `acquire-research-papers/` folder to a new skill directory. It contains instructions, references, schemas, a launcher, and the pinned runtime manifest. |
+| `acquire_research_papers-0.6.0-py3-none-any.whl` | Install the CLI independently with `uv tool install <wheel-path>`, or supply its absolute path as `ARP_LOCAL_WHEEL` when bootstrapping offline. The launcher still verifies the manifest digest. |
 | `SHA256SUMS` | Compare downloaded asset hashes with `Get-FileHash <path> -Algorithm SHA256` on PowerShell or `sha256sum <path>` on Linux. |
 
 Manual skill installation needs Python 3.11+ and uv. The launcher normally downloads its pinned wheel on first use; dependency installation also needs network access or a populated uv cache. Node.js is additionally required for IEEE browser access. Do not copy the source archive or a developer checkout into the skill directory. See [SUPPORT.md](SUPPORT.md) for bootstrap and migration troubleshooting.
@@ -338,6 +338,8 @@ The output directory is bound to one frozen selection before publisher contact. 
 
 “Supported” is separated into discovery, acquisition, and live maturity:
 
+Run `arp sources` or `arp sources --spec <corpus.yaml>` for offline capabilities and per-venue/year gaps. See [source inventory and acceptance criteria](skills/acquire-research-papers/references/sources.md). No priority venue list has been selected; existing ACL/IJCAI/IEEE/ACM/ScienceDirect scenarios do not imply coverage of all conferences and journals. Enumeration completion is relative to the chosen source; upstream omissions remain possible.
+
 | Source | Discovery | PDF/BibTeX acquisition | Current maturity and fallback |
 | --- | --- | --- | --- |
 | Crossref | Primary venue/year enumeration and research search | No | Stable public metadata source; metadata completeness still varies by publisher |
@@ -406,27 +408,24 @@ python "$skill/scripts/arp.py" manual-fetch `
 
 ## Understand the outputs
 
-| File | Meaning |
-| --- | --- |
-| `coverage.jsonl` | Which provider covered each requested venue/year slice and whether it was complete |
-| `candidates.jsonl` | Deduplicated discovery ledger; not a final bibliography |
-| `evidence-packets.jsonl` | Immutable title/abstract evidence agent reviews |
-| `pending-metadata.csv` | Candidates blocked by missing evidence such as an abstract |
-| `pending-review.csv` | Review-ready candidates that still lack a semantic decision |
-| `selected-papers.jsonl` | The frozen papers eligible for acquisition |
-| `selection-manifest.json` | Hash binding for the normalized request and selected list |
-| `acquisition-manifest.jsonl` | One durable delivery state per selected paper |
-| `manual-download.csv` | Frozen selections needing authorized user action or a not-yet-supported safe adapter |
-| `retryable-downloads.csv` | Transient failures that can be retried without changing the selection |
-| `delivery-manifest.json` | Acquisition totals, selection binding, and completion state |
-| `research-candidates.jsonl` | Hash-bound research candidates used for explicit closest-paper review |
-| `citation-graph.json` | Bounded backward, forward, and related-paper edges, applied/skipped seed bounds, and sanitized provider diagnostics |
-| `full-text-manifest.jsonl` | Frozen paper, official PDF hash, MinerU Markdown hash, parser mode, and pending state |
-| `validated-evidence-reviews.jsonl` | Agent evidence reviews bound to the exact PDF and parsed Markdown |
-| `claim-coverage.csv` | Per-claim relations, supporting papers, and unresolved status |
-| `evidence-map.md` / `gap-analysis.md` | Auditable evidence locations and a bounded conclusion for the searched scope |
+Read the CLI result for current status, counts, next actions and available paths. An absent optional path is JSON `null`. Keep machine state for recovery; normally read only the report and nonempty action queues.
 
-Use repeatable `--defer-host <exact-hostname>` options when a publisher must not be contacted in the current run. Deferred records remain in the selection and enter the manual queue; verified prior deliveries remain delivered.
+| Workflow / stage | State to retain | Human result / optional export |
+| --- | --- | --- |
+| Single paper | Verified PDF, raw publisher BibTeX and provenance | The verified pair; no report tree |
+| Corpus discovery | Request, `coverage.jsonl`, candidates, evidence packets, discovery errors and manifest | `pending-metadata.csv` only when blocked metadata exists |
+| Corpus review | Reviewed candidates, `selected-papers.jsonl`, selection and review manifests | `pending-review.csv` stays hash-bound, including an empty completed queue |
+| Corpus acquisition | Acquisition ledger, selection binding, delivery manifest and official pairs | `paper-manifest.csv`; manual/retry queues only when nonempty |
+| Research discovery | `research-plan.json`, `research-candidates.jsonl`, `citation-graph.json`, `research-run.json` | No evidence/gap reports at this stage |
+| Research review / full text | Reviewed decisions, frozen selection, phase manifests, `full-text-manifest.jsonl` and internal parse cache | Nonempty review/download queues; status separates acquisition from parsing |
+| Research evidence | `validated-evidence-reviews.jsonl` and `research-evidence.json` | One `reports/report.md`; `--export-csv` adds `papers.csv` and `claim-coverage.csv` |
+| Author bibliography | `author-discovery.json` with source/identity/date evidence | `report.md`; `--export-csv` adds `author-discovery.csv` |
+| Library audit | `audit.json` | `report.md`; nonempty manual queue; `--export-csv` adds `audit.csv` |
+| Library update / import / organize | Reviewed plan, staged pairs, provenance, backups and apply journal | Review and apply the plan; keep backups for rollback |
+
+New research runs record `output_version: 2`. Runs without it resume using their legacy report layout; frozen bytes and hashes are retained. In the new layout, the old research manifest and nearest-work matrix are combined into optional `papers.csv`; evidence map, claim status and the applicable bounded gap conclusion share `report.md`. Search provenance stays in `research-plan.json`. Re-running without CSV export clears only the named generated CSV views; resolved action queues disappear. Do not store hand-edited files under these generated names.
+
+Use repeatable `--defer-host <exact-hostname>` options to defer a publisher for this run. Deferred records remain in the selection and enter the manual queue; verified prior deliveries remain delivered.
 
 ## Accuracy and trust boundaries
 
@@ -465,7 +464,7 @@ These are improvement priorities, not claims about current support.
 2. **Improve IEEE institution diagnostics.** Extend the current named-profile doctor with clearer first-use adaptation and live access diagnostics while keeping secrets private.
 3. **Productize ACM authorized access.** Design a dedicated visible, isolated, exact-host browser contract with the same fail-closed standards as IEEE; retain manual fallback when access or page shape is unknown.
 4. **Extend safe delta acquisition.** Build on the existing library import/update plans to bind new frozen selections while preserving verified files.
-5. **Expand composition guidance.** Build on the seven shipped recipes, input templates, and run summaries; evaluate optional init helpers after their contracts stabilize.
+5. **Expand composition guidance.** Build on the shipped recipes, input templates, and run summaries; evaluate optional init helpers after their contracts stabilize.
 
 ### Medium term
 

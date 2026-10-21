@@ -174,16 +174,22 @@ def write_csv(path: Path, rows: list[dict], columns: list[str]) -> None:
     path.write_text(stream.getvalue(), encoding="utf-8-sig", newline="")
 
 
-def write_audit(report: dict, output: Path) -> None:
+def write_audit(report: dict, output: Path, *, export_csv: bool = False) -> None:
     output.mkdir(parents=True, exist_ok=True)
     write_json(output / "audit.json", report)
     columns = ["doi", "status", "publication_status", "pdf", "bib", "diagnostic"]
-    write_csv(output / "audit.csv", report["items"], columns)
+    if export_csv:
+        write_csv(output / "audit.csv", report["items"], columns)
+    else:
+        (output / "audit.csv").unlink(missing_ok=True)
     queue = [{"doi": i.get("doi"), "url": i.get("official", {}).get("url", ""),
               "reason": i.get("diagnostic") or i["status"], "pdf": i.get("pdf"),
               "bib": i.get("bib")} for i in report["items"]
              if i["status"] != "paired" or i.get("publication_status") in {"outdated", "possible_update"}]
-    write_csv(output / "manual-download.csv", queue, ["doi", "url", "reason", "pdf", "bib"])
+    if queue:
+        write_csv(output / "manual-download.csv", queue, ["doi", "url", "reason", "pdf", "bib"])
+    else:
+        (output / "manual-download.csv").unlink(missing_ok=True)
     lines = ["# Library audit", "", f"Items: {report['summary']['items']}; "
              f"pairs: {report['summary']['pairs']}; duplicate DOIs: "
              f"{report['summary']['duplicate_dois']}", "",
@@ -195,7 +201,7 @@ def write_audit(report: dict, output: Path) -> None:
 
 
 def audit_library(directory: Path | str, *, metadata: dict | None = None,
-                  client: Any = None, output: Path | str | None = None) -> dict:
+                  client: Any = None, output: Path | str | None = None, export_csv: bool = False) -> dict:
     report = scan_library(directory)
     metadata = ({normalize_doi(k): v for k, v in metadata.items()}
                 if metadata is not None else None)
@@ -238,5 +244,5 @@ def audit_library(directory: Path | str, *, metadata: dict | None = None,
         elif item["publication_status"] == "current" and pdf_version != "publisher_bytes_match":
             item["publication_status"] = "unknown"
     if output is not None:
-        write_audit(report, Path(output))
+        write_audit(report, Path(output), export_csv=export_csv)
     return report

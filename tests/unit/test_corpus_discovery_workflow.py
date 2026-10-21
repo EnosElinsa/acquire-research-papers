@@ -311,6 +311,9 @@ def test_metadata_pending_run_retries_a_retryable_enricher(
     assert second.status == "review_required"
     assert len(calls) == 2
     assert second.pending_metadata == 0
+    assert second.pending_metadata_path is None
+    assert not (tmp_path / "pending-metadata.csv").exists()
+    assert json.loads(second.manifest_path.read_text(encoding="utf-8"))["pending_metadata_file"] is None
 
 
 def test_missing_coverage_marker_is_removed_after_a_provider_reports(

@@ -19,6 +19,8 @@ def register(subparsers) -> None:
         command.add_argument("--output", type=Path, required=True,
                              help="report directory, or plan.json path for import/organize")
         command.add_argument("--metadata", type=Path, help="offline DOI-to-official-metadata JSON evidence")
+        if name == "audit":
+            command.add_argument("--export-csv", action="store_true")
         if name == "import":
             command.add_argument("--destination", type=Path, required=True)
             command.add_argument("--chapters", type=Path,
@@ -37,13 +39,14 @@ def register_author(discover_modes) -> None:
     parser = discover_modes.add_parser("author", help="discover an author's public bibliography with coverage evidence")
     parser.add_argument("--spec", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--export-csv", action="store_true")
     parser.add_argument("--records", type=Path, help="offline source-to-records JSON evidence")
 
 
 def dispatch(args, *, application=None) -> dict | None:
     if getattr(args, "command", None) == "discover" and getattr(args, "discover_mode", None) == "author":
         return discover_author(read_json(args.spec),
-            records=read_json(args.records) if args.records else None, output=args.output)
+            records=read_json(args.records) if args.records else None, output=args.output, export_csv=args.export_csv)
     if getattr(args, "command", None) != "library":
         return None
     mode = args.library_mode
@@ -56,7 +59,7 @@ def dispatch(args, *, application=None) -> dict | None:
     if metadata is not None and not isinstance(metadata, dict):
         raise ValueError("metadata evidence must be a DOI-to-record object")
     if mode == "audit":
-        return audit_library(args.directory, metadata=metadata, output=args.output)
+        return audit_library(args.directory, metadata=metadata, output=args.output, export_csv=args.export_csv)
     if mode == "update":
         return update_library(args.directory, metadata=metadata, output=args.output,
             application=application, verify_only=args.verify_only, watch=args.watch, timeout=args.timeout)

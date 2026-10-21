@@ -35,7 +35,7 @@ def test_audit_reports_finalization_duplicates_missing_and_unknown(tmp_path):
         'doi': '10.1234/test', 'title': 'A Study of GPU and iPhone 中文',
         'issue_date': '2024-01', 'online_date': '2023-02', 'volume': '4',
         'issue': '1', 'pages': '10-20', 'status': 'published', 'source': 'publisher',
-    }}, output=tmp_path / 'audit')
+    }}, output=tmp_path / 'audit', export_csv=True)
     assert report['summary']['duplicate_dois'] == 1
     assert any(row['status'] == 'missing_bib' for row in report['items'])
     assert report['items'][0]['publication_status'] == 'outdated'
@@ -44,6 +44,18 @@ def test_audit_reports_finalization_duplicates_missing_and_unknown(tmp_path):
         'audit.json', 'audit.csv', 'report.md', 'manual-download.csv'))
     unknown = audit_library(tmp_path, metadata={}, output=tmp_path / 'audit2')
     assert all(item.get('publication_status') != 'current' for item in unknown['items'])
+    assert not (tmp_path / 'audit2' / 'audit.csv').exists()
+
+
+def test_empty_audit_omits_exports_and_action_queue(tmp_path):
+    from acquire_research_papers.library import audit_library
+    root = tmp_path / 'library'
+    root.mkdir()
+    output = tmp_path / 'audit'
+    audit_library(root, metadata={}, output=output, export_csv=True)
+    assert (output / 'audit.csv').is_file()
+    audit_library(root, metadata={}, output=output)
+    assert {p.name for p in output.iterdir()} == {'audit.json', 'report.md'}
 
 
 def test_current_citation_does_not_prove_current_pdf(tmp_path):

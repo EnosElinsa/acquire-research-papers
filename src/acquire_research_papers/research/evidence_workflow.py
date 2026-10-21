@@ -30,11 +30,13 @@ class ResearchEvidenceResult:
     status: str
     manifest_path: Path
     reviewed_path: Path
-    pending_path: Path
-    evidence_map: Path
-    nearest_work_matrix: Path
-    gap_analysis: Path
-    claim_coverage: Path
+    pending_path: Path | None
+    evidence_map: Path | None
+    nearest_work_matrix: Path | None
+    gap_analysis: Path | None
+    claim_coverage: Path | None
+    report: Path | None
+    papers: Path | None
     reviewed: int
     pending: int
     evidence_records: int
@@ -82,7 +84,7 @@ def _candidate(record: SelectionRecord) -> CandidateMetadata:
 class ResearchEvidenceWorkflow:
     """Import agent evidence only when it matches the frozen parsed full text."""
 
-    def run(self, root: Path, decisions_path: Path) -> ResearchEvidenceResult:
+    def run(self, root: Path, decisions_path: Path, *, export_csv: bool = False) -> ResearchEvidenceResult:
         destination = root.resolve()
         run = read_run_manifest(destination)
         fulltext_name = str(run.get("full_text_manifest") or "")
@@ -215,6 +217,9 @@ class ResearchEvidenceWorkflow:
         writer.writeheader()
         writer.writerows(pending_rows)
         atomic_write_bytes(pending_path, buffer.getvalue().encode("utf-8-sig"))
+        if not pending_rows and run.get("output_version", 1) >= 2:
+            pending_path.unlink(missing_ok=True)
+            pending_path = None
         status = "complete" if not pending_rows else "evidence_required"
         reports = ResearchDelivery(destination / "reports").write(
             brief=run["brief"],
@@ -227,6 +232,8 @@ class ResearchEvidenceWorkflow:
                 for row in validated_reviews
             },
             run_status=status,
+            legacy=run.get("output_version", 1) < 2,
+            export_csv=export_csv,
         )
         manifest_path = destination / "research-evidence.json"
         write_json(
@@ -242,7 +249,7 @@ class ResearchEvidenceWorkflow:
                 "pending": len(pending_rows),
                 "evidence_records": len(evidence),
                 "validated_reviews": reviewed_path.name,
-                "pending_reviews": pending_path.name,
+                "pending_reviews": pending_path.name if pending_path else None,
                 "reports": "reports",
             },
         )
@@ -262,6 +269,8 @@ class ResearchEvidenceWorkflow:
             nearest_work_matrix=reports.nearest_work_matrix,
             gap_analysis=reports.gap_analysis,
             claim_coverage=reports.claim_coverage,
+            report=reports.report,
+            papers=reports.manifest,
             reviewed=len(validated_reviews),
             pending=len(pending_rows),
             evidence_records=len(evidence),

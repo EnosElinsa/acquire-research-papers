@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "acquire-research-papers"
-version = "0.5.0"
+version = "0.6.0"
 description = "Codex skill and CLI for verified paper acquisition, library management, and author discovery"
 readme = "README.md"
 requires-python = ">=3.11"

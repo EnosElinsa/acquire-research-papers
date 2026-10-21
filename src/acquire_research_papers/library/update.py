@@ -129,8 +129,11 @@ def update_library(directory: Path | str, *, output: Path | str, application: An
         items.append(row)
 
     def queue() -> None:
-        write_csv(output / "manual-download.csv", [row for row in items if row["status"] != "staged"],
-                  ["doi", "status", "reason"])
+        pending = [row for row in items if row["status"] != "staged"]
+        if pending:
+            write_csv(output / "manual-download.csv", pending, ["doi", "status", "reason"])
+        else:
+            (output / "manual-download.csv").unlink(missing_ok=True)
 
     queue()
     deadline = time.monotonic() + timeout
@@ -201,6 +204,6 @@ def update_library(directory: Path | str, *, output: Path | str, application: An
     save_plan(actions, source_root=output / "staged", target_root=root,
               output=plan, mode="update")
     result = {"status": "staged" if staged else "manual_required" if items else "no_updates",
-              "items": items, "plan": str(plan), "manual_queue": str(output / "manual-download.csv")}
+              "items": items, "plan": str(plan), "manual_queue": str(output / "manual-download.csv") if any(row["status"] != "staged" for row in items) else None}
     write_json(output / "update.json", result)
     return result

@@ -29,19 +29,15 @@ Select the user's named institution profile for IEEE access. Stored configuratio
 
 | Request | Command and reference |
 | --- | --- |
-| Resolve, discover, enrich, compare/merge, review, freeze, verify, parse, validate evidence, or export independently | Read [capabilities](references/capabilities.md); compose only needed commands. |
-| Configure an institution, switch profiles, log in, or validate access | `arp config setup ieee`, `arp config ieee list/use/login/doctor`; read [configuration](references/configuration.md) |
-| Configure one API/parser provider | `arp config setup <provider>`; read [credentials and cache](references/credentials-and-cache.md) |
 | Known DOI, publisher URL, exact title, or explicit paper list | `arp fetch`; read [acquisition workflows](references/workflows.md) |
-| User-operated ScienceDirect download | `arp manual-fetch`; read [source policies](references/source-policies.md) |
-| Existing library consistency, publication changes, missing pairs, or duplicates | `arp library audit/update`; read [library mode](references/library-mode.md) |
-| Import, rename, organize, or extract explicitly identified book chapters | `arp library import/organize/apply`; read [library mode](references/library-mode.md) |
-| Publications by an author, including a date range or local-library comparison | `arp discover author`; read [author mode](references/author-mode.md) |
 | Venue/topic/year/count corpus | `arp discover corpus --progress` → `arp review corpus` → `arp acquire corpus`; read [corpus mode](references/corpus-mode.md) |
 | Nearest work, Related Work, claim citations, or gap evidence | `arp discover research` → review → acquire → evidence; read [research mode](references/research-mode.md) |
-| Explicit PDF-to-Markdown export | `arp export-md`; read [credentials and cache](references/credentials-and-cache.md) |
 
-An attached document or role assignment is an input adapter: translate its relevant requirements into explicit inputs and the existing specifications. Author gap checks, corpus building, Related Work and gap analysis are compositions, not new kernel modes. Start with [seven copyable recipes](examples/README.md). Keep corpus and research frozen hashes unchanged when running a library or author task.
+Start with [copyable recipes](examples/README.md). Related Work and gap analysis share one research workflow; choose the question type in the brief. Discovery writes state only. Evidence review produces `reports/report.md`; add `--export-csv` for tables. Never draft placeholder conclusions during discovery.
+
+Advanced tasks: [author bibliographies](references/author-mode.md), [library audit/update/import/organize and explicit chapters](references/library-mode.md), [independent capabilities and run recovery](references/capabilities.md), [institution profiles](references/configuration.md), and [explicit Markdown export](references/credentials-and-cache.md). Read only the reference needed for the task. Author and library audit default to JSON plus `report.md`; CSV is opt-in.
+
+Before planning venue coverage, use `arp sources --spec <corpus.yaml>` and read [sources and coverage](references/sources.md). This offline diagnostic describes capability, not live coverage or universal completeness. Translate attached documents into the same explicit inputs. Keep corpus and research frozen hashes unchanged when running library or author tasks.
 
 ## Review and completion
 

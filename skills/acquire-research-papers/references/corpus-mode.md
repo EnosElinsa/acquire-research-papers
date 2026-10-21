@@ -113,3 +113,7 @@ python "$skill/scripts/arp.py" manual-fetch `
 ```
 
 This mode trusts neither editable CSV values nor filenames. It verifies the frozen list, official identity, PDF, and raw publisher BibTeX before filling the reserved paths. Do not add a source-specific shortcut.
+
+## Output lifecycle
+
+`pending-metadata.csv`, acquisition `manual-download.csv`, and `retryable-downloads.csv` exist only when nonempty; absent paths are null. Resolving their items removes the known generated queue on rerun. Corpus review `pending-review.csv` remains part of the hash-bound review contract, including its empty completed form. Keep request, candidates, evidence packets, coverage, discovery errors, review/selection manifests and acquisition ledgers for recovery. `paper-manifest.csv` remains the delivered inventory. Use `arp sources --spec <corpus.yaml>` before discovery to inspect offline source capability; actual coverage comes from `coverage.jsonl`.

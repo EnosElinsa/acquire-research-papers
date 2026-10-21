@@ -29,7 +29,7 @@ class ResearchReviewResult:
     status: str
     manifest_path: Path
     reviewed_path: Path
-    pending_path: Path
+    pending_path: Path | None
     selection_manifest_path: Path | None
     included: int
     excluded: int
@@ -57,7 +57,9 @@ def _load_decisions(path: Path) -> dict[str, dict[str, Any]]:
     return decisions
 
 
-def _write_pending(path: Path, rows: list[dict[str, Any]]) -> None:
+def _write_pending(path: Path | None, rows: list[dict[str, Any]]) -> None:
+    if path is None:
+        return
     buffer = io.StringIO(newline="")
     writer = csv.DictWriter(buffer, fieldnames=["candidate_id", "title", "reason"])
     writer.writeheader()
@@ -152,6 +154,9 @@ class ResearchReviewWorkflow:
         reviewed_sha256 = sha256_bytes(reviewed_bytes)
 
         pending_path = destination / "pending-research-review.csv"
+        if not pending_rows and run.get("output_version", 1) >= 2:
+            pending_path.unlink(missing_ok=True)
+            pending_path = None
         selection_manifest: Path | None = None
         existing_selection_path = destination / "selection" / "selection-manifest.json"
         selection_relative: str | None
@@ -176,7 +181,7 @@ class ResearchReviewWorkflow:
             "excluded": excluded,
             "pending": len(pending_rows),
             "reviewed_file": reviewed_path.name,
-            "pending_file": pending_path.name,
+            "pending_file": pending_path.name if pending_path else None,
             "selection_manifest": selection_relative,
         }
         review_manifest_bytes = (

@@ -141,16 +141,43 @@ def test_research_evidence_import_verifies_excerpt_and_fills_reports(tmp_path: P
     assert result.status == "complete"
     assert result.reviewed == 1
     assert result.pending == 0
-    assert excerpt in result.evidence_map.read_text(encoding="utf-8")
+    assert excerpt in result.report.read_text(encoding="utf-8")
+    assert {p.name for p in (root / "reports").iterdir()} == {"report.md"}
+    assert result.pending_path is None
+    result = ResearchEvidenceWorkflow().run(root, decisions, export_csv=True)
     coverage = result.claim_coverage.read_text(encoding="utf-8-sig")
     assert "claim-1" in coverage
     assert "direct-support" in coverage
-    manifest = result.manifest_path.parent / "reports" / "research-manifest.csv"
+    manifest = result.papers
     assert "reviewed" in manifest.read_text(encoding="utf-8-sig")
-    pending_report = result.manifest_path.parent / "reports" / "pending-review.csv"
-    assert pending_report.read_text(encoding="utf-8-sig").splitlines() == ["paper_id,title,reason"]
+    assert not (root / "reports" / "pending-review.csv").exists()
     run = json.loads((root / "research-run.json").read_text(encoding="utf-8"))
     assert run["status"] == "complete"
+
+
+def test_old_run_keeps_legacy_reports_on_resume(tmp_path: Path) -> None:
+    root, row = _parsed_run(tmp_path)
+    run_path = root / "research-run.json"
+    run = json.loads(run_path.read_text(encoding="utf-8"))
+    run.pop("output_version")
+    run_path.write_text(json.dumps(run), encoding="utf-8")
+    decisions = tmp_path / "evidence.jsonl"
+    _write_evidence(decisions, row, "The method jointly optimizes placement and scheduling.")
+    result = ResearchEvidenceWorkflow().run(root, decisions)
+    assert result.evidence_map.is_file()
+    assert result.claim_coverage.is_file()
+    assert result.report is None
+    assert result.pending_path.is_file()
+
+
+def test_partial_evidence_report_discloses_pending_papers(tmp_path: Path) -> None:
+    root, row = _parsed_run(tmp_path)
+    decisions = tmp_path / "empty.jsonl"
+    decisions.write_text("", encoding="utf-8")
+    result = ResearchEvidenceWorkflow().run(root, decisions)
+    assert result.status == "evidence_required"
+    assert row["selection_id"] in result.report.read_text(encoding="utf-8")
+    assert result.pending_path.is_file()
 
 
 def test_research_evidence_resume_reuses_prior_validated_decisions(tmp_path: Path) -> None:

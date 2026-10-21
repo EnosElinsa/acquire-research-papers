@@ -45,17 +45,15 @@ delivery:
     assert payload["status"] == "review_required"
     assert payload["query_passes"] == 4
     for filename in (
-        "research-manifest.csv",
-        "pending-review.csv",
-        "evidence-map.md",
-        "nearest-work-matrix.csv",
-        "gap-analysis.md",
         "research-plan.json",
         "research-candidates.jsonl",
         "citation-graph.json",
         "research-run.json",
     ):
         assert (output / filename).is_file()
+    assert payload["manifest"] is None
+    assert payload["evidence_map"] is None
+    assert len(list(output.iterdir())) == 4
     run = json.loads((output / "research-run.json").read_text(encoding="utf-8"))
     assert run["phase"] == "discovery"
     assert run["status"] == "review_required"
@@ -211,5 +209,7 @@ analysis:
     ) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["status"] == "complete"
-    assert Path(payload["evidence_map"]).is_file()
-    assert Path(payload["claim_coverage"]).is_file()
+    assert Path(payload["report"]).is_file()
+    assert payload["evidence_map"] is None
+    assert payload["claim_coverage"] is None
+    assert payload["pending_review"] is None

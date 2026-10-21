@@ -25,6 +25,11 @@ def test_author_exact_doi_dedup_issue_date_and_coverage(tmp_path):
     assert result['papers'][1]['publication_stage'] == 'preprint'
     assert result['coverage']['complete'] is False
     assert (tmp_path / 'author-discovery.json').exists()
+    assert not (tmp_path / 'author-discovery.csv').exists()
+    discover_author({'name': 'Ada'}, records=records, output=tmp_path, export_csv=True)
+    assert (tmp_path / 'author-discovery.csv').is_file()
+    discover_author({'name': 'Ada'}, records=records, output=tmp_path)
+    assert not (tmp_path / 'author-discovery.csv').exists()
 
 
 def test_name_only_author_identity_stays_ambiguous_and_source_errors_explicit(tmp_path):

@@ -28,7 +28,7 @@ SKILL_FILES = (
     "references/corpus-mode.md", "references/research-mode.md", "references/source-policies.md",
     "references/credentials-and-cache.md", "references/workflows.md",
     "references/configuration.md", "references/library-mode.md", "references/author-mode.md",
-    "references/capabilities.md", "references/hosts.md",
+    "references/capabilities.md", "references/hosts.md", "references/sources.md",
     "templates/.env.example", "templates/institution.env.example",
     "templates/kiro-agent.example.json", "examples/README.md",
     "examples/01-known-list.md", "examples/02-topic-corpus.md",

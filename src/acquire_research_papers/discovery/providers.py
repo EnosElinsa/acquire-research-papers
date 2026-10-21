@@ -13,9 +13,20 @@ from acquire_research_papers.discovery.contracts import (
     DiscoveryCapabilities,
     DiscoveryDiagnostic,
     DiscoveryRequest,
+    VenueScope,
 )
 from acquire_research_papers.http import HttpStatusError, NetworkTransient, RateLimited
 from acquire_research_papers.models import normalize_doi
+
+
+def crossref_scope(venue: VenueScope) -> dict:
+    """Describe the same identifier gate used by live venue enumeration."""
+    available = not ("conference" in venue.kind.casefold() and not venue.collection_doi and not venue.issn)
+    return {
+        "available": available,
+        "identifier": "issn" if venue.issn else "collection_doi" if venue.collection_doi else "container_title",
+        "diagnostic": None if available else "exact_identifier_required",
+    }
 
 
 @dataclass(frozen=True)
@@ -72,11 +83,7 @@ class CrossrefVenueDiscoveryProvider:
                 slice_label = f"{self.provider_id}:{venue.name}:{year}"
                 if slice_label in request.completed_slices:
                     continue
-                if (
-                    "conference" in venue.kind.casefold()
-                    and not venue.collection_doi
-                    and not venue.issn
-                ):
+                if not crossref_scope(venue)["available"]:
                     diagnostics.append(
                         self._diagnostic(
                             error_code="exact_identifier_required",

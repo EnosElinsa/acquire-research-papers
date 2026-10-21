@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.0 — 2026-10-21
+
+- New research runs write only discovery state until evidence review, then one `reports/report.md` with located evidence, claim coverage, pending work, scope and an applicable bounded gap conclusion. `evidence research --export-csv` adds merged `papers.csv` and `claim-coverage.csv`; runs without `output_version` keep their legacy layout on resume.
+- Author discovery and library audit default to JSON plus a brief report; `--export-csv` enables spreadsheet views. Resolved metadata/research/download queues disappear and absent paths return JSON null. Hash-bound corpus review queues and acquisition `paper-manifest.csv` remain for compatibility.
+- Added offline `arp sources` and `arp sources --spec <corpus.yaml>` inventory/venue-year diagnostics. Official ACL/IJCAI indexes, metadata enumeration, artifact acquisition and observed coverage are distinguished. Priority venues remain unselected; no claim of complete conference/journal coverage or new live certification is made.
+- Reduced the main skill to three common routes with advanced references; combined Related Work and gap analysis into a shared recipe and reorganized bilingual output guidance by workflow and phase. Official raw BibTeX, identity checks, frozen hashes, recovery, backup/rollback and access boundaries are preserved.
+
 ## 0.5.0 — 2026-10-20
 
 - Added independent capability commands for identity, discovery, enrichment, collections, reviews, immutable selection, acquisition, local verification, PDF parsing, evidence validation and export, with lightweight hash-checked run status and recovery. Existing corpus/research/author entrypoints and frozen identities remain compatible.

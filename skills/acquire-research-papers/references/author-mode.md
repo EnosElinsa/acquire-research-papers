@@ -25,6 +25,6 @@ Normalize and deduplicate exact DOI only. A shared title does not establish iden
 
 Optional `local_dir` matches exact DOI against local library records and reports paired, BIB-only/PDF-only, or missing. Discovery does not download papers, generate native citations, change the library, or modify corpus/research hashes. Use an explicit acquisition or reviewed library plan afterward.
 
-Output: `author-discovery.json`, `author-discovery.csv`, and `report.md`; [author-discovery.schema.json](../schemas/author-discovery.schema.json) describes the result. Review raw source evidence, identity statuses, date conflicts, group membership, version relations, and coverage limitations before describing the bibliography.
+Default output: `author-discovery.json` and `report.md`; add `--export-csv` for `author-discovery.csv`. Re-running without the flag clears that generated CSV view; [author-discovery.schema.json](../schemas/author-discovery.schema.json) describes the result. Review raw source evidence, identity statuses, date conflicts, group membership, version relations, and coverage limitations before describing the bibliography.
 
 Offline records use a source-keyed object, such as `{"orcid": [{"doi": "10.1234/example", "title": "Example", "issue_date": "2026-03"}], "database": {"error": "offline source unavailable", "records": []}}`. These are discovery records, never publisher citation artifacts.

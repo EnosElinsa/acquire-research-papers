@@ -26,10 +26,10 @@ def test_installer_selects_user_host_directory_without_overwriting(tmp_path, mon
     monkeypatch.syspath_prepend(str(ROOT / "scripts"))
     monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
     builder = module("build_distribution")
-    wheel = tmp_path / "acquire_research_papers-0.5.0-py3-none-any.whl"
+    wheel = tmp_path / "acquire_research_papers-0.6.0-py3-none-any.whl"
     with zipfile.ZipFile(wheel, "w") as archive:
-        archive.writestr("acquire_research_papers-0.5.0.dist-info/METADATA",
-                         "Metadata-Version: 2.3\nName: acquire-research-papers\nVersion: 0.5.0\n")
+        archive.writestr("acquire_research_papers-0.6.0.dist-info/METADATA",
+                         "Metadata-Version: 2.3\nName: acquire-research-papers\nVersion: 0.6.0\n")
     source = Path(builder.build(ROOT, tmp_path / "build", wheel=wheel)["skill"])
     installer = module("install_skill")
     assert installer.main(["--source", str(source), "--host", host]) == 0

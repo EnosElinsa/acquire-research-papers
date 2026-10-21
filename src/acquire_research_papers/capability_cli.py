@@ -292,7 +292,7 @@ def dispatch(args, *, application=None) -> dict:
                         "failed" if result.contract_error and not result.manual_required
                         and not result.retryable else "pending"),
                     "completed": result.delivered, "pending": len(rows) - result.delivered,
-                    "items": items, "outputs": [str(p) for p in artifacts],
+                    "items": items, "outputs": [str(p) for p in artifacts if p is not None],
                     "next_actions": [{"action": "manual-fetch" if item["status"] == "user_download"
                         else "inspect-source" if item["status"] == "failed" else "resume",
                         "item": key} for key, item in items.items() if item["status"] != "complete"]}

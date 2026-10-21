@@ -51,7 +51,8 @@ def test_doctor_is_local_and_does_not_claim_host_load_or_entitlement(tmp_path, m
     report = module.dispatch(arguments("doctor", "--host", "kiro-cli", "--skill-directory",
                                        str(skill(tmp_path))))
     assert report["skill"]["status"] == "present"
-    assert report["runtime"]["version"] == "0.5.0"
+    from acquire_research_papers import __version__
+    assert report["runtime"]["version"] == __version__
     assert report["platform"]["system"]
     assert report["platform"]["release"]
     assert report["schemas"]["status"] == "valid"

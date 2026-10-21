@@ -920,7 +920,7 @@ class CorpusDiscoveryResult:
     status: str
     candidates_path: Path
     evidence_path: Path
-    pending_metadata_path: Path
+    pending_metadata_path: Path | None
     diagnostics_path: Path
     coverage_path: Path
     request_path: Path
@@ -1273,6 +1273,9 @@ class CorpusDiscoveryWorkflow:
                 ]
             )
         atomic_write_bytes(pending_path, pending_buffer.getvalue().encode("utf-8-sig"))
+        if not pending_packets:
+            pending_path.unlink(missing_ok=True)
+            pending_path = None
 
         self._write_jsonl(diagnostics_path, (asdict(item) for item in diagnostics))
         self._write_jsonl(coverage_path, (item.to_dict() for item in coverage))
@@ -1315,7 +1318,7 @@ class CorpusDiscoveryWorkflow:
             "candidates_sha256": sha256_file(candidates_path),
             "evidence_packets": evidence_path.name,
             "evidence_packets_sha256": sha256_file(evidence_path),
-            "pending_metadata_file": pending_path.name,
+            "pending_metadata_file": pending_path.name if pending_path else None,
             "discovery_errors_file": diagnostics_path.name,
         }
         self._write_json(manifest_path, manifest)

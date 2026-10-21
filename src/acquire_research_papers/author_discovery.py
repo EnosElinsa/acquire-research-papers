@@ -185,7 +185,7 @@ def _identity(record: dict, source: str, spec: dict) -> str:
 
 
 def discover_author(spec: dict, *, records: dict | None = None, clients: dict | None = None,
-                    output: Path | str | None = None) -> dict:
+                    output: Path | str | None = None, export_csv: bool = False) -> dict:
     spec = validate_spec(spec)
     sources = list(records) if records is not None else ["orcid", "dblp", "homepage", "database"]
     provider = PublicAuthorClient()
@@ -303,8 +303,11 @@ def discover_author(spec: dict, *, records: dict | None = None, clients: dict | 
         output = Path(output)
         output.mkdir(parents=True, exist_ok=True)
         write_json(output / "author-discovery.json", result)
-        write_csv(output / "author-discovery.csv", papers,
-            ["doi", "title", "identity_status", "issue_date", "online_date", "date_basis", "publication_stage", "local_status"])
+        if not export_csv:
+            (output / "author-discovery.csv").unlink(missing_ok=True)
+        else:
+            write_csv(output / "author-discovery.csv", papers,
+                  ["doi", "title", "identity_status", "issue_date", "online_date", "date_basis", "publication_stage", "local_status"])
         lines = ["# Author discovery", "", clean(spec["name"]), "", f"Candidate works: {len(papers)}", "",
                  "Coverage is incomplete. Review identity evidence and source errors in author-discovery.json.", ""]
         lines.extend(f"- {clean(paper.get('title') or paper.get('doi'))}: {paper['identity_status']}"

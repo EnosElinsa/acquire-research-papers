@@ -196,10 +196,8 @@ def test_acquire_corpus_separates_delivered_and_manual_states(
         manual = list(csv.DictReader(handle))
     assert manual[0]["selection_id"] == selection.records[0].selection_id
     assert manual[0]["target_pdf"] == "Invented Society IV/1.pdf"
-    with Path(payload["retryable_downloads"]).open(
-        encoding="utf-8-sig", newline=""
-    ) as handle:
-        assert list(csv.DictReader(handle)) == []
+    assert payload["retryable_downloads"] is None
+    assert not (output / "retryable-downloads.csv").exists()
     with (output / "paper-manifest.csv").open(
         encoding="utf-8-sig", newline=""
     ) as handle:
@@ -222,6 +220,13 @@ def test_acquire_corpus_separates_delivered_and_manual_states(
     assert paper_manifest[1]["state"] == "delivered"
     assert paper_manifest[1]["pdf"] == "Invented Society IV/2.pdf"
     assert selection.selected_path.read_bytes() == selected_before
+
+    resumed = CorpusAcquisitionWorkflow(acquirer=delivered_outcome).run(selection.manifest_path, output)
+    assert resumed.complete
+    assert resumed.manual_download_path is None
+    assert resumed.retryable_path is None
+    assert not (output / "manual-download.csv").exists()
+    assert json.loads(resumed.manifest_path.read_text())["manual_download"] is None
 
 
 def test_acquire_corpus_defers_exact_hosts_without_calling_acquirer(

@@ -91,4 +91,4 @@ Validation rechecks the PDF/Markdown bytes, review schema and provenance, paper 
 
 ## Status and recovery
 
-Distinguish `agent_review`, `user_download`, `configuration_required`, `rate_limited`, `retryable`, and permanent `failed` item states. Complete unrelated papers while preserving blocked items. Do not convert missing input to a fabricated empty success or overwrite a changed output. Hash conflicts require investigation and a new reviewed run when inputs intentionally change. A lock prevents concurrent use of the same capability run. See [seven composition recipes](../examples/README.md).
+Distinguish `agent_review`, `user_download`, `configuration_required`, `rate_limited`, `retryable`, and permanent `failed` item states. Complete unrelated papers while preserving blocked items. Do not convert missing input to a fabricated empty success or overwrite a changed output. Hash conflicts require investigation and a new reviewed run when inputs intentionally change. A lock prevents concurrent use of the same capability run. See [composition recipes](../examples/README.md).

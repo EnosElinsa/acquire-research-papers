@@ -49,7 +49,7 @@ Acquire Research Papers 是一个多个 Agent 宿主共用的 skill 和确定性
 
 ## 独立能力与组合
 
-身份解析、发现、元数据补全、精确集合合并/比较、Agent 评审、冻结选集、获取、本地核验、独立 PDF 解析、全文证据验证、论文库操作与结构化导出可独立运行。原 corpus/research/author 入口继续兼容。参见[能力契约](skills/acquire-research-papers/references/capabilities.md)及[七个组合示例](skills/acquire-research-papers/examples/README.md)：已知列表、主题论文集、作者查漏、本地库维护、Related Work、gap 分析、显式章节。每个示例附输入、预期结果、恢复与限制；不增加内核任务类型或 Agent 编排器。
+身份解析、发现、元数据补全、精确集合合并/比较、Agent 评审、冻结选集、获取、本地核验、独立 PDF 解析、全文证据验证、论文库操作与结构化导出可独立运行。原 corpus/research/author 入口继续兼容。参见[能力契约](skills/acquire-research-papers/references/capabilities.md)及[组合示例](skills/acquire-research-papers/examples/README.md)：已知列表、主题论文集、作者查漏、本地库维护、Related Work、gap 分析、显式章节。每个示例附输入、预期结果、恢复与限制；不增加内核任务类型或 Agent 编排器。
 
 新评审使用 `schema_version: 2`，`reviewer` 与 `executor.host` 记录实际宿主，模型/版本仅在已知时记录。旧 Codex v1 记录仍可读取，原字节和哈希不变。能力命令可用 `--run`，`arp run status --run <目录>` 汇总状态；旧工作流继续使用原清单及恢复命令。独立 `parse` 无需 BibTeX，但保留用户文件的来源可信度；结构化 `export --format markdown` 与全文 `export-md` 区分。
 
@@ -83,12 +83,12 @@ Codex、Claude Code、Kiro IDE、Kiro CLI 共用同一 skill 和固定 wheel。�
 
 ### 发布文件与手动安装
 
-[v0.5.0 发布页](https://github.com/EnosElinsa/acquire-research-papers/releases/tag/v0.5.0)提供：
+[v0.6.0 发布页](https://github.com/EnosElinsa/acquire-research-papers/releases/tag/v0.6.0)提供：
 
 | 文件 | 用途 |
 | --- | --- |
-| `acquire-research-papers-skill-0.5.0.zip` | 解压后，将其中的 `acquire-research-papers/` 文件夹复制到新的 skill 目录。包含指令、参考资料、schemas、启动器和固定运行版本清单。 |
-| `acquire_research_papers-0.5.0-py3-none-any.whl` | 用 `uv tool install <wheel-path>` 单独安装 CLI；也可将其绝对路径设置为 `ARP_LOCAL_WHEEL`，供启动器从本地加载。摘要校验仍然生效。 |
+| `acquire-research-papers-skill-0.6.0.zip` | 解压后，将其中的 `acquire-research-papers/` 文件夹复制到新的 skill 目录。包含指令、参考资料、schemas、启动器和固定运行版本清单。 |
+| `acquire_research_papers-0.6.0-py3-none-any.whl` | 用 `uv tool install <wheel-path>` 单独安装 CLI；也可将其绝对路径设置为 `ARP_LOCAL_WHEEL`，供启动器从本地加载。摘要校验仍然生效。 |
 | `SHA256SUMS` | PowerShell 使用 `Get-FileHash <path> -Algorithm SHA256`，Linux 使用 `sha256sum <path>`，与清单核对下载文件。 |
 
 手动安装 skill 需要 Python 3.11+ 和 uv。启动器默认在首次运行时下载固定 wheel；依赖安装仍需网络或已有 uv 缓存。IEEE 浏览器另外需要 Node.js。不要把源码压缩包或开发 checkout 整体复制为 skill。启动和迁移问题见 [SUPPORT.md](SUPPORT.md)。
@@ -338,6 +338,8 @@ Crossref、OpenAlex、Semantic Scholar、普通仓库和镜像都不能满足最
 
 “支持”必须区分发现、正式文件获取和真实成熟度：
 
+运行 `arp sources` 或 `arp sources --spec <corpus.yaml>`，可离线查看来源能力和逐 venue/年份缺口。参见[来源台账与验收标准](skills/acquire-research-papers/references/sources.md)。优先 venue 名单尚未确定，已有 ACL/IJCAI/IEEE/ACM/ScienceDirect 场景不代表覆盖全部会议和期刊。枚举完成只针对所选来源，上游仍可能漏收。
+
 | 来源 | 论文发现 | PDF/BibTeX 获取 | 当前成熟度与失败处理 |
 | --- | --- | --- | --- |
 | Crossref | 主要 venue/year 枚举和 research 搜索 | 不支持 | 稳定的公开元数据来源，但字段完整度仍取决于出版社 |
@@ -406,27 +408,24 @@ python "$skill/scripts/arp.py" manual-fetch `
 
 ## 如何理解输出文件
 
-| 文件 | 含义 |
-| --- | --- |
-| `coverage.jsonl` | 每个来源对请求的 venue/year 切片覆盖到什么程度 |
-| `candidates.jsonl` | 去重后的发现账本，不是最终引用库 |
-| `evidence-packets.jsonl` | 当前 Agent 实际评审的不可变标题/摘要证据 |
-| `pending-metadata.csv` | 因缺少摘要等证据而暂时无法评审的候选 |
-| `pending-review.csv` | 元数据足够但尚无语义决定的候选 |
-| `selected-papers.jsonl` | 唯一允许进入获取阶段的冻结论文 |
-| `selection-manifest.json` | 规范和冻结清单的哈希绑定 |
-| `acquisition-manifest.jsonl` | 每篇入选论文的持久交付状态 |
-| `manual-download.csv` | 需要授权用户操作或尚无安全 adapter 的冻结论文 |
-| `retryable-downloads.csv` | 不改变选集即可重试的临时故障 |
-| `delivery-manifest.json` | 获取数量、选集绑定和完成状态 |
-| `research-candidates.jsonl` | 用于明确评审最相近论文的哈希绑定候选 |
-| `citation-graph.json` | 有边界的后向、前向和 related-paper 边、已使用/被截断的种子边界，以及脱敏来源诊断 |
-| `full-text-manifest.jsonl` | 冻结论文、正式 PDF 哈希、MinerU Markdown 哈希、解析模式和 pending 状态 |
-| `validated-evidence-reviews.jsonl` | 绑定到准确 PDF 和解析 Markdown 的 Agent 证据评审 |
-| `claim-coverage.csv` | 每个 claim 的关系、证据论文和未解决状态 |
-| `evidence-map.md` / `gap-analysis.md` | 可审计的证据位置和限定在检索范围内的结论 |
+先读 CLI 返回的状态、数量、下一步动作和可用路径。可选文件不存在时路径返回 JSON `null`。机器状态用于恢复，日常通常只需读报告和非空待办队列。
 
-某次运行中不应访问指定出版社时，可以重复使用 `--defer-host <准确主机名>`。延后的论文仍保留在选集中并进入人工队列；已经通过哈希验证的交付仍会复用。
+| 工作流 / 阶段 | 应保留的状态 | 面向用户的结果 / 可选导出 |
+| --- | --- | --- |
+| 单篇获取 | 正式 PDF、原始 BibTeX 和 provenance | 核验后的文件对，不生成报告目录 |
+| Corpus 发现 | 请求、`coverage.jsonl`、候选、证据包、来源错误和 manifest | 仅有缺失元数据时写 `pending-metadata.csv` |
+| Corpus 复核 | 复核决定、`selected-papers.jsonl`、选集和复核 manifest | `pending-review.csv` 受哈希绑定，完成后仍保留空队列 |
+| Corpus 获取 | 获取账本、选集绑定、交付 manifest 和正式文件对 | `paper-manifest.csv`；人工/重试队列仅在非空时生成 |
+| Research 发现 | `research-plan.json`、`research-candidates.jsonl`、`citation-graph.json`、`research-run.json` | 此阶段不生成证据或 gap 报告 |
+| Research 复核 / 全文 | 复核决定、冻结选集、阶段 manifest、`full-text-manifest.jsonl` 和内部解析缓存 | 非空复核/下载队列；状态区分获取与解析阻塞 |
+| Research 证据 | `validated-evidence-reviews.jsonl`、`research-evidence.json` | 一份 `reports/report.md`；`--export-csv` 增加 `papers.csv`、`claim-coverage.csv` |
+| 作者文献 | 含来源、身份、日期证据的 `author-discovery.json` | `report.md`；`--export-csv` 增加 `author-discovery.csv` |
+| 文献库审计 | `audit.json` | `report.md`、非空人工队列；`--export-csv` 增加 `audit.csv` |
+| 文献库更新 / 导入 / 整理 | 待审计划、暂存文件、provenance、备份和 apply journal | 审核后执行计划，保留备份供回滚 |
+
+新 Research 运行标记 `output_version: 2`。没有该字段的旧运行继续使用旧报告布局，不重写冻结字节或哈希。新布局将 research manifest 和 nearest-work matrix 合并为可选 `papers.csv`；证据位置、claim 状态及适用的有界 gap 结论合并到 `report.md`，检索溯源保留在 `research-plan.json`。不带 CSV 导出选项重新运行时，只清除已知生成文件；待办解决后清除对应队列。不要用这些生成文件名保存手工编辑内容。
+
+使用可重复的 `--defer-host <exact-hostname>` 暂缓本次访问指定出版社。条目继续保留在冻结选集并进入人工队列，已核验的交付继续有效。
 
 ## 准确性与可信边界
 
@@ -465,7 +464,7 @@ python "$skill/scripts/arp.py" manual-fetch `
 2. **改善 IEEE 院校诊断。**在现有命名 profile 和 doctor 基础上改进首次适配及实时访问诊断，继续保护凭据。
 3. **产品化 ACM 授权访问。**设计独立、可见、隔离并限制准确域名的浏览器契约，采用与 IEEE 相同的 fail-closed 原则；访问或页面形态未知时继续转人工。
 4. **扩展安全增量获取。**在现有论文库导入、更新计划基础上让新冻结选集复用已验证用户文件。
-5. **扩展组合指南。**在已有七个配方、输入模板与运行摘要基础上改进示例，后续再评估 init 命令。
+5. **扩展组合指南。**在已有配方、输入模板与运行摘要基础上改进示例，后续再评估 init 命令。
 
 ### 中期
 

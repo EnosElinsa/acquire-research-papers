@@ -385,8 +385,8 @@ def _paper_manifest_row(
 class AcquisitionRunResult:
     status: str
     acquisition_path: Path
-    manual_download_path: Path
-    retryable_path: Path
+    manual_download_path: Path | None
+    retryable_path: Path | None
     paper_manifest_path: Path
     manifest_path: Path
     total: int
@@ -553,6 +553,12 @@ class CorpusAcquisitionWorkflow:
             [*identity_fields, "reason", "message"],
             [{**row, "reason": row["error_code"]} for row in retryable_rows],
         )
+        if not manual_rows:
+            manual_path.unlink(missing_ok=True)
+            manual_path = None
+        if not retryable_rows:
+            retryable_path.unlink(missing_ok=True)
+            retryable_path = None
         paper_manifest_path = destination / "paper-manifest.csv"
         _write_csv(
             paper_manifest_path,
@@ -592,8 +598,8 @@ class CorpusAcquisitionWorkflow:
             **counts,
             "complete": complete,
             "acquisition_manifest": acquisition_path.name,
-            "manual_download": manual_path.name,
-            "retryable_downloads": retryable_path.name,
+            "manual_download": manual_path.name if manual_path else None,
+            "retryable_downloads": retryable_path.name if retryable_path else None,
             "paper_manifest": paper_manifest_path.name,
             "selection_binding": binding_path.name,
         }

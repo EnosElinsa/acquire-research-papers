@@ -785,6 +785,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="arp")
     parser.add_argument("--version", action="store_true")
     subparsers = parser.add_subparsers(dest="command")
+    sources = subparsers.add_parser("sources", help="describe offline source capabilities and venue/year gaps")
+    sources.add_argument("--spec", type=Path, help="validate and diagnose a corpus specification")
     from acquire_research_papers import configuration_commands, library_cli
     library_cli.register(subparsers)
     schema_command = subparsers.add_parser("schema", help="print a bundled public JSON schema")
@@ -910,6 +912,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     evidence_research.add_argument("--run", type=Path, required=True)
     evidence_research.add_argument("--records", type=Path, required=True)
+    evidence_research.add_argument("--export-csv", action="store_true", help="export papers and claim coverage tables")
     from acquire_research_papers import capability_cli
     capability_cli.register(subparsers, discover_modes=discover_modes, review_modes=review_modes,
                             evidence_modes=evidence_modes, acquire_modes=acquire_modes)
@@ -960,6 +963,14 @@ def run_cli(
             return 78 if result.get("status") in {"failed", "configuration_required"} else (
                 75 if result.get("status") == "rate_limited" else 0)
         except (ValueError, OSError, KeyError, TypeError) as exc:
+            _emit({"status": "error", "error_code": "invalid_input", "message": str(exc)})
+            return 64
+    if args.command == "sources":
+        from acquire_research_papers.source_catalog import describe_sources
+        try:
+            _emit(describe_sources(load_corpus_spec(args.spec) if args.spec else None))
+            return 0
+        except (ValueError, OSError, SpecValidationError) as exc:
             _emit({"status": "error", "error_code": "invalid_input", "message": str(exc)})
             return 64
     if args.command == "schema":
@@ -1136,7 +1147,7 @@ def run_cli(
                     "status": result.status,
                     "candidates": str(result.candidates_path),
                     "evidence_packets": str(result.evidence_path),
-                    "pending_metadata": str(result.pending_metadata_path),
+                    "pending_metadata": str(result.pending_metadata_path) if result.pending_metadata_path else None,
                     "coverage": str(result.coverage_path),
                     "request": str(result.request_path),
                     "discovery_errors": str(result.diagnostics_path),
@@ -1162,16 +1173,16 @@ def run_cli(
                 {
                     "status": result.status,
                     "query_passes": result.query_passes,
-                    "manifest": str(result.delivery.manifest),
-                    "pending_review": str(result.delivery.pending_review),
-                    "evidence_map": str(result.delivery.evidence_map),
-                    "nearest_work_matrix": str(result.delivery.nearest_work_matrix),
-                    "gap_analysis": str(result.delivery.gap_analysis),
+                    "manifest": str(result.delivery.manifest) if result.delivery.manifest else None,
+                    "pending_review": str(result.delivery.pending_review) if result.delivery.pending_review else None,
+                    "evidence_map": str(result.delivery.evidence_map) if result.delivery.evidence_map else None,
+                    "nearest_work_matrix": str(result.delivery.nearest_work_matrix) if result.delivery.nearest_work_matrix else None,
+                    "gap_analysis": str(result.delivery.gap_analysis) if result.delivery.gap_analysis else None,
                     "research_plan": str(result.delivery.research_plan),
                     "candidates": str(result.delivery.candidates_snapshot),
                     "citation_graph": str(result.delivery.citation_graph),
                     "run_manifest": str(result.delivery.run_manifest),
-                    "claim_coverage": str(result.delivery.claim_coverage),
+                    "claim_coverage": str(result.delivery.claim_coverage) if result.delivery.claim_coverage else None,
                 }
             )
             return 0
@@ -1211,7 +1222,7 @@ def run_cli(
                     "status": result.status,
                     "manifest": str(result.manifest_path),
                     "reviewed": str(result.reviewed_path),
-                    "pending_review": str(result.pending_path),
+                    "pending_review": str(result.pending_path) if result.pending_path else None,
                     "selection_manifest": (
                         str(result.selection_manifest_path)
                         if result.selection_manifest_path
@@ -1239,8 +1250,8 @@ def run_cli(
                 {
                     "status": result.status,
                     "acquisition_manifest": str(result.acquisition_path),
-                    "manual_download": str(result.manual_download_path),
-                    "retryable_downloads": str(result.retryable_path),
+                    "manual_download": str(result.manual_download_path) if result.manual_download_path else None,
+                    "retryable_downloads": str(result.retryable_path) if result.retryable_path else None,
                     "paper_manifest": str(result.paper_manifest_path),
                     "manifest": str(result.manifest_path),
                     "total": result.total,
@@ -1269,7 +1280,7 @@ def run_cli(
                     "full_text_manifest": str(result.full_text_manifest),
                     "manifest": str(result.manifest_path),
                     "acquisition_manifest": str(result.acquisition.manifest_path),
-                    "manual_download": str(result.acquisition.manual_download_path),
+                    "manual_download": str(result.acquisition.manual_download_path) if result.acquisition.manual_download_path else None,
                     "parsed": result.parsed,
                     "pending": result.pending,
                     "acquisition_pending": result.acquisition_pending,
@@ -1280,7 +1291,7 @@ def run_cli(
         if args.command == "evidence" and args.evidence_mode == "research":
             try:
                 run_root = ensure_outside_repository(args.run, app.repository_root)
-                result = ResearchEvidenceWorkflow().run(run_root, args.records)
+                result = ResearchEvidenceWorkflow().run(run_root, args.records, export_csv=args.export_csv)
             except ValueError as exc:
                 raise AmbiguousInput(str(exc)) from exc
             _emit(
@@ -1288,14 +1299,16 @@ def run_cli(
                     "status": result.status,
                     "manifest": str(result.manifest_path),
                     "validated_reviews": str(result.reviewed_path),
-                    "pending_review": str(result.pending_path),
-                    "evidence_map": str(result.evidence_map),
-                    "nearest_work_matrix": str(result.nearest_work_matrix),
-                    "gap_analysis": str(result.gap_analysis),
-                    "claim_coverage": str(result.claim_coverage),
+                    "pending_review": str(result.pending_path) if result.pending_path else None,
+                    "evidence_map": str(result.evidence_map) if result.evidence_map else None,
+                    "nearest_work_matrix": str(result.nearest_work_matrix) if result.nearest_work_matrix else None,
+                    "gap_analysis": str(result.gap_analysis) if result.gap_analysis else None,
+                    "claim_coverage": str(result.claim_coverage) if result.claim_coverage else None,
                     "reviewed": result.reviewed,
                     "pending": result.pending,
                     "evidence_records": result.evidence_records,
+                    "report": str(result.report) if result.report else None,
+                    "papers": str(result.papers) if result.papers else None,
                 }
             )
             return 0

@@ -38,6 +38,7 @@ def test_research_delivery_writes_evidence_package_without_full_text_markdown(tm
         explanation="It is close but does not cover the full coupling.",
     ).validate()
     result = ResearchDelivery(tmp_path / "out").write(
+        legacy=True,
         brief=brief(),
         plan=ResearchPlanner().build(brief()),
         candidates=[candidate],
@@ -107,6 +108,7 @@ def test_research_delivery_requires_requested_claim_relation(tmp_path: Path) -> 
     ).validate()
 
     result = ResearchDelivery(tmp_path / "out").write(
+        legacy=True,
         brief=scoped_brief,
         plan=ResearchPlanner().build(scoped_brief),
         candidates=[candidate],
@@ -118,3 +120,39 @@ def test_research_delivery_requires_requested_claim_relation(tmp_path: Path) -> 
     assert "claim-1" in coverage
     assert "direct-support" in coverage
     assert "unresolved" in coverage
+
+
+def test_discovery_has_only_resumable_state(tmp_path: Path) -> None:
+    result = ResearchDelivery(tmp_path).write(
+        brief=brief(), plan=ResearchPlanner().build(brief()), candidates=[], evidence=[]
+    )
+    assert {p.name for p in tmp_path.iterdir()} == {
+        "research-plan.json", "research-run.json", "research-candidates.jsonl", "citation-graph.json"
+    }
+    assert json.loads(result.run_manifest.read_text())["output_version"] == 2
+    assert result.report is None
+
+
+def test_compact_report_exports_are_optional_and_stale_exports_removed(tmp_path: Path) -> None:
+    delivery = ResearchDelivery(tmp_path)
+    arguments = dict(brief=brief(), plan=ResearchPlanner().build(brief()), candidates=[],
+                     evidence=[], run_status="evidence_required", pending_paper_ids=["pending-paper"])
+    exported = delivery.write(**arguments, export_csv=True)
+    assert exported.manifest.name == "papers.csv"
+    result = delivery.write(**arguments)
+    assert {p.name for p in tmp_path.iterdir()} == {"report.md"}
+    text = result.report.read_text(encoding="utf-8")
+    assert "pending-paper" in text
+    assert "unresolved" in text
+    assert "No novelty conclusion" in text
+    assert "2026" in text
+    assert "Closest counterexamples and qualifiers" in text
+    assert result.claim_coverage is None
+
+
+def test_related_work_report_has_no_gap_conclusion(tmp_path: Path) -> None:
+    request = {**brief(), "question_type": "related-work"}
+    result = ResearchDelivery(tmp_path).write(
+        brief=request, plan=ResearchPlanner().build(request), candidates=[], evidence=[], run_status="complete"
+    )
+    assert "Bounded conclusion" not in result.report.read_text(encoding="utf-8")
