@@ -104,6 +104,30 @@ def test_coordinator_merges_official_abstract_into_api_identity() -> None:
     }
 
 
+def test_keyword_search_runs_only_while_an_official_listing_is_incomplete() -> None:
+    def official(slices) -> FakeProvider:
+        return FakeProvider(
+            "official",
+            DiscoveryBatch(coverage=tuple(
+                CoverageSlice("official", venue, year, "complete") for venue, year in slices)),
+            venue_aliases=frozenset({"Venue A", "Venue B"}),
+        )
+
+    every_slice = [(venue, year) for venue in ("Venue A", "Venue B") for year in (2026, 2025)]
+    keyword = FakeProvider("keyword", DiscoveryBatch(), source_class="metadata_api")
+    events: list[tuple[str, dict]] = []
+    DiscoveryCoordinator(
+        [keyword, official(every_slice)],
+        progress=lambda event, details: events.append((event, dict(details))),
+    ).discover(request())
+    assert keyword.received is None
+    assert ("provider_skipped", {"provider": "keyword"}) in events
+
+    keyword = FakeProvider("keyword", DiscoveryBatch(), source_class="metadata_api")
+    DiscoveryCoordinator([keyword, official(every_slice[:-1])]).discover(request())
+    assert keyword.received is not None
+
+
 def test_candidate_merge_deduplicates_identical_source_records() -> None:
     item = CandidateMetadata(
         "same",

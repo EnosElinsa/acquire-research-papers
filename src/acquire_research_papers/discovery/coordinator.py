@@ -208,7 +208,25 @@ class DiscoveryCoordinator:
             ):
                 official_complete.add((venue_name, item.year))
 
+        def requested_slices() -> set[tuple[str, int]]:
+            return {
+                (venue.name, year)
+                for venue in request.venues
+                for year in request.years
+                if venue.supports_year(year)
+            }
+
         for _, (provider, capability) in ordered:
+            if (
+                capability.source_class == "metadata_api"
+                and request.venues
+                and requested_slices()
+                and requested_slices() <= official_complete
+            ):
+                # Keyword searches cannot add an in-scope paper that a complete official
+                # listing lacks; they would only return papers from other venues.
+                self._report("provider_skipped", provider=capability.provider_id)
+                continue
             if capability.source_class == "venue_enumerator" and request.venues:
                 supported_venues = tuple(
                     replace(
