@@ -69,6 +69,7 @@ class ResearchFullTextWorkflow:
         *,
         deferred_hosts: tuple[str, ...] | list[str] = (),
         retry_manual: bool = False,
+        parallel_hosts: int | None = None,
     ) -> ResearchFullTextResult:
         destination = root.resolve()
         run = read_run_manifest(destination)
@@ -89,6 +90,7 @@ class ResearchFullTextWorkflow:
             destination / "acquisition",
             deferred_hosts=deferred_hosts,
             retry_manual=retry_manual,
+            parallel_hosts=parallel_hosts,
         )
         acquisition_rows = {
             str(row.get("selection_id") or ""): row

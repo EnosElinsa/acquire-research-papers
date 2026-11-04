@@ -132,9 +132,22 @@ _IEEE_ACCESS_PHASES = IEEE_ACCESS_PHASES
 _PUBLISHER_RETRY = {"retries": 3, "backoff_seconds": 1.0}
 # Minimum spacing between two papers from the same publisher host in a batch.
 _PUBLISHER_INTERVAL_SECONDS = 2.0
+# Publisher hosts contacted at the same time in a batch; each host still gets one paper at a time.
+_PARALLEL_HOSTS = 4
 _RETRY_MANUAL_HELP = (
     "request again papers whose publisher or institution refused access in an earlier run"
 )
+_PARALLEL_HELP = (
+    f"publisher hosts contacted at the same time (default {_PARALLEL_HOSTS}; 1 is one paper at "
+    "a time); each host still gets one paper at a time"
+)
+
+
+def _positive_int(value: str) -> int:
+    number = int(value)
+    if number < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return number
 
 
 def _is_ieee_access_phase(phase: str) -> bool:
@@ -443,6 +456,7 @@ class Application:
         application.corpus_acquisition = CorpusAcquisitionWorkflow(
             acquirer=application.acquire_selected,
             min_host_interval_seconds=_PUBLISHER_INTERVAL_SECONDS,
+            max_parallel_hosts=_PARALLEL_HOSTS,
         )
         research_searchers = [crossref.corpus_searcher]
         research_graph_expanders = []
@@ -825,8 +839,7 @@ class Application:
                 "message": "selected paper has no DOI or official publisher URL",
             }
         try:
-            resolved = self.resolver.resolve(reference)
-            pair = resolved.adapter.acquire(resolved.document)
+            resolved, pair = self.resolver.acquire_exclusive(reference)
             result = self._deliver_pair(
                 pair=pair,
                 destination=output,
@@ -869,6 +882,7 @@ def build_parser() -> argparse.ArgumentParser:
     job_status.add_argument("--job", type=Path, required=True)
     job_status.add_argument("--wait", type=float, default=0.0,
                             help="wait up to this many seconds for the job to end")
+    job_modes.add_parser("list", help="list background jobs started on this machine, newest first")
     job_stop = job_modes.add_parser("stop", help="end the job at its next safe point")
     job_stop.add_argument("--job", type=Path, required=True)
     job_stop.add_argument("--force", action="store_true",
@@ -985,6 +999,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="defer an exact publisher hostname to the manual-download queue (repeatable)",
     )
     acquire_corpus.add_argument("--retry-manual", action="store_true", help=_RETRY_MANUAL_HELP)
+    acquire_corpus.add_argument("--parallel-hosts", type=_positive_int, help=_PARALLEL_HELP)
     acquire_research = acquire_modes.add_parser(
         "research", help="acquire and parse a frozen closest-paper selection"
     )
@@ -1003,6 +1018,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="defer an exact publisher hostname to the manual-download queue (repeatable)",
     )
     acquire_research.add_argument("--retry-manual", action="store_true", help=_RETRY_MANUAL_HELP)
+    acquire_research.add_argument("--parallel-hosts", type=_positive_int, help=_PARALLEL_HELP)
 
     evidence = subparsers.add_parser(
         "evidence", help="validate claim evidence against hash-bound full text"
@@ -1053,14 +1069,17 @@ def run_cli(
         return 0
     if args.command == "job" or args.background is not None:
         from acquire_research_papers import jobs
+        index = AppPaths.default().runs.parent / jobs.INDEX_FILE
         try:
             if args.command == "job" and args.job_mode == "status":
                 result = jobs.status(args.job, wait_seconds=max(0.0, args.wait))
+            elif args.command == "job" and args.job_mode == "list":
+                result = jobs.list_jobs(index)
             elif args.command == "job":
                 result = jobs.stop(args.job, force=args.force)
             else:
                 result = jobs.start(args.background, args.command or "",
-                                    jobs.strip_background_option(raw_argv))
+                                    jobs.strip_background_option(raw_argv), index=index)
         except (ValueError, OSError) as exc:
             _emit({"status": "error", "error_code": "invalid_input", "message": str(exc)})
             return 64
@@ -1393,6 +1412,7 @@ def run_cli(
                     destination,
                     deferred_hosts=args.defer_host,
                     retry_manual=args.retry_manual,
+                    parallel_hosts=args.parallel_hosts,
                 )
             except ValueError as exc:
                 raise AmbiguousInput(str(exc)) from exc
@@ -1401,6 +1421,7 @@ def run_cli(
                     "status": result.status,
                     "acquisition_manifest": str(result.acquisition_path),
                     "manual_download": str(result.manual_download_path) if result.manual_download_path else None,
+                    "manual_download_page": str(result.manual_page_path) if result.manual_page_path else None,
                     "retryable_downloads": str(result.retryable_path) if result.retryable_path else None,
                     "paper_manifest": str(result.paper_manifest_path),
                     "manifest": str(result.manifest_path),
@@ -1423,6 +1444,7 @@ def run_cli(
                     run_root,
                     deferred_hosts=args.defer_host,
                     retry_manual=args.retry_manual,
+                    parallel_hosts=args.parallel_hosts,
                 )
             except ValueError as exc:
                 raise AmbiguousInput(str(exc)) from exc
@@ -1433,6 +1455,7 @@ def run_cli(
                     "manifest": str(result.manifest_path),
                     "acquisition_manifest": str(result.acquisition.manifest_path),
                     "manual_download": str(result.acquisition.manual_download_path) if result.acquisition.manual_download_path else None,
+                    "manual_download_page": str(result.acquisition.manual_page_path) if result.acquisition.manual_page_path else None,
                     "parsed": result.parsed,
                     "pending": result.pending,
                     "acquisition_pending": result.acquisition_pending,

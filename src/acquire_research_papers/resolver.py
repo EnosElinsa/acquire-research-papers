@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -117,6 +118,8 @@ class Resolver:
     ) -> None:
         self.router = router
         self.doi_resolver = doi_resolver or DoiRedirectResolver()
+        self._locks_guard = threading.Lock()
+        self._adapter_locks: dict[str, threading.Lock] = {}
 
     @classmethod
     def empty(cls) -> Resolver:
@@ -138,14 +141,33 @@ class Resolver:
             "title-only input requires canonical discovery before fetch; provide a DOI or official URL"
         )
 
-    def resolve(self, value: str) -> ResolvedSource:
-        landing_url = self._landing_url(value)
+    def _adapter_for(self, landing_url: str) -> SourceAdapter:
         adapter = self.router.adapter_for(landing_url)
         if adapter is None:
             hostname = (urlsplit(landing_url).hostname or "unknown host").casefold()
             raise UnsupportedPublisher(hostname)
+        return adapter
+
+    def resolve(self, value: str) -> ResolvedSource:
+        landing_url = self._landing_url(value)
+        adapter = self._adapter_for(landing_url)
         return ResolvedSource(adapter=adapter, document=adapter.resolve(landing_url))
 
     def acquire(self, value: str) -> AcquiredPair:
         resolved = self.resolve(value)
         return resolved.adapter.acquire(resolved.document)
+
+    def acquire_exclusive(self, value: str) -> tuple[ResolvedSource, AcquiredPair]:
+        """Resolve and acquire while no other thread uses the same adapter.
+
+        Parallel batches give each publisher host its own worker, but a DOI can resolve to a
+        host other than the one its record names; the lock keeps per-adapter state (such as
+        the one IEEE browser) used by one paper at a time.
+        """
+        landing_url = self._landing_url(value)
+        adapter = self._adapter_for(landing_url)
+        with self._locks_guard:
+            lock = self._adapter_locks.setdefault(adapter.name, threading.Lock())
+        with lock:
+            document = adapter.resolve(landing_url)
+            return ResolvedSource(adapter=adapter, document=document), adapter.acquire(document)

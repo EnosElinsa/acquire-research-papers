@@ -77,6 +77,8 @@ def register(subparsers, *, discover_modes, review_modes, evidence_modes, acquir
     acquire.add_argument("--defer-host", action="append", default=[])
     acquire.add_argument("--retry-manual", action="store_true",
                          help="request again papers whose access was refused in an earlier run")
+    acquire.add_argument("--parallel-hosts", type=int,
+                         help="publisher hosts contacted at the same time (default 4)")
     acquire.add_argument("--ieee-profile")
     _output_options(acquire)
     export = subparsers.add_parser("export", help="export records as JSON, CSV or Markdown")
@@ -281,7 +283,8 @@ def dispatch(args, *, application=None) -> dict:
         elif args.command == "acquire":
             result = app().corpus_acquisition.run(args.selection, output,
                                                   deferred_hosts=args.defer_host,
-                                                  retry_manual=args.retry_manual)
+                                                  retry_manual=args.retry_manual,
+                                                  parallel_hosts=args.parallel_hosts)
             rows = read_records(result.acquisition_path)
             states = {"delivered": "complete", "manual_required": "user_download",
                       "retryable": "retryable", "contract_error": "failed"}

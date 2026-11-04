@@ -987,6 +987,84 @@ def test_rerun_skips_only_papers_whose_access_was_refused(tmp_path: Path) -> Non
     assert result.complete
 
 
+def _mixed_hosts(root: Path, layout: list[tuple[str, str]]) -> SelectionStore:
+    candidates = tuple(
+        CandidateMetadata(
+            key, title, 2026, "Invented Venue", 0.9, True, ("title", "abstract"),
+            doi=f"10.1000/{key}", official_url=f"https://{host}/{key}", abstract="Relevant abstract",
+        )
+        for index, (host, key) in enumerate(layout, start=1)
+        for title in [f"Paper {index} <script>alert(1)</script>"]
+    )
+    records = build_selection_records(
+        candidates,
+        venues=(VenueScope("Invented Venue", short_name="IV", publisher="Invented Society"),),
+        delivery={"profile": "numbered", "naming_template": "Invented Society IV/{number}.{ext}"},
+    )
+    return SelectionStore.write(
+        root,
+        {"mode": "corpus", "name": "parallel test",
+         "target": {"minimum": 1, "preferred": len(layout), "maximum": len(layout)}},
+        records,
+    )
+
+
+def test_parallel_hosts_overlap_while_each_host_gets_one_paper_at_a_time(tmp_path: Path) -> None:
+    import threading
+
+    selection = _mixed_hosts(tmp_path / "selection", [
+        ("slow.example", "slow-1"), ("fast.example", "fast-1"),
+        ("slow.example", "slow-2"), ("fast.example", "fast-2")])
+    fast_started = threading.Event()
+    lock = threading.Lock()
+    active: dict[str, int] = {}
+    overlap: list[str] = []
+
+    def acquirer(record, destination):
+        host = record.official_url.split("/")[2]
+        with lock:
+            active[host] = active.get(host, 0) + 1
+            assert active[host] == 1, "a host was contacted twice at once"
+        try:
+            if host == "fast.example":
+                fast_started.set()
+            elif record.key == "slow-1" and fast_started.wait(10):
+                # The slow host's first paper is still running when the fast host starts.
+                overlap.append(record.key)
+            return delivered_outcome(record, destination)
+        finally:
+            with lock:
+                active[host] -= 1
+
+    result = CorpusAcquisitionWorkflow(acquirer=acquirer, max_parallel_hosts=2).run(
+        selection.manifest_path, tmp_path / "delivery")
+
+    assert overlap == ["slow-1"]
+    assert result.complete
+    assert [row["key"] for row in _ledger(result)] == ["slow-1", "fast-1", "slow-2", "fast-2"]
+
+
+def test_the_manual_queue_has_an_escaped_checklist_page_until_it_is_empty(tmp_path: Path) -> None:
+    selection = _mixed_hosts(tmp_path / "selection", [("blocked.example", "blocked-1")])
+    delivery = tmp_path / "delivery"
+
+    queued = CorpusAcquisitionWorkflow(acquirer=lambda record, destination: {
+        "error_code": "unsupported_adapter", "message": "no adapter for blocked.example"}
+    ).run(selection.manifest_path, delivery)
+
+    page = queued.manual_page_path.read_text(encoding="utf-8")
+    assert queued.manual_page_path.name == "manual-download.html"
+    assert '<a href="https://blocked.example/blocked-1"' in page
+    assert "&lt;script&gt;" in page and "<script>" not in page
+    assert "--queue" in page
+    assert json.loads(queued.manifest_path.read_text())["manual_download_page"] == (
+        "manual-download.html")
+
+    done = CorpusAcquisitionWorkflow(acquirer=delivered_outcome).run(selection.manifest_path, delivery)
+    assert done.manual_page_path is None
+    assert not (delivery / "manual-download.html").exists()
+
+
 def test_consecutive_transient_failures_pause_and_success_resets_the_streak(tmp_path: Path) -> None:
     selection = make_many(tmp_path / "selection", 5)
     calls: list[str] = []

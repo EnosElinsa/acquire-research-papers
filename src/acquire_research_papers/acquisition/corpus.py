@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import csv
+import html
 import io
 import json
 import os
 import re
+import threading
 import time
 from collections.abc import Callable, Iterable, Mapping
+from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
@@ -37,6 +40,47 @@ IN_PROGRESS_STATE = "in_progress"
 INTERRUPTED_DIRECTORY = ".arp-interrupted"
 # Ledger flag: the last attempt ended access_required because this paper itself was refused.
 ACCESS_REFUSED = "access_refused"
+MANUAL_PAGE = "manual-download.html"
+
+
+def _manual_page(rows: list[dict[str, Any]], selection_manifest: Path, destination: Path) -> bytes:
+    """A static checklist of the manual-download queue; every value is escaped, no scripts."""
+    def link(url: str, text: str) -> str:
+        scheme = urlsplit(url).scheme.casefold() if url else ""
+        if scheme not in {"http", "https"}:
+            return html.escape(text)
+        return f'<a href="{html.escape(url, quote=True)}" target="_blank" rel="noopener">' \
+               f"{html.escape(text)}</a>"
+
+    items = "\n".join(
+        "<tr><td>{n}</td><td>{title}</td><td>{doi}</td><td>{publisher}</td><td>{reason}</td>"
+        "<td><code>{pdf}</code><br><code>{bib}</code></td></tr>".format(
+            n=index,
+            title=link(str(row.get("official_url") or ""), str(row.get("title") or "")),
+            doi=html.escape(str(row.get("doi") or "")),
+            publisher=html.escape(str(row.get("publisher") or "")),
+            reason=html.escape(f"{row.get('error_code', '')}: {row.get('message', '')}"),
+            pdf=html.escape(str(row.get("target_pdf") or "")),
+            bib=html.escape(str(row.get("target_bibtex") or "")),
+        )
+        for index, row in enumerate(rows, start=1)
+    )
+    command = (f'arp manual-fetch --selection "{selection_manifest}" --queue '
+               f'--output "{destination}" --from "<folder with the downloads>"')
+    return f"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>Manual downloads ({len(rows)})</title>
+<style>body{{font-family:system-ui,sans-serif;margin:2em}}table{{border-collapse:collapse}}
+td,th{{border:1px solid #ccc;padding:.4em;vertical-align:top}}code{{font-size:.85em}}</style>
+</head><body>
+<h1>Manual downloads: {len(rows)} papers</h1>
+<p>Open each title, sign in where needed, and download the official PDF and the publisher's raw
+BibTeX export into one folder. Then import them all at once:</p>
+<pre>{html.escape(command)}</pre>
+<table><tr><th>#</th><th>Title (official page)</th><th>DOI</th><th>Publisher</th>
+<th>Reason</th><th>Delivered as</th></tr>
+{items}
+</table></body></html>
+""".encode("utf-8")
 
 
 def normalized_state(outcome: Mapping[str, Any]) -> str:
@@ -162,6 +206,7 @@ def _has_unbound_managed_artifacts(
     managed = (
         "acquisition-manifest.jsonl",
         "manual-download.csv",
+        MANUAL_PAGE,
         "retryable-downloads.csv",
         "paper-manifest.csv",
     )
@@ -511,6 +556,8 @@ class AcquisitionRunResult:
     complete: bool
     # manual_required papers kept from an earlier refusal instead of being requested again.
     not_retried: int = 0
+    # A checklist page with the official link of every manual-download item.
+    manual_page_path: Path | None = None
 
 
 def _write_acquisition_outputs(
@@ -556,6 +603,13 @@ def _write_acquisition_outputs(
         [*identity_fields, "reason", "message"],
         [{**row, "reason": row["error_code"]} for row in retryable_rows],
     )
+    manual_page_path = destination / MANUAL_PAGE
+    if manual_rows:
+        atomic_write_bytes(manual_page_path,
+                           _manual_page(manual_rows, selection.manifest_path, destination))
+    else:
+        manual_page_path.unlink(missing_ok=True)
+        manual_page_path = None
     if not manual_rows:
         manual_path.unlink(missing_ok=True)
         manual_path = None
@@ -603,6 +657,7 @@ def _write_acquisition_outputs(
         "complete": complete,
         "acquisition_manifest": acquisition_path.name,
         "manual_download": manual_path.name if manual_path else None,
+        "manual_download_page": manual_page_path.name if manual_page_path else None,
         "retryable_downloads": retryable_path.name if retryable_path else None,
         "paper_manifest": paper_manifest_path.name,
         "selection_binding": binding_path.name,
@@ -624,6 +679,7 @@ def _write_acquisition_outputs(
         contract_error=counts["contract_error"],
         complete=complete,
         not_retried=not_retried,
+        manual_page_path=manual_page_path,
     )
 
 
@@ -683,6 +739,43 @@ class _HostGuard:
             self._streak[host] = 0
 
 
+def _attempt_by_host(
+    records: list[SelectionRecord],
+    attempt: Callable[[SelectionRecord], None],
+    parallel: int,
+) -> None:
+    """Attempt each host's papers in selection order, up to ``parallel`` hosts at once.
+
+    One worker owns a host, so per-host spacing, pauses, and a shared institution browser
+    are used by one thread at a time. A failing worker stops the others before their next paper.
+    """
+    groups: dict[str, list[SelectionRecord]] = {}
+    for record in records:
+        groups.setdefault(_normalized_record_host(record), []).append(record)
+    stop = threading.Event()
+
+    def work(host_records: list[SelectionRecord]) -> None:
+        for record in host_records:
+            if stop.is_set():
+                return
+            attempt(record)
+
+    executor = ThreadPoolExecutor(max_workers=min(parallel, len(groups) or 1),
+                                  thread_name_prefix="arp-host")
+    pending = {executor.submit(work, host_records) for host_records in groups.values()}
+    try:
+        while pending:
+            # A bounded wait keeps the main thread responsive to Ctrl+C and job stop.
+            done, pending = wait(pending, timeout=0.5, return_when=FIRST_EXCEPTION)
+            for future in done:
+                future.result()
+    except BaseException:
+        stop.set()
+        executor.shutdown(wait=False, cancel_futures=True)
+        raise
+    executor.shutdown(wait=True)
+
+
 class CorpusAcquisitionWorkflow:
     """Acquire only records in a hash-verified frozen selection."""
 
@@ -694,8 +787,10 @@ class CorpusAcquisitionWorkflow:
         transient_failure_limit: int = 3,
         sleeper: Callable[[float], None] = time.sleep,
         monotonic: Callable[[], float] = time.monotonic,
+        max_parallel_hosts: int = 1,
     ) -> None:
         self.acquirer = acquirer
+        self.max_parallel_hosts = max(1, max_parallel_hosts)
         self.min_host_interval_seconds = min_host_interval_seconds
         self.transient_failure_limit = transient_failure_limit
         self._sleeper = sleeper
@@ -708,6 +803,7 @@ class CorpusAcquisitionWorkflow:
         *,
         deferred_hosts: Iterable[str] = (),
         retry_manual: bool = False,
+        parallel_hosts: int | None = None,
     ) -> AcquisitionRunResult:
         deferred = _normalize_exact_hosts(deferred_hosts)
         not_retried = 0
@@ -793,58 +889,18 @@ class CorpusAcquisitionWorkflow:
             monotonic=self._monotonic,
         )
 
-        def checkpoint(selection_id: str, row: dict[str, Any]) -> None:
-            ledger[selection_id] = row
-            atomic_write_bytes(
-                acquisition_path,
-                _jsonl([ledger[key] for key in order if key in ledger]),
-            )
+        ledger_lock = threading.Lock()
 
-        rows: list[dict[str, Any]] = []
-        for record in selection.records:
-            prior = previous.get(record.selection_id)
-            if _verified_previous(record, prior, destination):
-                rows.append(dict(prior))
-                continue
-            settled = _verified_manual_import(record, prior, destination) or _adopted_delivery(
-                record, prior, destination
-            )
-            if settled is not None:
-                checkpoint(record.selection_id, settled)
-                rows.append(settled)
-                continue
-            if prior and prior.get("state") == IN_PROGRESS_STATE:
-                # Leftovers of this output's own interrupted attempt; keep them for inspection.
-                _quarantine_interrupted(record, destination)
-            if any(
-                path.exists() for path in _expected_paths(record, destination).values()
-            ):
-                raise _unverified_reserved_error(record, destination)
-            if not retry_manual and prior and prior.get(ACCESS_REFUSED) is True:
-                # The publisher or institution refused this paper last time; asking again would
-                # reopen a login or repeat the refusal. --retry-manual asks again.
-                rows.append(dict(prior))
-                not_retried += 1
-                continue
-            publisher_host = _normalized_record_host(record)
-            paused = guard.paused(publisher_host)
-            attempted = False
-            if publisher_host in deferred:
-                outcome = {
-                    "error_code": "access_required",
-                    "message": f"publisher host deferred for this run: {publisher_host}",
-                }
-            elif paused is not None:
-                outcome = paused
-            else:
-                guard.wait(publisher_host)
-                checkpoint(record.selection_id, _in_progress_row(record))
-                try:
-                    outcome = self.acquirer(record, destination)
-                except Exception as exc:
-                    outcome = failure_outcome(exc)
-                guard.record(publisher_host, outcome)
-                attempted = True
+        def checkpoint(selection_id: str, row: dict[str, Any]) -> None:
+            with ledger_lock:
+                ledger[selection_id] = row
+                atomic_write_bytes(
+                    acquisition_path,
+                    _jsonl([ledger[key] for key in order if key in ledger]),
+                )
+
+        def finish(record: SelectionRecord, outcome: Mapping[str, Any],
+                   attempted: bool) -> dict[str, Any]:
             if normalized_state(outcome) == "delivered":
                 row = _delivered_row(record, outcome, destination)
                 if row is None:
@@ -867,7 +923,69 @@ class CorpusAcquisitionWorkflow:
             ):
                 raise _unverified_reserved_error(record, destination)
             checkpoint(record.selection_id, row)
-            rows.append(row)
+            return row
+
+        def attempt(record: SelectionRecord) -> None:
+            publisher_host = _normalized_record_host(record)
+            paused = guard.paused(publisher_host)
+            if paused is not None:
+                outcome, attempted = paused, False
+            else:
+                guard.wait(publisher_host)
+                checkpoint(record.selection_id, _in_progress_row(record))
+                try:
+                    outcome = self.acquirer(record, destination)
+                except Exception as exc:
+                    outcome = failure_outcome(exc)
+                guard.record(publisher_host, outcome)
+                attempted = True
+            settled_rows[record.selection_id] = finish(record, outcome, attempted)
+
+        # First settle everything that needs no publisher contact, in selection order.
+        settled_rows: dict[str, dict[str, Any]] = {}
+        to_attempt: list[SelectionRecord] = []
+        for record in selection.records:
+            prior = previous.get(record.selection_id)
+            if _verified_previous(record, prior, destination):
+                settled_rows[record.selection_id] = dict(prior)
+                continue
+            settled = _verified_manual_import(record, prior, destination) or _adopted_delivery(
+                record, prior, destination
+            )
+            if settled is not None:
+                checkpoint(record.selection_id, settled)
+                settled_rows[record.selection_id] = settled
+                continue
+            if prior and prior.get("state") == IN_PROGRESS_STATE:
+                # Leftovers of this output's own interrupted attempt; keep them for inspection.
+                _quarantine_interrupted(record, destination)
+            if any(
+                path.exists() for path in _expected_paths(record, destination).values()
+            ):
+                raise _unverified_reserved_error(record, destination)
+            if not retry_manual and prior and prior.get(ACCESS_REFUSED) is True:
+                # The publisher or institution refused this paper last time; asking again would
+                # reopen a login or repeat the refusal. --retry-manual asks again.
+                settled_rows[record.selection_id] = dict(prior)
+                not_retried += 1
+                continue
+            publisher_host = _normalized_record_host(record)
+            if publisher_host in deferred:
+                settled_rows[record.selection_id] = finish(record, {
+                    "error_code": "access_required",
+                    "message": f"publisher host deferred for this run: {publisher_host}",
+                }, False)
+                continue
+            to_attempt.append(record)
+
+        # Then contact publishers: one host at a time per worker, several hosts at once.
+        parallel = max(1, int(parallel_hosts or self.max_parallel_hosts))
+        if parallel == 1:
+            for record in to_attempt:
+                attempt(record)
+        else:
+            _attempt_by_host(to_attempt, attempt, parallel)
+        rows = [settled_rows[record.selection_id] for record in selection.records]
 
         return _write_acquisition_outputs(
             destination,
