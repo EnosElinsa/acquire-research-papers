@@ -34,6 +34,8 @@ OUTPUT_FILE = "output.jsonl"
 PROGRESS_FILE = "progress.log"
 EXIT_FILE = "exit.json"
 STOP_FILE = "stop-requested"
+# Under the data root: one line per started job, read by job list.
+INDEX_FILE = "background-jobs.jsonl"
 PROGRESS_LINES = 20
 STOP_POLL_SECONDS = 0.5
 
@@ -92,6 +94,7 @@ def start(
     command: str,
     argv: Sequence[str],
     *,
+    index: Path | None = None,
     popen: Callable[..., Any] = subprocess.Popen,
     executable: str = sys.executable,
 ) -> dict[str, Any]:
@@ -106,8 +109,14 @@ def start(
              "--", *argv]
     with (root / OUTPUT_FILE).open("wb") as stdout, (root / PROGRESS_FILE).open("wb") as stderr:
         process = _spawn(popen, child, stdout, stderr)
+    started_at = _now()
     _write_json(root / JOB_FILE, {"schema_version": 1, "command": list(argv),
-                                  "pid": process.pid, "started_at": _now()})
+                                  "pid": process.pid, "started_at": started_at})
+    if index is not None:
+        # Only the job's location is indexed; job list reads everything else from the job.
+        index.parent.mkdir(parents=True, exist_ok=True)
+        with index.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps({"job": str(root), "started_at": started_at}) + "\n")
     return {
         "status": "started", "job": str(root), "pid": process.pid, "command": command,
         "next_actions": [{"action": "job status",
@@ -178,10 +187,19 @@ def _kill(pid: int) -> None:
         os.killpg(pid, signal.SIGTERM)  # the job's own session, including browser helpers
 
 
-def _job(root: Path) -> dict[str, Any]:
-    job = _read_json(root / JOB_FILE)
+def _job(root: Path, *, attempts: int = 5, sleeper: Callable[[float], None] = time.sleep
+         ) -> dict[str, Any]:
+    for attempt in range(attempts):
+        job = _read_json(root / JOB_FILE)
+        if job is not None:
+            break
+        if not (root / JOB_FILE).exists():
+            break
+        # A just-written file can be briefly locked on Windows (for example by a virus scan).
+        if attempt + 1 < attempts:
+            sleeper(0.2)
     if job is None or job.get("schema_version") != 1 or not isinstance(job.get("pid"), int):
-        raise ValueError("not a background job directory")
+        raise ValueError(f"not a background job directory: {root}")
     return job
 
 
@@ -244,6 +262,36 @@ def status(
         if report["status"] != "running" or remaining <= 0:
             return report
         sleeper(min(1.0, remaining))
+
+
+def list_jobs(index: Path, *, alive: Callable[[int], bool] = pid_alive) -> dict[str, Any]:
+    """Every indexed job that still has its directory, newest first."""
+    try:
+        lines = index.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        lines = []
+    seen: set[str] = set()
+    jobs: list[dict[str, Any]] = []
+    for line in reversed(lines):
+        try:
+            location = str(json.loads(line)["job"])
+        except (json.JSONDecodeError, KeyError, TypeError):
+            continue
+        if location in seen:
+            continue
+        seen.add(location)
+        root = Path(location)
+        try:
+            report = _report(root, _job(root), alive)
+        except ValueError:
+            continue  # removed or not a job directory any more
+        result = report.get("result") or {}
+        jobs.append({"job": report["job"], "command": report["command"],
+                     "status": report["status"], "started_at": report["started_at"],
+                     "finished_at": report.get("finished_at"), "exit_code": report.get("exit_code"),
+                     "result_status": result.get("status") if isinstance(result, dict) else None})
+    return {"status": "complete", "jobs": jobs,
+            "running": sum(job["status"] == "running" for job in jobs)}
 
 
 def stop(

@@ -128,6 +128,29 @@ def test_background_rejects_interactive_commands_and_reused_directories(tmp_path
     assert "new or empty" in json.loads(capsys.readouterr().out)["message"]
 
 
+def test_job_list_reports_indexed_jobs_newest_first_and_skips_removed_ones(tmp_path):
+    index = tmp_path / "data" / jobs.INDEX_FILE
+
+    class Process:
+        pid = 777
+
+    for name in ("old", "removed", "new"):
+        jobs.start(tmp_path / name, "acquire", ["acquire", "corpus"], index=index,
+                   popen=lambda command, **options: Process(), executable="python")
+    (tmp_path / "old" / jobs.EXIT_FILE).write_text('{"exit_code": 0, "stop_requested": false}')
+    (tmp_path / "old" / jobs.OUTPUT_FILE).write_text('{"status": "delivered"}\n')
+    for path in (tmp_path / "removed").iterdir():
+        path.unlink()
+    (tmp_path / "removed").rmdir()
+
+    listed = jobs.list_jobs(index, alive=lambda pid: True)
+
+    assert [Path(job["job"]).name for job in listed["jobs"]] == ["new", "old"]
+    assert [job["status"] for job in listed["jobs"]] == ["running", "finished"]
+    assert listed["jobs"][1]["result_status"] == "delivered"
+    assert listed["running"] == 1
+
+
 def test_the_background_option_is_removed_from_the_child_command():
     assert jobs.strip_background_option(
         ["--background", "j", "acquire", "corpus", "--output", "o"]) == [
