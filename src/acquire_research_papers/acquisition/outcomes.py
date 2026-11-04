@@ -38,6 +38,12 @@ IEEE_ACCESS_PHASES = frozenset(
         "assisted-login-timeout",
     }
 )
+# Failures of the institution login itself, not of one paper's entitlement. Repeating them for
+# every remaining paper would resubmit credentials and re-wait for the user, so a batch pauses
+# the publisher host after the first one.
+IEEE_LOGIN_PHASES = (IEEE_ACCESS_PHASES - {"download-after-auth", "access-required"}) | {
+    "form-contract"
+}
 # Unexpected browser failures (crash, closed context, busy profile) are worth one more run.
 IEEE_AUTOMATION_PHASES = frozenset({"automation", "profile-in-use"})
 IEEE_CONFIGURATION_PHASES = frozenset({"dependency-install"})
@@ -52,6 +58,12 @@ EXIT_CODES = {
     "configuration_required": 78,
     "contract_error": 78,
 }
+# Internal outcome hint read by batch acquisition; never written to ledgers or CLI output.
+PAUSE_HOST = "pause_host"
+
+
+def public_outcome(outcome: dict[str, object]) -> dict[str, object]:
+    return {key: value for key, value in outcome.items() if key != PAUSE_HOST}
 
 
 def is_ieee_access_phase(phase: str) -> bool:
@@ -80,7 +92,10 @@ def failure_outcome(error: BaseException) -> dict[str, str]:
             code = "configuration_required"
         else:
             code = "contract_error"
-        return {"error_code": code, "message": f"{error} (IEEE phase: {error.phase})"}
+        outcome = {"error_code": code, "message": f"{error} (IEEE phase: {error.phase})"}
+        if error.phase in IEEE_LOGIN_PHASES:
+            outcome[PAUSE_HOST] = True
+        return outcome
     if isinstance(error, RateLimited):
         return {"error_code": "rate_limited", "message": f"HTTP 429 from {_host(error.url)}"}
     if isinstance(error, NetworkTransient):

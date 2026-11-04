@@ -2,6 +2,7 @@
 param(
   [string]$DependencyRoot = "",
   [string]$LocalAppData = $env:LOCALAPPDATA,
+  [string]$DataRoot = "",
   [string]$NpmPath = "",
   [switch]$TestMode
 )
@@ -12,14 +13,19 @@ $registry = "https://registry.npmjs.org"
 $tarball = "https://registry.npmjs.org/playwright-core/-/playwright-core-1.61.1.tgz"
 $integrity = "sha512-h7Qlt6m4REp25qvIdvbDtVmD4LqVXfpRxhORv9L0jzETM05p4fuPJ3dKyuSXQxDSbXnmS79HAgi9589lGSpLkg=="
 
-if ([string]::IsNullOrWhiteSpace($LocalAppData)) {
-  throw "LOCALAPPDATA is unavailable; cannot resolve the dependency root."
+if (-not [string]::IsNullOrWhiteSpace($DataRoot)) {
+  # The runtime's selected data root (new application root, legacy Codex root, or ARP_DATA_ROOT).
+  $expectedRoot = [IO.Path]::GetFullPath((Join-Path $DataRoot "deps\acquire-research-papers"))
+} else {
+  if ([string]::IsNullOrWhiteSpace($LocalAppData)) {
+    throw "LOCALAPPDATA is unavailable; cannot resolve the dependency root."
+  }
+  $expectedRoot = [IO.Path]::GetFullPath((Join-Path $LocalAppData "Codex\deps\acquire-research-papers"))
 }
-$expectedRoot = [IO.Path]::GetFullPath((Join-Path $LocalAppData "Codex\deps\acquire-research-papers"))
 if ([string]::IsNullOrWhiteSpace($DependencyRoot)) { $DependencyRoot = $expectedRoot }
 $resolvedRoot = [IO.Path]::GetFullPath($DependencyRoot)
 if (-not $resolvedRoot.Equals($expectedRoot, [StringComparison]::OrdinalIgnoreCase)) {
-  throw "DependencyRoot must be the dedicated LocalAppData path: $expectedRoot"
+  throw "DependencyRoot must be the dedicated data-root path: $expectedRoot"
 }
 New-Item -ItemType Directory -Path $resolvedRoot -Force | Out-Null
 

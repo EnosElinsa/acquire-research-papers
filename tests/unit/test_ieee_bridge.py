@@ -333,3 +333,99 @@ def test_ieee_adapter_rejects_lookalike_hostname() -> None:
     assert adapter.supports("https://ieeexplore.ieee.org/document/1")
     assert not adapter.supports("http://ieeexplore.ieee.org/document/1")
     assert not adapter.supports("https://ieeexplore.ieee.org.evil.example/document/1")
+
+
+_FAKE_SESSION = r'''
+import json, os, sys
+from pathlib import Path
+assert "--session" in sys.argv and "--reference" not in sys.argv
+assert sys.argv[sys.argv.index("--step-timeout-ms") + 1] == "60000"
+if "--credential-stdin" in sys.argv:
+    credential = json.loads(sys.stdin.readline())
+    assert credential["host"] == "login.example.edu"
+for line in sys.stdin:
+    request = json.loads(line)
+    reference = request["reference"]
+    if reference.endswith("/crash"):
+        print(json.dumps({"status": "error", "phase": "automation",
+                          "message": "IEEE browser automation failed."}), file=sys.stderr)
+        sys.exit(1)
+    if reference.endswith("/denied"):
+        print(json.dumps({"status": "error", "phase": "download-after-auth",
+                          "message": "not entitled"}), flush=True)
+        continue
+    pdf = Path(request["workDir"]) / "paper.pdf"
+    pdf.write_bytes(b"%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF\n")
+    print(json.dumps({"status": "downloaded", "title": "Synthetic", "authors": ["Ada Lovelace"],
+        "year": 2026, "venue": "Synthetic Venue", "doi": str(os.getpid()),
+        "landingUrl": reference, "pdfUrl": "https://ieeexplore.ieee.org/stamp/1.pdf",
+        "bibtexUrl": "https://ieeexplore.ieee.org/rest/search/citation/format",
+        "pdfPath": str(pdf), "bibtex": "@article{k}", "access": "public"}), flush=True)
+'''
+
+
+def test_reused_browser_session_serves_papers_and_restarts_after_a_crash(tmp_path, monkeypatch):
+    script = tmp_path / "fake_session.py"
+    script.write_text(_FAKE_SESSION, encoding="utf-8")
+    bridge = IeeeBridge(
+        script=script, node_path=sys.executable, profile_root=tmp_path / "profiles",
+        dependency_root=tmp_path / "deps", work_root=tmp_path / "runs",
+        secret_path=tmp_path / "secrets", credential_provider=lambda host: None,
+        credential_host="login.example.edu", step_timeout_seconds=60, reuse_browser=True,
+    )
+    monkeypatch.setattr(bridge, "_ensure_dependency", lambda: None)
+    try:
+        first = bridge.retrieve("https://ieeexplore.ieee.org/document/1")
+        second = bridge.retrieve("https://ieeexplore.ieee.org/document/2")
+        assert first.doi == second.doi  # one browser process served both papers
+
+        with pytest.raises(IeeeBridgeError) as denied:
+            bridge.retrieve("https://ieeexplore.ieee.org/document/denied")
+        assert denied.value.phase == "download-after-auth"
+        assert bridge.retrieve("https://ieeexplore.ieee.org/document/3").doi == first.doi
+
+        with pytest.raises(IeeeBridgeError) as crashed:
+            bridge.retrieve("https://ieeexplore.ieee.org/document/crash")
+        assert crashed.value.phase == "automation"
+        restarted = bridge.retrieve("https://ieeexplore.ieee.org/document/4")
+        assert restarted.doi != first.doi
+    finally:
+        bridge.close()
+    assert bridge._session is None
+
+
+def test_session_timeout_kills_the_browser_and_is_retryable(tmp_path, monkeypatch):
+    script = tmp_path / "silent_session.py"
+    script.write_text("import sys, time\nfor line in sys.stdin:\n    time.sleep(30)\n",
+                      encoding="utf-8")
+    bridge = IeeeBridge(
+        script=script, node_path=sys.executable, profile_root=tmp_path / "profiles",
+        dependency_root=tmp_path / "deps", work_root=tmp_path / "runs",
+        secret_path=tmp_path / "secrets", timeout_seconds=1, reuse_browser=True,
+    )
+    bridge.process_grace_seconds = 0
+    monkeypatch.setattr(bridge, "_ensure_dependency", lambda: None)
+    monkeypatch.setattr("acquire_research_papers.acquisition.adapters.ieee.SESSION_CLOSE_SECONDS", 1)
+    with pytest.raises(NetworkTransient, match="timed out"):
+        bridge.retrieve("https://ieeexplore.ieee.org/document/1")
+    assert bridge._session is None
+
+
+def test_installer_receives_the_selected_data_root(tmp_path, monkeypatch):
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 1, "", "")
+
+    bridge = IeeeBridge(
+        script=tmp_path / "ieee-playwright.mjs", profile_root=tmp_path / "profiles",
+        dependency_root=tmp_path / "data" / "deps" / "acquire-research-papers",
+        work_root=tmp_path / "runs", secret_path=tmp_path / "secrets",
+        data_root=tmp_path / "data",
+    )
+    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(os, "name", "nt")
+    with pytest.raises(IeeeBridgeError):
+        bridge._ensure_dependency()
+    assert calls[0][-2:] == ["-DataRoot", str((tmp_path / "data").resolve())]

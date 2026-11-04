@@ -20,6 +20,7 @@ from acquire_research_papers.acquisition.adapters.ieee import (
     IeeeBridge,
     IeeeBridgeError,
     IeeeXploreAdapter,
+    reuse_browser_enabled,
 )
 from acquire_research_papers.acquisition.adapters.ijcai import IjcaiProceedingsAdapter
 from acquire_research_papers.acquisition.adapters.elsevier_api import (
@@ -35,6 +36,7 @@ from acquire_research_papers.acquisition.outcomes import (
     IEEE_ACCESS_PHASES,
     failure_outcome,
     is_ieee_access_phase,
+    public_outcome,
 )
 from acquire_research_papers.acquisition.manual_handoff import (
     ManualBrowserOpenError,
@@ -119,6 +121,8 @@ _RUNTIME_SCRIPT_NAMES = frozenset(
 
 _IEEE_ACCESS_PHASES = IEEE_ACCESS_PHASES
 _PUBLISHER_RETRY = {"retries": 3, "backoff_seconds": 1.0}
+# Minimum spacing between two papers from the same publisher host in a batch.
+_PUBLISHER_INTERVAL_SECONDS = 2.0
 
 
 def _is_ieee_access_phase(phase: str) -> bool:
@@ -357,6 +361,7 @@ class Application:
                 secret_path=paths.secrets / "secrets.clixml",
                 accept_attribute_release=accept_ieee_attribute_release,
                 data_root=paths.registry.parent.parent,
+                reuse_browser=reuse_browser_enabled(),
             )
         ieee = IeeeXploreAdapter(bridge)
         crossref = CrossrefClient(
@@ -414,7 +419,8 @@ class Application:
             discovery_coordinator=coordinator,
         )
         application.corpus_acquisition = CorpusAcquisitionWorkflow(
-            acquirer=application.acquire_selected
+            acquirer=application.acquire_selected,
+            min_host_interval_seconds=_PUBLISHER_INTERVAL_SECONDS,
         )
         research_searchers = [crossref.corpus_searcher]
         research_graph_expanders = []
@@ -703,7 +709,7 @@ class Application:
         try:
             result = self.fetch(reference, output)
         except Exception as exc:  # one shared classification; see acquisition.outcomes
-            return {"status": "deferred", **failure_outcome(exc)}
+            return {"status": "deferred", **public_outcome(failure_outcome(exc))}
         return {
             "status": "delivered",
             "pdf": str(result.pdf),
@@ -1303,9 +1309,9 @@ def run_cli(
         _emit({"status": "error", "error_code": "manual_handoff_required", "message": str(exc)})
         return 69
     except IeeeBridgeError as exc:
-        outcome = failure_outcome(exc)
+        outcome = public_outcome(failure_outcome(exc))
         _emit({"status": "error", **outcome})
-        return EXIT_CODES[outcome["error_code"]]
+        return EXIT_CODES[str(outcome["error_code"])]
     except (RateLimited, MineruRateLimited) as exc:
         _emit({"status": "error", "error_code": "rate_limited", "message": str(exc)})
         return 75

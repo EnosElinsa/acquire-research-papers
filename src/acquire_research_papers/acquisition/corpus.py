@@ -5,6 +5,7 @@ import io
 import json
 import os
 import re
+import time
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -17,7 +18,7 @@ from acquire_research_papers.acquisition.manual_handoff import (
     document_from_selection,
     validate_manual_pair,
 )
-from acquire_research_papers.acquisition.outcomes import failure_outcome
+from acquire_research_papers.acquisition.outcomes import PAUSE_HOST, failure_outcome
 from acquire_research_papers.acquisition.router import canonical_landing_url, doi_publisher_host
 from acquire_research_papers.models import normalize_doi
 from acquire_research_papers.selection import SelectionRecord, SelectionStore
@@ -26,7 +27,10 @@ from acquire_research_papers.selection import SelectionRecord, SelectionStore
 _MANUAL_CODES = frozenset(
     {"access_required", "manual_publisher_download", "unsupported_adapter"}
 )
-_RETRYABLE_CODES = frozenset({"network_transient", "rate_limited", "automation_error"})
+HOST_PAUSED = "host_paused"
+_RETRYABLE_CODES = frozenset(
+    {"network_transient", "rate_limited", "automation_error", HOST_PAUSED}
+)
 _HOST_LABEL = re.compile(r"(?!-)[a-z0-9-]{1,63}(?<!-)\Z", re.IGNORECASE)
 _SELECTION_ID = re.compile(r"[0-9a-f]{8,64}\Z")
 IN_PROGRESS_STATE = "in_progress"
@@ -505,6 +509,62 @@ class AcquisitionRunResult:
     complete: bool
 
 
+class _HostGuard:
+    """Space requests per publisher host and stop contacting a host that keeps failing."""
+
+    def __init__(
+        self,
+        *,
+        min_interval_seconds: float,
+        transient_failure_limit: int,
+        sleeper: Callable[[float], None],
+        monotonic: Callable[[], float],
+    ) -> None:
+        self.min_interval_seconds = max(0.0, min_interval_seconds)
+        self.transient_failure_limit = max(1, transient_failure_limit)
+        self._sleeper = sleeper
+        self._monotonic = monotonic
+        self._last_call: dict[str, float] = {}
+        self._streak: dict[str, int] = {}
+        self._paused: dict[str, dict[str, str]] = {}
+
+    def paused(self, host: str) -> dict[str, str] | None:
+        pause = self._paused.get(host)
+        return dict(pause) if pause else None
+
+    def wait(self, host: str) -> None:
+        previous = self._last_call.get(host)
+        if previous is not None and self.min_interval_seconds:
+            remaining = self.min_interval_seconds - (self._monotonic() - previous)
+            if remaining > 0:
+                self._sleeper(remaining)
+
+    def record(self, host: str, outcome: Mapping[str, Any]) -> None:
+        self._last_call[host] = self._monotonic()
+        state = normalized_state(outcome)
+        if outcome.get(PAUSE_HOST):
+            self._paused[host] = {
+                "error_code": "access_required",
+                "message": f"{host} paused for this run after an institution login failure; "
+                "fix the institution profile or log in, then rerun",
+            }
+        elif outcome.get("error_code") == "rate_limited":
+            self._paused[host] = {
+                "error_code": HOST_PAUSED,
+                "message": f"{host} paused for this run after HTTP 429; rerun later",
+            }
+        elif state == "retryable":
+            self._streak[host] = self._streak.get(host, 0) + 1
+            if self._streak[host] >= self.transient_failure_limit:
+                self._paused[host] = {
+                    "error_code": HOST_PAUSED,
+                    "message": f"{host} paused for this run after {self._streak[host]} "
+                    "consecutive transient failures; rerun later",
+                }
+        else:
+            self._streak[host] = 0
+
+
 class CorpusAcquisitionWorkflow:
     """Acquire only records in a hash-verified frozen selection."""
 
@@ -512,8 +572,16 @@ class CorpusAcquisitionWorkflow:
         self,
         *,
         acquirer: Callable[[SelectionRecord, Path], dict[str, Any]],
+        min_host_interval_seconds: float = 0.0,
+        transient_failure_limit: int = 3,
+        sleeper: Callable[[float], None] = time.sleep,
+        monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self.acquirer = acquirer
+        self.min_host_interval_seconds = min_host_interval_seconds
+        self.transient_failure_limit = transient_failure_limit
+        self._sleeper = sleeper
+        self._monotonic = monotonic
 
     def run(
         self,
@@ -598,6 +666,12 @@ class CorpusAcquisitionWorkflow:
         )
         order = [record.selection_id for record in selection.records]
         ledger: dict[str, dict[str, Any]] = dict(previous)
+        guard = _HostGuard(
+            min_interval_seconds=self.min_host_interval_seconds,
+            transient_failure_limit=self.transient_failure_limit,
+            sleeper=self._sleeper,
+            monotonic=self._monotonic,
+        )
 
         def checkpoint(selection_id: str, row: dict[str, Any]) -> None:
             ledger[selection_id] = row
@@ -627,17 +701,22 @@ class CorpusAcquisitionWorkflow:
             ):
                 raise _unverified_reserved_error(record, destination)
             publisher_host = _normalized_record_host(record)
+            paused = guard.paused(publisher_host)
             if publisher_host in deferred:
                 outcome = {
                     "error_code": "access_required",
                     "message": f"publisher host deferred for this run: {publisher_host}",
                 }
+            elif paused is not None:
+                outcome = paused
             else:
+                guard.wait(publisher_host)
                 checkpoint(record.selection_id, _in_progress_row(record))
                 try:
                     outcome = self.acquirer(record, destination)
                 except Exception as exc:
                     outcome = failure_outcome(exc)
+                guard.record(publisher_host, outcome)
             if normalized_state(outcome) == "delivered":
                 row = _delivered_row(record, outcome, destination)
                 if row is None:

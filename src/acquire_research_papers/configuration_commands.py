@@ -19,6 +19,7 @@ from acquire_research_papers.acquisition.adapters.ieee import (
     IeeeBridge,
     IeeeBridgeError,
     IeeeXploreAdapter,
+    reuse_browser_enabled,
 )
 from acquire_research_papers.acquisition.base import NotOfficial
 from acquire_research_papers.artifacts import InvalidPdfError
@@ -335,6 +336,7 @@ def bridge_for(profile: dict[str, Any], paths: AppPaths, *, timeout: int = 900,
                           if profile.get("mode") == "carsi" else None,
                       credential_host=profile.get("credential_host", ""),
                       data_root=paths.registry.parent.parent,
+                      reuse_browser=reuse_browser_enabled(),
                       accept_attribute_release=bool(profile.get("contract", {}).get("acceptAttributeRelease", False)))
 
 

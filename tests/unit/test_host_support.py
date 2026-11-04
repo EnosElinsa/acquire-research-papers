@@ -62,6 +62,31 @@ def test_doctor_is_local_and_does_not_claim_host_load_or_entitlement(tmp_path, m
     assert not (tmp_path / "config").exists()
 
 
+def test_doctor_reports_ieee_browser_prerequisites_without_starting_them(tmp_path, monkeypatch):
+    module = subject()
+    monkeypatch.setenv("ARP_CONFIG_ROOT", str(tmp_path / "config"))
+    monkeypatch.setenv("ARP_DATA_ROOT", str(tmp_path / "data"))
+    monkeypatch.setattr(module.subprocess, "run", lambda *a, **k: pytest.fail("unexpected process"))
+    monkeypatch.setattr(module.shutil, "which", lambda name: None)
+    monkeypatch.setattr(module, "_chrome_installed", lambda: False)
+    report = module.dispatch(arguments("doctor", "--host", "kiro-cli", "--skill-directory",
+                                       str(skill(tmp_path))))
+    browser = report["ieee_browser"]
+    assert browser["status"] == "missing_prerequisites"
+    assert {"node", "chrome", "playwright_or_npm"} <= set(browser["missing"])
+    assert browser["playwright_core"]["installed"] is None
+    # IEEE is optional: without a configured institution this is not an attention item.
+    assert not any("IEEE" in action for action in report["next_actions"])
+
+    from acquire_research_papers.institution_profiles import InstitutionStore
+    InstitutionStore(tmp_path / "config" / "institutions").save(
+        {"schema_version": 2, "id": "campus", "organization": "Example", "mode": "assisted",
+         "entry_url": "https://library.example.edu/"})
+    report = module.dispatch(arguments("doctor", "--host", "kiro-cli", "--skill-directory",
+                                       str(tmp_path / "skill")))
+    assert any("IEEE browser automation is missing" in action for action in report["next_actions"])
+
+
 def test_doctor_reports_config_presence_without_secret_values(tmp_path, monkeypatch):
     monkeypatch.setenv("ARP_CONFIG_ROOT", str(tmp_path / "config"))
     monkeypatch.setenv("ARP_DATA_ROOT", str(tmp_path / "data"))

@@ -118,6 +118,44 @@ def _host_executable(host: str, *, check_version: bool) -> dict:
     return result
 
 
+def _chrome_installed() -> bool:
+    # Playwright's "chrome" channel uses the stable Google Chrome at its standard location.
+    if os.name == "nt":
+        roots = [os.environ.get(name) for name in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA")]
+        return any(root and (Path(root) / "Google" / "Chrome" / "Application" / "chrome.exe").is_file()
+                   for root in roots)
+    if sys.platform == "darwin":
+        return Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome").is_file()
+    return bool(shutil.which("google-chrome") or shutil.which("google-chrome-stable"))
+
+
+def _ieee_browser(paths: AppPaths) -> dict:
+    """Local prerequisites of IEEE browser automation; no browser or network is started."""
+    from acquire_research_papers.acquisition.adapters.ieee import PLAYWRIGHT_VERSION
+    try:
+        package = json.loads((paths.dependencies / "node_modules" / "playwright-core" /
+                              "package.json").read_text(encoding="utf-8-sig"))
+        installed = package.get("version") if isinstance(package, dict) else None
+    except (OSError, ValueError):
+        installed = None
+    checks = {"windows": os.name == "nt", "node": bool(shutil.which("node")),
+              "chrome": _chrome_installed(),
+              # npm is needed only to install the pinned Playwright package once.
+              "playwright_or_npm": installed == PLAYWRIGHT_VERSION or bool(shutil.which("npm"))}
+    missing = [name for name, present in checks.items() if not present]
+    return {"status": "ready" if not missing else "missing_prerequisites", "missing": missing,
+            "playwright_core": {"installed": installed, "pinned": PLAYWRIGHT_VERSION},
+            "dependency_root": str(paths.dependencies)}
+
+
+def _ieee_profile_configured(paths: AppPaths) -> bool:
+    from acquire_research_papers.institution_profiles import InstitutionStore
+    try:
+        return InstitutionStore(paths.config_paths.institutions).active() is not None
+    except (ValueError, OSError):
+        return False
+
+
 def _remote(enabled: bool) -> dict:
     if not enabled:
         return {"status": "unknown", "checked": False}
@@ -155,7 +193,8 @@ def dispatch(args: argparse.Namespace) -> dict:
         "skill": _skill(path), "schemas": _schemas(),
         "host_executable": _host_executable(args.host, check_version=args.check_host_version),
         "dependencies": {name: {"available": bool(shutil.which(name))}
-                         for name in ("uv", "node", "powershell", "pwsh")},
+                         for name in ("uv", "node", "npm", "powershell", "pwsh")},
+        "ieee_browser": _ieee_browser(paths),
         "configuration": _configuration(paths, env_file=getattr(args, "env_file", None)),
         "remote": _remote(args.remote_check),
         "host_load": {"status": "unverified",
@@ -172,6 +211,11 @@ def dispatch(args: argparse.Namespace) -> dict:
         actions.append("Reinstall the runtime with its bundled public schemas.")
     if report["configuration"]["status"] == "invalid":
         actions.append("Inspect configuration locally; do not paste its contents into chat.")
+    if report["ieee_browser"]["status"] != "ready" and _ieee_profile_configured(paths):
+        # IEEE is optional; only a configured institution makes missing browser pieces actionable.
+        actions.append("IEEE browser automation is missing: "
+                       + ", ".join(report["ieee_browser"]["missing"])
+                       + ". Install them or use manual-fetch for IEEE papers.")
     report["status"] = "attention_required" if actions else "local_checks_complete"
     report["next_actions"] = actions
     return report

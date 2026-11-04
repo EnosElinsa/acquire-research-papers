@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { createRequire } from "node:module";
 import { mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { createInterface } from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
@@ -1064,6 +1065,7 @@ async function authenticateThroughCarsi({
   institutionProfile,
   secretPath,
   timeoutMs,
+  userTimeoutMs = timeoutMs,
   acceptAttributeRelease,
   gatewayState,
 }) {
@@ -1159,6 +1161,7 @@ async function authenticateThroughCarsi({
         institutionProfile,
         acceptAttributeRelease,
         timeoutMs,
+        userTimeoutMs,
       });
       if (
         handledRelease
@@ -1260,6 +1263,7 @@ async function authenticateThroughCarsi({
       institutionProfile,
       acceptAttributeRelease,
       timeoutMs,
+      userTimeoutMs,
     });
     if (
       handledRelease
@@ -1283,6 +1287,7 @@ async function handleConfiguredAttributeRelease({
   institutionProfile,
   acceptAttributeRelease,
   timeoutMs,
+  userTimeoutMs = timeoutMs,
 }) {
   if (!institutionProfile.attributeReleaseAcceptControlName) return false;
   if (!isApprovedCredentialHost(hostnameOf(page.url(), "attribute-release"), institutionProfile)) {
@@ -1342,9 +1347,10 @@ async function handleConfiguredAttributeRelease({
     if (acceptAttributeRelease !== true) {
       if (typeof page.waitForURL === "function") {
         try {
+          // Visible manual continuation waits for the user, not for a single page step.
           await page.waitForURL(
             (url) => url.hostname.toLowerCase() !== institutionProfile.credentialHost,
-            { timeout: timeoutMs },
+            { timeout: userTimeoutMs },
           );
         } catch {
           // The exact hostname check below distinguishes a completed user action from a bounded pause.
@@ -1417,6 +1423,7 @@ async function authorizeIeeeResource({
   institutionProfile,
   acceptAttributeRelease,
   timeoutMs,
+  userTimeoutMs = timeoutMs,
   gatewayState,
 }) {
   if (institutionProfile.ieeeWayfUrl && typeof page.goto === "function") {
@@ -1434,6 +1441,7 @@ async function authorizeIeeeResource({
           institutionProfile,
           acceptAttributeRelease,
           timeoutMs,
+          userTimeoutMs,
         });
         wayfHost = hostnameOf(page.url(), "institutional-return");
         if (handledRelease && wayfHost === IEEE_HOST) return;
@@ -1460,6 +1468,7 @@ async function authorizeIeeeResource({
       institutionProfile,
       acceptAttributeRelease,
       timeoutMs,
+      userTimeoutMs,
     });
     if (handledRelease) {
       returnHost = hostnameOf(page.url(), "institutional-return");
@@ -1507,7 +1516,10 @@ export async function retrieveIeeePaper(options) {
   }
   if (!String(options.workDir ?? "").trim()) throw new TypeError("workDir is required");
   const workDir = path.resolve(String(options.workDir));
-  const timeoutMs = Number(options.timeoutMs ?? 45_000);
+  // One page step (navigation, PDF or citation request) is bounded separately from the
+  // longer wait for a user to finish institutional login in the visible browser.
+  const userTimeoutMs = Number(options.timeoutMs ?? 45_000);
+  const timeoutMs = Number(options.stepTimeoutMs ?? userTimeoutMs);
   const credentialReader = options.credentialReader ?? readCredentialForHost;
   const profileReader = options.profileReader ?? readInstitutionProfile;
   const acceptAttributeRelease = options.acceptAttributeRelease !== false;
@@ -1549,7 +1561,7 @@ export async function retrieveIeeePaper(options) {
     }
     if (configured.accessMode === "assisted") {
       await waitForAssistedReturn({page: options.page, institutionProfile: configured,
-        timeoutMs, progress: options.progress});
+        timeoutMs: userTimeoutMs, progress: options.progress});
       downloaded = await tryFetchPdf({page: options.page, browserContext: options.browserContext,
         paper, workDir, timeoutMs, diagnostic: pdfDiagnostic});
       if (!downloaded) {
@@ -1595,6 +1607,7 @@ export async function retrieveIeeePaper(options) {
         institutionProfile,
         secretPath,
         timeoutMs,
+        userTimeoutMs,
         acceptAttributeRelease,
         gatewayState,
       });
@@ -1605,6 +1618,7 @@ export async function retrieveIeeePaper(options) {
           institutionProfile,
           acceptAttributeRelease,
           timeoutMs,
+          userTimeoutMs,
           gatewayState,
         });
       }
@@ -1639,12 +1653,31 @@ export async function retrieveIeeePaper(options) {
       { lastPdfFailure: pdfDiagnostic.lastPdfFailure },
     );
   }
-  const bibtex = await exportOfficialBibtex({
-    browserContext: options.browserContext,
-    paper,
-    timeoutMs,
-  });
+  // The PDF is already downloaded and possibly behind a completed login, so a transient
+  // citation failure is retried in the same browser context instead of discarding the PDF.
+  const citationDelays = Array.isArray(options.citationRetryDelaysMs)
+    ? options.citationRetryDelaysMs : [1_000, 3_000];
+  let bibtex;
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      bibtex = await exportOfficialBibtex({
+        browserContext: options.browserContext,
+        paper,
+        timeoutMs,
+      });
+      break;
+    } catch (error) {
+      const transient = error instanceof IeeeFlowError
+        && ["citation-request-timeout", "citation-export"].includes(error.phase);
+      if (!transient || attempt >= citationDelays.length) throw error;
+      await sleep(Number(citationDelays[attempt]) || 0);
+    }
+  }
   return resultPayload(paper, downloaded, bibtex, access);
+}
+
+function sleep(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, Math.max(0, milliseconds)));
 }
 
 export async function inspectInstitutionPage(page) {
@@ -1662,23 +1695,127 @@ export async function inspectInstitutionPage(page) {
     }))};
 }
 
+function boundaryOptions(options, workDir) {
+  return {
+    workDir,
+    profileDir: path.resolve(String(options.profileDir)),
+    dependencyRoot: options.dependencyRoot,
+    secretPath: options.secretPath,
+    localAppData: options.localAppData,
+    dataRoot: options.dataRoot,
+    testMode: options.testMode === true,
+  };
+}
+
+async function retrieveWithAssistedFallback(options, page, browserContext, workDir) {
+  try {
+    return await retrieveIeeePaper({ ...options, page, browserContext, workDir });
+  } catch (error) {
+    const profile = options.accessProfile && normalizeAccessProfile(options.accessProfile);
+    const manualPhases = new Set(["authentication-not-complete", "unexpected-auth-host",
+      "institution-username", "institution-password", "institution-login", "form-contract",
+      "attribute-release-required", "attribute-release-controls", "carsi-institution", "credential-read"]);
+    if (profile?.accessMode !== "carsi" || !(error instanceof IeeeFlowError)
+        || (!error.details?.requiresUserAction && !manualPhases.has(error.phase))) throw error;
+    await waitForAssistedReturn({page, institutionProfile: {...profile, entryUrl: page.url()},
+      preservePage: true, timeoutMs: options.timeoutMs ?? 900_000, progress: options.progress});
+    return await retrieveIeeePaper({...options, page, browserContext, workDir,
+      accessProfile: {...profile, accessMode: "direct"}});
+  }
+}
+
+const CLOSED_BROWSER = /Target page, context or browser has been closed|Browser has been closed|has been closed/iu;
+
+function isClosedBrowserError(error) {
+  return error?.name === "TargetClosedError" || CLOSED_BROWSER.test(String(error?.message ?? ""));
+}
+
+export async function runRetrievalSession(options) {
+  if (!options?.requests || typeof options.respond !== "function") {
+    throw new TypeError("requests and respond are required for a retrieval session");
+  }
+  return withBrowserSession(options, async ({ browserContext, closeContext, isClosed }) => {
+    let handled = 0;
+    for await (const line of options.requests) {
+      if (!String(line ?? "").trim()) continue;
+      let watchdog;
+      let expired = false;
+      try {
+        let request;
+        try {
+          request = JSON.parse(String(line));
+        } catch {
+          throw new IeeeFlowError("session-request", "The session request is not valid JSON.");
+        }
+        if (!String(request?.reference ?? "").trim() || !String(request?.workDir ?? "").trim()) {
+          throw new IeeeFlowError("session-request", "A session request needs a reference and workDir.");
+        }
+        const workDir = path.resolve(String(request.workDir));
+        assertAutomationPathBoundaries(boundaryOptions(options, workDir));
+        await mkdir(workDir, { recursive: true });
+        const page = browserContext.pages().find((candidate) => !candidate.isClosed?.())
+          ?? await browserContext.newPage();
+        // Each paper gets its own deadline; an expired paper closes the browser so the
+        // Python bridge can start a clean session for the next paper.
+        watchdog = setTimeout(() => {
+          expired = true;
+          void closeContext()?.catch(() => {});
+        }, Number(options.timeoutMs ?? 900_000));
+        watchdog.unref?.();
+        options.respond(await retrieveWithAssistedFallback(
+          { ...options, reference: String(request.reference) }, page, browserContext, workDir,
+        ));
+      } catch (error) {
+        options.respond(toErrorPayload(error));
+        if (expired || isClosed() || isClosedBrowserError(error)) {
+          return { status: "session_closed", handled };
+        }
+      } finally {
+        clearTimeout(watchdog);
+      }
+      handled += 1;
+    }
+    return { status: "session_complete", handled };
+  }, path.resolve(String(options.workDir ?? "")));
+}
+
 export async function runAutomatedRetrieval(options) {
+  if (!String(options?.workDir ?? "").trim()) throw new TypeError("workDir is required");
+  const workDir = path.resolve(String(options.workDir));
+  return withBrowserSession(options, async ({ browserContext, closeContext }) => {
+    // Closing the context interrupts a pending Playwright wait and flushes the session
+    // before the Python bridge's last-resort process timeout.
+    const watchdog = setTimeout(() => {void closeContext()?.catch(() => {});},
+      Number(options.timeoutMs ?? 900_000));
+    watchdog.unref?.();
+    try {
+      const page = browserContext.pages()[0] ?? await browserContext.newPage();
+      if (options.operation === "inspect" || options.operation === "login") {
+        const profile = normalizeAccessProfile(options.accessProfile);
+        if (options.operation === "inspect") {
+          await page.goto(profile.entryUrl, {waitUntil: "domcontentloaded", timeout: options.timeoutMs});
+          return {status: "inspected", ...await inspectInstitutionPage(page)};
+        }
+        await waitForAssistedReturn({page, institutionProfile: profile,
+          timeoutMs: options.timeoutMs ?? 900_000, progress: options.progress});
+        if (!options.reference) return {status: "returned_to_ieee", returned_to_ieee: true,
+          download_verified: false, institutional_entitlement_verified: false};
+      }
+      return await retrieveWithAssistedFallback(options, page, browserContext, workDir);
+    } finally {
+      clearTimeout(watchdog);
+    }
+  }, workDir);
+}
+
+async function withBrowserSession(options, body, workDir) {
   if (!options?.chromium || typeof options.chromium.launchPersistentContext !== "function") {
     throw new TypeError("a Playwright chromium implementation is required");
   }
   if (!String(options.profileDir ?? "").trim()) throw new TypeError("profileDir is required");
   if (!String(options.workDir ?? "").trim()) throw new TypeError("workDir is required");
   const profileDir = path.resolve(String(options.profileDir));
-  const workDir = path.resolve(String(options.workDir));
-  assertAutomationPathBoundaries({
-    workDir,
-    profileDir,
-    dependencyRoot: options.dependencyRoot,
-    secretPath: options.secretPath,
-    localAppData: options.localAppData,
-    dataRoot: options.dataRoot,
-    testMode: options.testMode === true,
-  });
+  assertAutomationPathBoundaries(boundaryOptions(options, workDir));
   await mkdir(profileDir, { recursive: true });
   await mkdir(workDir, { recursive: true });
   const lock = path.join(profileDir, ".arp-context.lock");
@@ -1704,11 +1841,14 @@ export async function runAutomatedRetrieval(options) {
   }
   let browserContext;
   let closePromise;
+  let closed = false;
   const closeContext = () => {
-    if (!closePromise && browserContext) closePromise = browserContext.close();
+    if (!closePromise && browserContext) {
+      closed = true;
+      closePromise = browserContext.close();
+    }
     return closePromise;
   };
-  let watchdog;
   const onCancel = () => {void closeContext()?.catch(() => {});};
   try {
     browserContext = await options.chromium.launchPersistentContext(profileDir, {
@@ -1718,40 +1858,12 @@ export async function runAutomatedRetrieval(options) {
     acceptDownloads: true,
     downloadsPath: workDir,
     });
-    // Closing the context interrupts a pending Playwright wait and flushes the session
-    // before the Python bridge's last-resort process timeout.
-    watchdog = setTimeout(onCancel, Number(options.timeoutMs ?? 900_000));
-    watchdog.unref();
+    // A user closing the dedicated window ends the context; a session must then restart.
+    browserContext.once?.("close", () => { closed = true; });
     process.once("SIGINT", onCancel);
     process.once("SIGTERM", onCancel);
-    const page = browserContext.pages()[0] ?? await browserContext.newPage();
-    if (options.operation === "inspect" || options.operation === "login") {
-      const profile = normalizeAccessProfile(options.accessProfile);
-      if (options.operation === "inspect") {
-        await page.goto(profile.entryUrl, {waitUntil: "domcontentloaded", timeout: options.timeoutMs});
-        return {status: "inspected", ...await inspectInstitutionPage(page)};
-      }
-      await waitForAssistedReturn({page, institutionProfile: profile,
-        timeoutMs: options.timeoutMs ?? 900_000, progress: options.progress});
-      if (!options.reference) return {status: "returned_to_ieee", returned_to_ieee: true,
-        download_verified: false, institutional_entitlement_verified: false};
-    }
-    try {
-      return await retrieveIeeePaper({ ...options, page, browserContext, workDir });
-    } catch (error) {
-      const profile = options.accessProfile && normalizeAccessProfile(options.accessProfile);
-      const manualPhases = new Set(["authentication-not-complete", "unexpected-auth-host",
-        "institution-username", "institution-password", "institution-login", "form-contract",
-        "attribute-release-required", "attribute-release-controls", "carsi-institution", "credential-read"]);
-      if (profile?.accessMode !== "carsi" || !(error instanceof IeeeFlowError)
-          || (!error.details?.requiresUserAction && !manualPhases.has(error.phase))) throw error;
-      await waitForAssistedReturn({page, institutionProfile: {...profile, entryUrl: page.url()},
-        preservePage: true, timeoutMs: options.timeoutMs ?? 900_000, progress: options.progress});
-      return await retrieveIeeePaper({...options, page, browserContext, workDir,
-        accessProfile: {...profile, accessMode: "direct"}});
-    }
+    return await body({ browserContext, closeContext, isClosed: () => closed });
   } finally {
-    clearTimeout(watchdog);
     process.removeListener("SIGINT", onCancel);
     process.removeListener("SIGTERM", onCancel);
     try {await closeContext();} finally {
@@ -1782,10 +1894,42 @@ function parseArgs(argv) {
   return options;
 }
 
+function readCredentialLine(line) {
+  if (Buffer.byteLength(String(line ?? "")) > 65536) {
+    throw new IeeeFlowError("credential-read", "Local credential input is too large.");
+  }
+  try { return credentialReaderFromPayload(JSON.parse(String(line))); }
+  catch { throw new IeeeFlowError("credential-read", "Invalid local credential input."); }
+}
+
+async function mainSession(options, common) {
+  // Line protocol on stdin: an optional credential line, then one JSON request per paper.
+  // Every request receives exactly one JSON response line on stdout.
+  const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
+  const iterator = lines[Symbol.asyncIterator]();
+  let credentialReader;
+  if (options.credentialStdin === "true") {
+    const first = await iterator.next();
+    if (first.done) throw new IeeeFlowError("credential-read", "Invalid local credential input.");
+    credentialReader = readCredentialLine(first.value);
+  }
+  try {
+    await runRetrievalSession({
+      ...common,
+      credentialReader,
+      requests: { [Symbol.asyncIterator]: () => iterator },
+      respond: (payload) => process.stdout.write(`${JSON.stringify(payload)}\n`),
+    });
+  } finally {
+    lines.close();
+  }
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
+  const session = options.session === "true";
   for (const required of ["workDir", "profileDir", "dependencyRoot",
-    ...(["inspect", "login"].includes(options.operation) ? [] : ["reference"])]) {
+    ...(session || ["inspect", "login"].includes(options.operation) ? [] : ["reference"])]) {
     if (!String(options[required] ?? "").trim()) {
       throw new Error(`Missing --${required.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)}`);
     }
@@ -1793,6 +1937,18 @@ async function main() {
   const chromium = loadPlaywrightChromium(options.dependencyRoot);
   const accessProfile = options.accessProfile
     ? JSON.parse(await readFile(options.accessProfile, "utf8")) : undefined;
+  const common = {
+    ...options,
+    chromium,
+    accessProfile,
+    timeoutMs: options.timeoutMs ? Number(options.timeoutMs) : undefined,
+    stepTimeoutMs: options.stepTimeoutMs ? Number(options.stepTimeoutMs) : undefined,
+    acceptAttributeRelease: String(options.acceptAttributeRelease ?? "true").toLowerCase() === "true",
+  };
+  if (session) {
+    await mainSession(options, common);
+    return;
+  }
   let credentialReader;
   if (options.credentialStdin === "true") {
     let input = "";
@@ -1804,14 +1960,7 @@ async function main() {
     catch { throw new IeeeFlowError("credential-read", "Invalid local credential input."); }
     input = "";
   }
-  const result = await runAutomatedRetrieval({
-    ...options,
-    chromium,
-    accessProfile,
-    credentialReader,
-    timeoutMs: options.timeoutMs ? Number(options.timeoutMs) : undefined,
-    acceptAttributeRelease: String(options.acceptAttributeRelease ?? "true").toLowerCase() === "true",
-  });
+  const result = await runAutomatedRetrieval({ ...common, credentialReader });
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }
 

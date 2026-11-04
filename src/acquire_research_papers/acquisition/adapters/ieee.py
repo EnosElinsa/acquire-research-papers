@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import atexit
+import collections
 import json
 import os
+import queue
 import shutil
 import subprocess
 import sys
@@ -26,6 +29,14 @@ from acquire_research_papers.models import PaperMetadata
 
 IEEE_HOST = "ieeexplore.ieee.org"
 PLAYWRIGHT_VERSION = "1.61.1"
+# One navigation, PDF request, or citation request; user login waits use timeout_seconds.
+DEFAULT_STEP_TIMEOUT_SECONDS = 120
+SESSION_CLOSE_SECONDS = 20
+
+
+def reuse_browser_enabled() -> bool:
+    """Production bridges keep one browser per process; ARP_IEEE_REUSE_BROWSER=0 opts out."""
+    return os.environ.get("ARP_IEEE_REUSE_BROWSER", "1").strip() != "0"
 
 
 class IeeeBridgeError(RuntimeError):
@@ -53,7 +64,92 @@ class IeeeBridgeProtocol(Protocol):
     def retrieve(self, reference: str) -> IeeeBridgeResult: ...
 
 
+def _relay_progress(line: str) -> None:
+    """Forward only the fact that the user must act; never the browser's message text."""
+    try:
+        event = json.loads(line)
+        if event.get("status") == "requires_user_action":
+            print(json.dumps({"status": "requires_user_action",
+                              "phase": event.get("phase", "institution-login"),
+                              "message": "Complete login in the dedicated browser."}),
+                  file=sys.stderr, flush=True)
+    except (ValueError, AttributeError):
+        pass
+
+
+class _BridgeSession:
+    """A long-lived browser process answering one JSON line per paper request."""
+
+    def __init__(self, command: list[str], credential_line: str | None) -> None:
+        self.process = subprocess.Popen(
+            command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, encoding="utf-8", errors="replace", bufsize=1,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        self._responses: queue.Queue[str | None] = queue.Queue()
+        self._errors: collections.deque[str] = collections.deque(maxlen=50)
+        threading.Thread(target=self._read_stdout, daemon=True).start()
+        self._stderr_reader = threading.Thread(target=self._read_stderr, daemon=True)
+        self._stderr_reader.start()
+        if credential_line is not None:
+            self._write(credential_line)
+
+    def _read_stdout(self) -> None:
+        assert self.process.stdout is not None
+        for line in self.process.stdout:
+            if line.strip():
+                self._responses.put(line)
+        self._responses.put(None)
+
+    def _read_stderr(self) -> None:
+        assert self.process.stderr is not None
+        for line in self.process.stderr:
+            self._errors.append(line)
+            _relay_progress(line)
+
+    def _write(self, line: str) -> None:
+        assert self.process.stdin is not None
+        self.process.stdin.write(line)
+        self.process.stdin.flush()
+
+    def alive(self) -> bool:
+        return self.process.poll() is None
+
+    def stderr_text(self) -> str:
+        self._stderr_reader.join(timeout=5)
+        return "".join(self._errors)
+
+    def request(self, payload: dict, *, timeout: float) -> str | None:
+        self._write(json.dumps(payload) + "\n")
+        try:
+            return self._responses.get(timeout=timeout)
+        except queue.Empty:
+            raise TimeoutError("IEEE browser session did not answer in time") from None
+
+    def close(self) -> None:
+        # Closing stdin ends the request loop; the browser then flushes its profile.
+        try:
+            if self.process.stdin is not None:
+                self.process.stdin.close()
+        except OSError:
+            pass
+        try:
+            self.process.wait(timeout=SESSION_CLOSE_SECONDS)
+        except subprocess.TimeoutExpired:
+            self.process.kill()
+            self.process.wait()
+        for stream in (self.process.stdout, self.process.stderr):
+            try:
+                if stream:
+                    stream.close()
+            except OSError:
+                pass
+
+
 class IeeeBridge:
+    # The browser enforces its own deadlines first; this is the last-resort process bound.
+    process_grace_seconds = 30
+
     def __init__(
         self,
         *,
@@ -70,6 +166,8 @@ class IeeeBridge:
         credential_provider: Callable[[str], dict | None] | None = None,
         credential_host: str = "",
         data_root: Path | None = None,
+        step_timeout_seconds: int = DEFAULT_STEP_TIMEOUT_SECONDS,
+        reuse_browser: bool = False,
     ) -> None:
         self.script = script.resolve()
         self.profile_root = profile_root.resolve()
@@ -84,13 +182,17 @@ class IeeeBridge:
         self.credential_provider = credential_provider
         self.credential_host = credential_host
         self.data_root = data_root.resolve() if data_root else None
+        self.step_timeout_seconds = max(1, min(step_timeout_seconds, timeout_seconds))
+        # One dedicated browser serves every paper of this process when enabled.
+        self.reuse_browser = reuse_browser
+        self._session: _BridgeSession | None = None
+        self._close_registered = False
 
-    def command(self, reference: str, *, run_dir: Path) -> list[str]:
-        command = [
-            self.node_path,
-            str(self.script),
-            "--reference",
-            reference,
+    def command(self, reference: str | None, *, run_dir: Path) -> list[str]:
+        command = [self.node_path, str(self.script)]
+        if reference is not None:
+            command.extend(["--reference", reference])
+        command.extend([
             "--work-dir",
             str(run_dir.resolve()),
             "--profile-dir",
@@ -101,7 +203,9 @@ class IeeeBridge:
             str(self.secret_path),
             "--timeout-ms",
             str(self.timeout_seconds * 1000),
-        ]
+            "--step-timeout-ms",
+            str(self.step_timeout_seconds * 1000),
+        ])
         command.extend(
             ["--accept-attribute-release", str(self.accept_attribute_release).lower()]
         )
@@ -113,20 +217,23 @@ class IeeeBridge:
             command.extend(["--credential-stdin", "true"])
         return command
 
+    def _credential_line(self) -> str | None:
+        if not self.credential_provider:
+            return None
+        # Carry the selected backend's missing state explicitly. The browser
+        # may inspect, download, or reuse a session without needing an account.
+        credential = self.credential_provider(self.credential_host) or {
+            "username": None, "password": None,
+        }
+        return json.dumps({"host": self.credential_host, **credential}) + "\n"
+
     def _execute(self, command: list[str]) -> subprocess.CompletedProcess[str]:
-        payload = None
-        if self.credential_provider:
-            # Carry the selected backend's missing state explicitly. The browser
-            # may inspect, download, or reuse a session without needing an account.
-            credential = self.credential_provider(self.credential_host) or {
-                "username": None, "password": None,
-            }
-            payload = json.dumps({"host": self.credential_host, **credential}) + "\n"
+        payload = self._credential_line()
         if self.access_profile is None:
             options = {"input": payload} if payload is not None else {}
             return subprocess.run(command, check=False, capture_output=True, text=True, **options,
                                   encoding="utf-8", errors="replace",
-                                  timeout=self.timeout_seconds + 30,
+                                  timeout=self.timeout_seconds + self.process_grace_seconds,
                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                    stdin=subprocess.PIPE if payload is not None else subprocess.DEVNULL,
@@ -138,15 +245,7 @@ class IeeeBridge:
             assert process.stderr is not None
             for line in process.stderr:
                 errors.append(line)
-                try:
-                    event = json.loads(line)
-                    if event.get("status") == "requires_user_action":
-                        print(json.dumps({"status": "requires_user_action",
-                                          "phase": event.get("phase", "institution-login"),
-                                          "message": "Complete login in the dedicated browser."}),
-                              file=sys.stderr, flush=True)
-                except (ValueError, AttributeError):
-                    pass
+                _relay_progress(line)
 
         reader = threading.Thread(target=consume_progress, daemon=True)
         reader.start()
@@ -161,7 +260,7 @@ class IeeeBridge:
             expired.set()
             process.kill()
 
-        timer = threading.Timer(self.timeout_seconds + 30, stop)
+        timer = threading.Timer(self.timeout_seconds + self.process_grace_seconds, stop)
         timer.daemon = True
         timer.start()
         try:
@@ -170,7 +269,7 @@ class IeeeBridge:
             process.wait()
             reader.join(timeout=5)
             if expired.is_set():
-                raise subprocess.TimeoutExpired(command, self.timeout_seconds + 30)
+                raise subprocess.TimeoutExpired(command, self.timeout_seconds + self.process_grace_seconds)
             return subprocess.CompletedProcess(command, process.returncode, output, "".join(errors))
         finally:
             timer.cancel()
@@ -225,6 +324,7 @@ class IeeeBridge:
                 str(self.installer),
                 "-DependencyRoot",
                 str(self.dependency_root),
+                *(["-DataRoot", str(self.data_root)] if self.data_root else []),
             ],
             check=False,
             capture_output=True,
@@ -261,10 +361,64 @@ class IeeeBridge:
             return IeeeBridgeError(phase, message)
         return IeeeBridgeError("automation", "IEEE browser automation failed")
 
+    def _session_command(self) -> list[str]:
+        session_dir = self.work_root / f"ieee-session-{uuid.uuid4().hex}"
+        session_dir.mkdir(parents=True, exist_ok=False)
+        return [*self.command(None, run_dir=session_dir), "--session", "true"]
+
+    def close(self) -> None:
+        """Close a reused browser so its profile is flushed and its lock released."""
+        session, self._session = self._session, None
+        if session is not None:
+            session.close()
+
+    def _session_payload(self, reference: str, run_dir: Path) -> dict:
+        session = self._session
+        if session is None or not session.alive():
+            if session is not None:
+                session.close()
+            session = _BridgeSession(self._session_command(), self._credential_line())
+            self._session = session
+            if not self._close_registered:
+                atexit.register(self.close)
+                self._close_registered = True
+        try:
+            line = session.request({"reference": reference, "workDir": str(run_dir)},
+                                   timeout=self.timeout_seconds + self.process_grace_seconds)
+        except TimeoutError:
+            self.close()
+            raise NetworkTransient("IEEE browser automation timed out.") from None
+        except OSError:
+            line = None
+        if line is None:
+            # The browser process ended; its last stderr line explains why.
+            errors = session.stderr_text()
+            self.close()
+            raise self._failure(errors)
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError as exc:
+            self.close()
+            raise IeeeBridgeError("automation-output", "IEEE bridge returned invalid JSON") from exc
+        if not isinstance(payload, dict):
+            raise IeeeBridgeError("automation-output", "IEEE bridge returned invalid JSON")
+        if payload.get("status") == "error":
+            if not session.alive():
+                self.close()
+            raise self._failure(line)
+        return payload
+
     def retrieve(self, reference: str) -> IeeeBridgeResult:
         self._ensure_dependency()
         run_dir = self.work_root / f"ieee-{uuid.uuid4().hex}"
         run_dir.mkdir(parents=True, exist_ok=False)
+        if self.reuse_browser:
+            payload = self._session_payload(reference, run_dir)
+        else:
+            payload = self._one_shot_payload(reference, run_dir)
+        return self._result(payload, run_dir)
+
+    def _one_shot_payload(self, reference: str, run_dir: Path) -> dict:
         try:
             process = self._execute(self.command(reference, run_dir=run_dir))
         except subprocess.TimeoutExpired as exc:
@@ -278,6 +432,11 @@ class IeeeBridge:
             payload = json.loads(lines[0])
         except json.JSONDecodeError as exc:
             raise IeeeBridgeError("automation-output", "IEEE bridge returned invalid JSON") from exc
+        if not isinstance(payload, dict):
+            raise IeeeBridgeError("automation-output", "IEEE bridge returned invalid JSON")
+        return payload
+
+    def _result(self, payload: dict, run_dir: Path) -> IeeeBridgeResult:
         if payload.get("status") != "downloaded":
             raise IeeeBridgeError("automation-output", "IEEE bridge did not report a completed download")
         pdf_path = Path(str(payload.get("pdfPath", ""))).resolve()

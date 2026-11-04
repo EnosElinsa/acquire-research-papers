@@ -1709,6 +1709,7 @@ test("classifies an IEEE citation request timeout without leaking its URL", asyn
         }),
         reference: "https://ieeexplore.ieee.org/document/11014597",
         workDir: root,
+        citationRetryDelaysMs: [0, 0],
         credentialReader: async () => { throw new Error("credentials must not be read"); },
       }),
       (error) => (
@@ -1717,6 +1718,161 @@ test("classifies an IEEE citation request timeout without leaking its URL", asyn
         && !JSON.stringify(subject.toErrorPayload(error)).includes("SECRET")
       ),
     );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("retries a transient citation export without downloading the PDF again", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "arp-ieee-citation-retry-"));
+  try {
+    const context = fakeContext({
+      pdfResponses: [new FakeResponse("%PDF-1.7\ncitation retry\n%%EOF\n")],
+    });
+    const post = context.request.post.bind(context.request);
+    let posts = 0;
+    context.request.post = async (url, options) => {
+      posts += 1;
+      if (posts === 1) {
+        throw Object.assign(new Error("apiRequestContext.post: Timeout 1ms exceeded"),
+          { name: "TimeoutError" });
+      }
+      return post(url, options);
+    };
+    const result = await subject.retrieveIeeePaper({
+      page: new FakePage(),
+      browserContext: context,
+      reference: "https://ieeexplore.ieee.org/document/11014597",
+      workDir: root,
+      citationRetryDelaysMs: [0],
+      credentialReader: async () => { throw new Error("credentials must not be read"); },
+    });
+    assert.equal(result.status, "downloaded");
+    assert.equal(posts, 2);
+    assert.equal(context.request.calls.filter((call) => call.method === "GET").length, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("bounds page steps separately from the user login wait", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "arp-ieee-step-timeout-"));
+  try {
+    const page = new FakePage();
+    const timeouts = [];
+    const goto = page.goto.bind(page);
+    page.goto = async (url, options) => { timeouts.push(options?.timeout); return goto(url, options); };
+    const context = fakeContext({
+      pdfResponses: [new FakeResponse("%PDF-1.7\nstep timeout\n%%EOF\n")],
+    });
+    const result = await subject.retrieveIeeePaper({
+      page,
+      browserContext: context,
+      reference: "https://ieeexplore.ieee.org/document/11014597",
+      workDir: root,
+      timeoutMs: 900_000,
+      stepTimeoutMs: 120_000,
+      credentialReader: async () => { throw new Error("credentials must not be read"); },
+    });
+    assert.equal(result.status, "downloaded");
+    assert.ok(timeouts.length > 0);
+    assert.deepEqual([...new Set(timeouts)], [120_000]);
+    assert.ok(context.request.calls.every((call) => call.options.timeout === 120_000));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+function sessionChromium(page, { closeOnSecond = false } = {}) {
+  let requests = 0;
+  const context = {
+    ...fakeContext({
+      pdfResponses: [
+        new FakeResponse("%PDF-1.7\nfirst\n%%EOF\n"),
+        new FakeResponse("%PDF-1.7\nsecond\n%%EOF\n"),
+      ],
+    }),
+    pages: () => [page],
+    closeCalls: 0,
+    async close() { this.closeCalls += 1; },
+  };
+  if (closeOnSecond) {
+    const get = context.request.get.bind(context.request);
+    context.request.get = async (url, options) => {
+      requests += 1;
+      if (requests === 2) {
+        throw Object.assign(new Error("apiRequestContext.get: Target page, context or browser has been closed"),
+          { name: "TargetClosedError" });
+      }
+      return get(url, options);
+    };
+  }
+  return {
+    context,
+    launches: 0,
+    async launchPersistentContext() { this.launches += 1; return context; },
+  };
+}
+
+async function* sessionLines(values) {
+  for (const value of values) yield value;
+}
+
+test("a retrieval session reuses one browser for several papers", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "arp-ieee-session-"));
+  try {
+    const page = new FakePage();
+    const chromium = sessionChromium(page);
+    const responses = [];
+    const result = await subject.runRetrievalSession({
+      chromium,
+      workDir: path.join(root, "runs", "session"),
+      profileDir: path.join(root, "profiles", "ieee"),
+      testMode: true,
+      credentialReader: async () => { throw new Error("credentials must not be read"); },
+      requests: sessionLines([
+        JSON.stringify({ reference: "https://ieeexplore.ieee.org/document/11014597",
+          workDir: path.join(root, "runs", "paper-1") }),
+        "not json",
+        "",
+        JSON.stringify({ reference: "https://ieeexplore.ieee.org/document/11014597",
+          workDir: path.join(root, "runs", "paper-2") }),
+      ]),
+      respond: (payload) => responses.push(payload),
+    });
+    assert.equal(chromium.launches, 1);
+    assert.equal(chromium.context.closeCalls, 1);
+    assert.deepEqual(responses.map((payload) => payload.status), ["downloaded", "error", "downloaded"]);
+    assert.equal(responses[1].phase, "session-request");
+    assert.equal(path.dirname(responses[2].pdfPath), path.join(root, "runs", "paper-2"));
+    assert.deepEqual(result, { status: "session_complete", handled: 3 });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a retrieval session ends after the browser closes so the bridge can restart it", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "arp-ieee-session-closed-"));
+  try {
+    const page = new FakePage();
+    const chromium = sessionChromium(page, { closeOnSecond: true });
+    const responses = [];
+    const request = (name) => JSON.stringify({
+      reference: "https://ieeexplore.ieee.org/document/11014597",
+      workDir: path.join(root, "runs", name),
+    });
+    const result = await subject.runRetrievalSession({
+      chromium,
+      workDir: path.join(root, "runs", "session"),
+      profileDir: path.join(root, "profiles", "ieee"),
+      testMode: true,
+      credentialReader: async () => { throw new Error("credentials must not be read"); },
+      requests: sessionLines([request("paper-1"), request("paper-2"), request("paper-3")]),
+      respond: (payload) => responses.push(payload),
+    });
+    assert.deepEqual(responses.map((payload) => payload.status), ["downloaded", "error"]);
+    assert.deepEqual(responses[1].details, { errorName: "TargetClosedError" });
+    assert.equal(result.status, "session_closed");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

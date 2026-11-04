@@ -861,3 +861,118 @@ def test_defer_host_matches_doi_only_records_by_registrant_prefix(tmp_path: Path
     ).run(selection.manifest_path, tmp_path / "delivery", deferred_hosts=["ieeexplore.ieee.org"])
     assert calls == []
     assert result.manual_required == 1
+
+
+def make_many(root: Path, count: int, publisher_host: str = "publisher.example") -> SelectionStore:
+    candidates = tuple(
+        CandidateMetadata(
+            f"paper-{index}", f"Paper {index}", 2026, "Invented Venue", 0.9, True,
+            ("title", "abstract"), doi=f"10.1000/paper-{index}",
+            official_url=f"https://{publisher_host}/paper-{index}", abstract="Relevant abstract",
+        )
+        for index in range(1, count + 1)
+    )
+    records = build_selection_records(
+        candidates,
+        venues=(VenueScope("Invented Venue", short_name="IV", publisher="Invented Society"),),
+        delivery={"profile": "numbered", "naming_template": "Invented Society IV/{number}.{ext}"},
+    )
+    return SelectionStore.write(
+        root,
+        {"mode": "corpus", "name": "guard test",
+         "target": {"minimum": 1, "preferred": count, "maximum": count}},
+        records,
+    )
+
+
+def _ledger(result) -> list[dict]:
+    return [json.loads(line) for line in result.acquisition_path.read_text(encoding="utf-8").splitlines()]
+
+
+def test_rate_limited_host_is_paused_for_the_rest_of_the_run(tmp_path: Path) -> None:
+    selection = make_many(tmp_path / "selection", 3)
+    calls: list[str] = []
+
+    def acquirer(record, destination):
+        calls.append(record.key)
+        return {"error_code": "rate_limited", "message": "HTTP 429 from publisher.example"}
+
+    result = CorpusAcquisitionWorkflow(acquirer=acquirer).run(
+        selection.manifest_path, tmp_path / "delivery"
+    )
+    rows = _ledger(result)
+    assert calls == ["paper-1"]
+    assert [row["error_code"] for row in rows] == ["rate_limited", "host_paused", "host_paused"]
+    assert {row["state"] for row in rows} == {"retryable"}
+    assert "publisher.example paused" in rows[1]["message"]
+
+
+def test_institution_login_failure_pauses_the_host_into_the_manual_queue(tmp_path: Path) -> None:
+    from acquire_research_papers.acquisition.adapters.ieee import IeeeBridgeError
+
+    selection = make_many(tmp_path / "selection", 3, publisher_host="ieeexplore.ieee.org")
+    calls: list[str] = []
+
+    def acquirer(record, destination):
+        calls.append(record.key)
+        raise IeeeBridgeError("authentication-not-complete", "CAPTCHA or OTP required")
+
+    result = CorpusAcquisitionWorkflow(acquirer=acquirer).run(
+        selection.manifest_path, tmp_path / "delivery"
+    )
+    rows = _ledger(result)
+    assert calls == ["paper-1"]
+    assert {row["state"] for row in rows} == {"manual_required"}
+    assert all("pause_host" not in row for row in rows)
+    assert "institution login failure" in rows[2]["message"]
+
+
+def test_entitlement_gaps_do_not_pause_the_host(tmp_path: Path) -> None:
+    from acquire_research_papers.acquisition.adapters.ieee import IeeeBridgeError
+
+    selection = make_many(tmp_path / "selection", 3, publisher_host="ieeexplore.ieee.org")
+    calls: list[str] = []
+
+    def acquirer(record, destination):
+        calls.append(record.key)
+        raise IeeeBridgeError("download-after-auth", "entitlement does not cover the item")
+
+    CorpusAcquisitionWorkflow(acquirer=acquirer).run(selection.manifest_path, tmp_path / "delivery")
+    assert calls == ["paper-1", "paper-2", "paper-3"]
+
+
+def test_consecutive_transient_failures_pause_and_success_resets_the_streak(tmp_path: Path) -> None:
+    selection = make_many(tmp_path / "selection", 5)
+    calls: list[str] = []
+    outcomes = iter(["transient", "ok", "transient", "transient"])
+
+    def acquirer(record, destination):
+        calls.append(record.key)
+        if next(outcomes) == "ok":
+            return delivered_outcome(record, destination)
+        return {"error_code": "network_transient", "message": "temporary"}
+
+    result = CorpusAcquisitionWorkflow(acquirer=acquirer, transient_failure_limit=2).run(
+        selection.manifest_path, tmp_path / "delivery"
+    )
+    assert calls == ["paper-1", "paper-2", "paper-3", "paper-4"]
+    assert _ledger(result)[4]["error_code"] == "host_paused"
+
+
+def test_requests_to_one_host_are_spaced(tmp_path: Path) -> None:
+    selection = make_many(tmp_path / "selection", 3)
+    now = [100.0]
+    pauses: list[float] = []
+
+    def sleep(seconds: float) -> None:
+        pauses.append(round(seconds, 3))
+        now[0] += seconds
+
+    def acquirer(record, destination):
+        now[0] += 0.5  # the paper itself takes half a second
+        return delivered_outcome(record, destination)
+
+    CorpusAcquisitionWorkflow(
+        acquirer=acquirer, min_host_interval_seconds=2.0, sleeper=sleep, monotonic=lambda: now[0]
+    ).run(selection.manifest_path, tmp_path / "delivery")
+    assert pauses == [2.0, 2.0]
