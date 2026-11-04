@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- IEEE conferences can be enumerated through OpenAlex: a venue that lists exact `openalex_source` IDs is read by the new `openalex-venue` enumerator (every work of that source and year, with DOIs and abstracts), and Crossref no longer reports it as `exact_identifier_required`. `arp sources --find-openalex "<name>"` looks up source IDs, and `arp sources --spec` shows the route per slice. Live: INFOCOM 2024 (262 papers) and ICC 2024 (940) enumerated completely, 1,191 of 1,202 with abstracts, all routed to IEEE Xplore. An OpenAlex API key is required.
+
 - Batch acquisition contacts up to four publisher hosts at the same time (`--parallel-hosts N` on `acquire corpus`, `acquire research`, and `acquire selection`; `1` restores one paper at a time). Each host still gets one paper at a time with the same spacing and pauses, one adapter never serves two papers at once, and the ledger keeps selection order. A live nine-paper batch across six publishers took 67 s instead of 166 s.
 - Acquisition writes `manual-download.html` beside `manual-download.csv`: a static, escaped checklist of every manual item with its official link, target filenames, and the `manual-fetch --queue` command. It is removed when the queue empties.
 - `arp job list` lists the background jobs started on this machine, newest first, with their status. `job status` retries briefly when `job.json` is momentarily unreadable.

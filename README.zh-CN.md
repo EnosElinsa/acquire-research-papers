@@ -353,8 +353,8 @@ Crossref、OpenAlex、Semantic Scholar、普通仓库和镜像都不能满足最
 | PMLR | ICML、AISTATS、COLT、UAI、CoRL、ALT、ACML、L4DC、CLeaR 各卷的官方 BibTeX 文件 | 由发现阶段或论文页 URL 自动获取 | BibTeX 取自官方页面上显示的条目（provenance 记为 `publisher_page_embedded`）。真实验证：ICML 2023 列出 1,828 篇带摘要的论文；ICML 2019 和 2023 论文已交付 |
 | CVF Open Access | CVPR、ICCV、WACV 主会官方列表 | 由发现阶段或论文页 URL 自动获取 | CVF 开放获取版本，除水印外与录用版本一致；最终出版版本在 IEEE Xplore（在 venue 上声明 `publisher: IEEE` 可改走 IEEE）。BibTeX 取自页面。真实验证：WACV 2024 列出 846 篇带摘要的论文；CVPR 2019、2023、一个 CVPR workshop 和 WACV 2024 论文已交付 |
 | Springer Link | 由 Crossref/OpenAlex/Semantic Scholar 发现；`10.1007` DOI | 期刊论文和书籍章节（LNCS）在页面表明本网络有权限时自动获取 | 官方 PDF 和 Springer 引用导出服务提供的 BibTeX 文件。开放获取论文在任何网络下都可下载，订阅论文只在有权限的网络（如校园网）下载；否则为 `access_required`。不做登录。真实验证：两篇 Machine Learning 期刊论文和一篇 ECCV 章节已交付 |
-| IEEE Xplore | 候选主要来自 Crossref/OpenAlex/Semantic Scholar | 配置 CARSI 院校档案后自动 | 使用通用 profile；已在一个 CARSI 院校完成端到端真实验证。每个新增院校都需要首次适配和一篇代表论文冒烟测试 |
-| ACM Digital Library | 通常由 Crossref collection 枚举和可选查询 API 发现 | 条件式 HTTP adapter | 只有正式页面和文件接口允许独立客户端访问时才能自动完成；目前没有生产级 ACM 浏览器 adapter，被拦截时转人工 |
+| IEEE Xplore | 期刊经 Crossref（ISSN）枚举；会议经 OpenAlex（`openalex_source`，如 INFOCOM、ICC、GLOBECOM）枚举；摘要来自 OpenAlex/Semantic Scholar | 配置 CARSI 院校档案后自动 | 使用通用 profile；已在一个 CARSI 院校完成端到端真实验证。每个新增院校都需要首次适配和一篇代表论文冒烟测试 |
+| ACM Digital Library | 通常由 Crossref collection 枚举和可选查询 API 发现 | 条件式 HTTP adapter | 只有正式页面和文件接口允许独立客户端访问时才能自动完成。2026 年 11 月实测，非浏览器请求和自动化 Chrome 都会遇到 Cloudflare 人机验证，因此 ACM 论文进入人工队列，提示信息会说明是人机验证 |
 | ScienceDirect | Crossref/OpenAlex/Semantic Scholar 发现；Elsevier API 可解析预期身份 | 仅人工 | 用户在正常授权浏览器中下载，CLI 核验并接管本地文件；不自动登录或操作 ScienceDirect |
 | Semantic Scholar | 可选带 key 候选搜索、DOI 补全以及引用/related 图扩展 | 不支持 | 只提供发现和图证据；来源失败会保留为诊断 |
 | OpenAlex | 可选候选搜索、DOI 补全和引用图扩展 | 不支持 | 需要可选 API key；只提供发现和图证据 |
