@@ -284,20 +284,20 @@ def _corpus_discovery_next_actions(
              "command": f"arp config setup {provider}", "reason": _MISSING_KEY_REASONS[provider]}
             for provider in missing_keys
         )
-        how = ("rerun the same command with the same output; it repeats the lookups that were "
-               "rate limited or failed" if result.retryable_errors else
-               "run discover corpus into a new output directory, because a rerun into this one "
-               "keeps its finished enrichment")
         actions.append({
             "action": "rerun",
-            "reason": f"{result.pending_metadata} candidates still lack an abstract; after adding "
-                      f"a key, {how}",
+            "reason": ("1 candidate still lacks" if result.pending_metadata == 1 else
+                       f"{result.pending_metadata} candidates still lack")
+                      + " an abstract; after adding a key, rerun the same command with the same "
+                        "output: finished venue slices are kept and the missing abstracts are "
+                        "looked up again",
         })
     actions.extend(
         {"action": "check_coverage", "venue": warning.venue, "year": warning.year,
          "reason": warning.error_code,
-         "message": f"{warning.message}. Compare with the edition's proceedings and run discover "
-                    "corpus into a new output directory later to pick up works added since."}
+         "message": f"{warning.message}. Compare with the edition's proceedings; rerunning the "
+                    "same command with the same output later reads this slice again, adds the "
+                    "works indexed since, and drops the warning once the count recovers."}
         for warning in result.coverage_warnings
     )
     return actions

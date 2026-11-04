@@ -931,12 +931,14 @@ class CorpusDiscoveryResult:
     coverage_incomplete: int
     # Complete slices whose source may still be missing records, e.g. possible_upstream_lag.
     coverage_warnings: tuple[DiscoveryDiagnostic, ...] = ()
-    # Retryable diagnostics; a rerun into the same output repeats those steps.
-    retryable_errors: int = 0
 
 
 # Diagnostics that warn about a complete slice rather than fail it.
 COVERAGE_WARNING_CODES = frozenset({"possible_upstream_lag"})
+# Checkpoint labels and diagnostic phases of abstract enrichment (DoiBatchEnrichmentProvider
+# and the coordinator's enricher loop); a rerun with pending abstracts repeats that step.
+ENRICHMENT_LABEL_SUFFIX = ":doi-batch"
+ENRICHMENT_PHASES = frozenset({"doi-enrichment", "enrich"})
 
 
 class CorpusDiscoveryWorkflow:
@@ -1073,11 +1075,25 @@ class CorpusDiscoveryWorkflow:
             for label in prior_legacy
             if label.split(":", 1)[0] not in retryable_providers
         )
+        # A slice warned about (e.g. possible_upstream_lag) is read again on every rerun, so
+        # works the source adds later arrive and the warning goes once the slice recovers.
+        recheck_keys = {
+            (item.provider_id, item.venue, item.year)
+            for item in prior_diagnostics
+            if item.error_code in COVERAGE_WARNING_CODES and item.year is not None
+        }
+        recheck_labels = {f"{provider}:{venue}:{year}" for provider, venue, year in recheck_keys}
+        # Candidates still without an abstract are looked up again on every rerun, including
+        # through enrichers that already finished or that a newly added API key enables.
+        refresh_enrichment = int(prior_manifest.get("pending_metadata") or 0) > 0
         completed_slices = frozenset(
-            (
+            label
+            for label in (
                 *resumable_legacy,
                 *(item.label for item in prior_coverage if item.state == "complete"),
             )
+            if label not in recheck_labels
+            and not (refresh_enrichment and label.endswith(ENRICHMENT_LABEL_SUFFIX))
         )
         expected_slices = self._expected_slices(request)
         if expected_slices:
@@ -1095,6 +1111,8 @@ class CorpusDiscoveryWorkflow:
         prior_is_complete = bool(prior_manifest) and (
             prior_coverage_complete
             and not any(item.retryable for item in prior_diagnostics)
+            and not recheck_labels
+            and not refresh_enrichment
         )
         if prior_is_complete:
             batch = DiscoveryBatch()
@@ -1114,8 +1132,15 @@ class CorpusDiscoveryWorkflow:
         coverage_by_key = {
             self._coverage_key(item): item for item in prior_coverage
         }
+        unfinished_rechecks: set[tuple[str, str, int]] = set()
         for item in batch.coverage:
-            coverage_by_key[self._coverage_key(item)] = item
+            key = self._coverage_key(item)
+            if key in recheck_keys and item.state != "complete":
+                # A recheck that did not finish keeps the complete slice and its warning;
+                # the next rerun checks again.
+                unfinished_rechecks.add(key)
+                continue
+            coverage_by_key[key] = item
         coverage = tuple(
             sorted(coverage_by_key.values(), key=lambda item: self._coverage_key(item))
         )
@@ -1123,13 +1148,20 @@ class CorpusDiscoveryWorkflow:
         if prior_is_complete:
             diagnostics = prior_diagnostics
         else:
-            rerun_keys = {self._coverage_key(item) for item in batch.coverage}
+            rerun_keys = {
+                self._coverage_key(item) for item in batch.coverage
+            } - unfinished_rechecks
             diagnostics = tuple(
                 item
                 for item in prior_diagnostics
                 if (item.provider_id, item.venue, item.year) not in rerun_keys
                 and item.provider_id not in retryable_providers
-            ) + batch.diagnostics
+                and not (refresh_enrichment and item.phase in ENRICHMENT_PHASES)
+            ) + tuple(
+                item
+                for item in batch.diagnostics
+                if (item.provider_id, item.venue, item.year) not in unfinished_rechecks
+            )
 
         real_coverage = tuple(
             item for item in coverage if item.provider_id != "discovery"
@@ -1196,7 +1228,11 @@ class CorpusDiscoveryWorkflow:
             )
 
         legacy_coverage = tuple(
-            dict.fromkeys((*resumable_legacy, *batch.covered_slices))
+            dict.fromkeys((
+                *(label for label in resumable_legacy
+                  if not (refresh_enrichment and label.endswith(ENRICHMENT_LABEL_SUFFIX))),
+                *batch.covered_slices,
+            ))
         )
         complete_labels = tuple(
             dict.fromkeys(
@@ -1352,5 +1388,4 @@ class CorpusDiscoveryWorkflow:
             hard_gate_failed=hard_gate_failed,
             coverage_incomplete=coverage_incomplete,
             coverage_warnings=coverage_warnings,
-            retryable_errors=sum(item.retryable for item in diagnostics),
         )

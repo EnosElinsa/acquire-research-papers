@@ -343,7 +343,7 @@ Crossref、OpenAlex、Semantic Scholar、普通仓库和镜像都不能满足最
 
 运行 `arp sources` 或 `arp sources --spec <corpus.yaml>`，可离线查看来源能力和逐 venue/年份缺口。参见[来源台账与验收标准](skills/acquire-research-papers/references/sources.md)。优先 venue 名单尚未确定，已有 ACL/IJCAI/IEEE/ACM/ScienceDirect 场景不代表覆盖全部会议和期刊。枚举完成只针对所选来源，上游仍可能漏收。
 
-内置 venue 预设让 spec 可以只写简称，例如 `name: INFOCOM` 或 `name: IEEE TMC`：该 venue 会得到 2026 年 11 月真实核对过的标识（19 个 IEEE 期刊和 AAAI 用 ISSN；INFOCOM、ICC、GLOBECOM、WCNC、VTC、ICDCS、ICNP、IWQoS、SECON 和 SIGCOMM 用 OpenAlex 系列）。spec 中自己写的标识优先，`preset: none` 关闭匹配，`arp sources` 列出全部预设。若 OpenAlex 某届收录数远低于上一年，发现阶段仍把该切片记为完成，但会加一条 `possible_upstream_lag` 警告；若因缺少 Semantic Scholar 或 OpenAlex key 而有摘要待补，会给出对应的 `arp config setup` 命令。
+内置 venue 预设让 spec 可以只写简称，例如 `name: INFOCOM` 或 `name: IEEE TMC`：该 venue 会得到 2026 年 11 月真实核对过的标识（19 个 IEEE 期刊和 AAAI 用 ISSN；INFOCOM、ICC、GLOBECOM、WCNC、VTC、ICDCS、ICNP、IWQoS、SECON 和 SIGCOMM 用 OpenAlex 系列）。spec 中自己写的标识优先，`preset: none` 关闭匹配，`arp sources` 列出全部预设。若 OpenAlex 某届收录数远低于上一年，发现阶段仍把该切片记为完成，但会加一条 `possible_upstream_lag` 警告；若因缺少 Semantic Scholar 或 OpenAlex key 而有摘要待补，会给出对应的 `arp config setup` 命令。用同一命令、同一输出目录重跑时，会重新读取带警告的切片并重新查缺失的摘要，已完成的切片不会重新抓取。
 
 | 来源 | 论文发现 | PDF/BibTeX 获取 | 当前成熟度与失败处理 |
 | --- | --- | --- | --- |

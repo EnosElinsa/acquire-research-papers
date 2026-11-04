@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- A rerun of `discover corpus` into the same output now looks up missing abstracts again while candidates are pending, through every configured enricher, including one a newly added API key enables; finished venue slices are not fetched again. Before, a run whose slices were all complete did nothing on rerun, so adding a key meant discovering into a new directory. Live: after an OpenAlex key was added, rerunning a key-less IEEE TMC 2024 run filled one of its two remaining abstracts without enumerating the venue through Crossref again.
+- A rerun also reads a slice with a `possible_upstream_lag` warning again: works indexed since are added and the warning goes once the count recovers. A recheck that fails keeps the complete slice and its warning for the next rerun. A run with nothing pending and no warning stays idempotent.
+
 ## 0.11.0 — 2026-11-04
 
 - Built-in venue presets: a corpus spec can name a venue by its short name (`name: INFOCOM`, `name: IEEE TMC`) and receive an identifier checked live in November 2026: an ISSN for 19 IEEE journals (TMC, TWC, JSAC, IoT-J, TVT, TCOM, ToN, TNSE, COMST, Wireless Communications, Network, TPDS, TCC, TSC, T-ITS, TNSM, WCL, COMML, TAES) and AAAI, and an OpenAlex series for INFOCOM, ICC, GLOBECOM, WCNC, VTC, ICDCS, ICNP, IWQoS, SECON, and SIGCOMM. A preset applies only when the venue declares no identifier of its own and no different publisher; `preset: <id>` selects one explicitly and `preset: none` turns matching off. The applied preset is recorded in `request-spec.json`, and `arp sources` lists the presets with their evidence and shows the preset of each slice.

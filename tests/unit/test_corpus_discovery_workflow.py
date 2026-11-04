@@ -158,16 +158,65 @@ def test_workflow_progress_covers_validation_merge_and_artifact_writes(
 def test_complete_discovery_rerun_is_idempotent_and_keeps_evidence_hashes(
     tmp_path: Path,
 ) -> None:
-    discoverer = StaticDiscoverer()
-    workflow = CorpusDiscoveryWorkflow(discoverer=discoverer)
+    calls = []
+
+    def discover(request: DiscoveryRequest) -> DiscoveryBatch:
+        calls.append(request)
+        return DiscoveryBatch(
+            candidates=(candidate("a", "Venue A"), candidate("b", "Venue B")),
+            coverage=(CoverageSlice("fake", "Venue A", 2025, "complete", 1, 1),
+                      CoverageSlice("fake", "Venue B", 2025, "complete", 1, 1)),
+            covered_slices=("semantic-scholar:doi-batch",),
+        )
+
+    workflow = CorpusDiscoveryWorkflow(discoverer=discover)
 
     first = workflow.run(spec(), tmp_path)
     hashes_before = [row["evidence_hash"] for row in read_jsonl(first.evidence_path)]
     second = workflow.run(spec(), tmp_path)
     hashes_after = [row["evidence_hash"] for row in read_jsonl(second.evidence_path)]
 
-    assert discoverer.calls == 1
+    assert len(calls) == 1
     assert hashes_after == hashes_before
+
+
+def test_a_rerun_with_pending_abstracts_repeats_only_the_abstract_lookup(
+    tmp_path: Path,
+) -> None:
+    calls: list[DiscoveryRequest] = []
+
+    def discover(request: DiscoveryRequest) -> DiscoveryBatch:
+        calls.append(request)
+        if len(calls) == 1:
+            return DiscoveryBatch(
+                candidates=(candidate("ready", "Venue A"),
+                            candidate("missing", "Venue B", abstract="")),
+                diagnostics=(DiscoveryDiagnostic("openalex", "doi-enrichment", "provider_error",
+                                                 "DOI metadata enrichment failed"),),
+                coverage=(CoverageSlice("fake", "Venue A", 2025, "complete", 1, 1),
+                          CoverageSlice("fake", "Venue B", 2025, "complete", 1, 1)),
+                covered_slices=("semantic-scholar:doi-batch",),
+            )
+        return DiscoveryBatch(candidates=(candidate("missing", "Venue B"),),
+                              covered_slices=("semantic-scholar:doi-batch", "openalex:doi-batch"))
+
+    workflow = CorpusDiscoveryWorkflow(discoverer=discover)
+    first = workflow.run(spec(), tmp_path)
+    ready_hash = next(row["evidence_hash"] for row in read_jsonl(first.evidence_path)
+                      if row["candidate_id"] == "doi:10.1000/ready")
+    second = workflow.run(spec(), tmp_path)
+    third = workflow.run(spec(), tmp_path)
+
+    assert (first.status, first.pending_metadata) == ("metadata_pending", 1)
+    rerun = calls[1]
+    assert {"fake:Venue A:2025", "fake:Venue B:2025"} <= rerun.completed_slices
+    assert "semantic-scholar:doi-batch" not in rerun.completed_slices
+    assert sorted(item.key for item in rerun.seed_candidates) == ["missing", "ready"]
+    assert (second.status, second.pending_metadata) == ("review_required", 0)
+    assert read_jsonl(second.diagnostics_path) == []
+    assert next(row["evidence_hash"] for row in read_jsonl(second.evidence_path)
+                if row["candidate_id"] == "doi:10.1000/ready") == ready_hash
+    assert len(calls) == 2 and third.status == "review_required"
 
 
 def test_partial_discovery_resume_passes_completed_slice_checkpoints(
@@ -444,29 +493,81 @@ def test_discovery_artifacts_strip_sensitive_keys_and_signed_query_strings(
     assert "https://objects.example/paper.pdf" in artifact_text
 
 
-def test_a_lag_warning_keeps_coverage_complete_counts_in_the_manifest_and_survives_a_rerun(
-    tmp_path: Path,
-) -> None:
-    calls = []
-    lag = DiscoveryDiagnostic("openalex-venue", "venue-enumeration", "possible_upstream_lag",
-                              "OpenAlex lists 25 works for Venue A 2025 against 262 for 2024",
-                              venue="Venue A", year=2025)
+LAG = DiscoveryDiagnostic("openalex-venue", "venue-enumeration", "possible_upstream_lag",
+                          "OpenAlex lists 25 works for Venue A 2025 against 262 for 2024",
+                          venue="Venue A", year=2025)
 
+
+def lagging_first_run(calls: list[DiscoveryRequest], later):
     def discover(request: DiscoveryRequest) -> DiscoveryBatch:
         calls.append(request)
+        if len(calls) > 1:
+            return later(request)
         return DiscoveryBatch(
             candidates=(candidate("a", "Venue A"), candidate("b", "Venue B")),
-            diagnostics=(lag,),
+            diagnostics=(LAG,),
             coverage=(CoverageSlice("openalex-venue", "Venue A", 2025, "complete", 1, 25),
                       CoverageSlice("fake", "Venue B", 2025, "complete", 1, 1)),
         )
+    return discover
 
-    workflow = CorpusDiscoveryWorkflow(discoverer=discover)
-    first = workflow.run(spec(), tmp_path)
-    second = workflow.run(spec(), tmp_path)
+
+def test_a_lag_warning_keeps_coverage_complete_and_counts_in_the_manifest(tmp_path: Path) -> None:
+    calls: list[DiscoveryRequest] = []
+    first = CorpusDiscoveryWorkflow(
+        discoverer=lagging_first_run(calls, lambda request: DiscoveryBatch())).run(spec(), tmp_path)
 
     assert (first.status, first.coverage_incomplete) == ("review_required", 0)
-    assert first.coverage_warnings == (lag,)
+    assert first.coverage_warnings == (LAG,)
     assert json.loads(first.manifest_path.read_text(encoding="utf-8"))["coverage_warnings"] == 1
-    assert len(calls) == 1
-    assert second.coverage_warnings == (lag,)
+
+
+def test_a_rerun_reads_a_lagging_slice_again_and_drops_the_warning_once_it_recovers(
+    tmp_path: Path,
+) -> None:
+    calls: list[DiscoveryRequest] = []
+
+    def recovered(request: DiscoveryRequest) -> DiscoveryBatch:
+        return DiscoveryBatch(
+            candidates=(candidate("a", "Venue A"), candidate("c", "Venue A")),
+            coverage=(CoverageSlice("openalex-venue", "Venue A", 2025, "complete", 2, 240,
+                                    records_recognized=240),))
+
+    workflow = CorpusDiscoveryWorkflow(discoverer=lagging_first_run(calls, recovered))
+    workflow.run(spec(), tmp_path)
+    second = workflow.run(spec(), tmp_path)
+    third = workflow.run(spec(), tmp_path)
+
+    rerun = calls[1]
+    assert "openalex-venue:Venue A:2025" not in rerun.completed_slices
+    assert "fake:Venue B:2025" in rerun.completed_slices
+    assert second.coverage_warnings == ()
+    assert read_jsonl(second.diagnostics_path) == []
+    rows = {row["venue"]: row for row in read_jsonl(second.coverage_path)}
+    assert (rows["Venue A"]["state"], rows["Venue A"]["records_recognized"]) == ("complete", 240)
+    assert len(read_jsonl(second.candidates_path)) == 3
+    assert len(calls) == 2 and third.status == "review_required"
+
+
+def test_a_recheck_that_fails_keeps_the_complete_slice_and_its_warning(tmp_path: Path) -> None:
+    calls: list[DiscoveryRequest] = []
+
+    def unavailable(request: DiscoveryRequest) -> DiscoveryBatch:
+        return DiscoveryBatch(
+            diagnostics=(DiscoveryDiagnostic("openalex-venue", "venue-enumeration",
+                                             "network_transient", "temporarily unavailable",
+                                             venue="Venue A", year=2025, retryable=True),),
+            coverage=(CoverageSlice("openalex-venue", "Venue A", 2025, "failed",
+                                    diagnostic_code="network_transient"),))
+
+    workflow = CorpusDiscoveryWorkflow(discoverer=lagging_first_run(calls, unavailable))
+    workflow.run(spec(), tmp_path)
+    second = workflow.run(spec(), tmp_path)
+    workflow.run(spec(), tmp_path)
+
+    assert (second.status, second.coverage_incomplete) == ("review_required", 0)
+    assert second.coverage_warnings == (LAG,)
+    assert [row["error_code"] for row in read_jsonl(second.diagnostics_path)] == [
+        "possible_upstream_lag"]
+    assert {row["state"] for row in read_jsonl(second.coverage_path)} == {"complete"}
+    assert len(calls) == 3  # the warning stays, so every rerun checks again
