@@ -334,6 +334,8 @@ Crossref, OpenAlex, Semantic Scholar, repositories, and mirrors never satisfy fi
 
 The output directory is bound to one frozen selection before publisher contact. A rerun skips a delivered item only when every recorded path and hash still matches. For safety, an existing directory containing unbound PDFs, BibTeX files, or acquisition ledgers is rejected instead of being overwritten; use a clean delivery directory or a deliberate migration/import workflow.
 
+The ledger is saved after every paper, so an interrupted run (Ctrl+C, a host timeout, a closed browser) resumes with the same command and output. Leftovers of the paper that was interrupted move to `.arp-interrupted/` instead of being deleted. A publisher without an adapter goes to the manual queue as `unsupported_adapter`. Within a batch, requests to one host are spaced; a host is paused for the rest of the run after HTTP 429, three consecutive transient failures, or an institution login failure. IEEE papers of one run share a single dedicated browser, so an institutional login is reused.
+
 ## Source support and maturity
 
 “Supported” is separated into discovery, acquisition, and live maturity:

@@ -32,11 +32,10 @@ The deterministic lexical prefilter is high recall and produces review signals o
 
 Discovery and selection are separate phases. Discovery prepares immutable evidence. The executing agent then decides semantic relevance from title and abstract; keywords are optional and full text is not required. Selection is frozen only after those decisions pass hash and schema validation.
 
-Run discovery as its own phase:
+Run discovery as its own phase (`arp` means `python <skill-directory>/scripts/arp.py`):
 
-```powershell
-python "$skill/scripts/arp.py" discover corpus --progress `
-  --spec <job.yaml> --output <discovery-run>
+```text
+arp discover corpus --progress --spec <job.yaml> --output <discovery-run>
 ```
 
 `--progress` writes sanitized JSON lines to stderr with closed phase names, provider slugs, and integer counts. The final result remains the only JSON object on stdout. DOI abstract enrichment runs Semantic Scholar first and, when its independent key is configured, OpenAlex second; a Semantic Scholar rate limit does not prevent the OpenAlex pass.
@@ -65,9 +64,8 @@ Read `evidence-packets.jsonl` and write `review-decisions.jsonl`. Each record mu
 
 Use title and abstract for the decision; keywords are optional. Do not require publisher login or full text. Missing abstracts remain pending. Then import decisions:
 
-```powershell
-python "$skill/scripts/arp.py" review corpus `
-  --run <discovery-run> --decisions <review-decisions.jsonl>
+```text
+arp review corpus --run <discovery-run> --decisions <review-decisions.jsonl>
 ```
 
 The importer verifies the request and all discovery artifact hashes, then rejects unknown/duplicate IDs, changed hashes, invalid enums, unsupported evidence fields, and acceptance without ready title-and-abstract metadata. It applies venue, year, publication-type, group, and recent-window quotas to accepted candidates and stops at the preferred total. A scalable early stop is valid only when the accepted pool already satisfies that preferred total and every quota. The manifest records `review_completion: target_satisfied_early_stop` and `ready_unreviewed`; every omitted ready packet remains in `pending-review.csv` and is excluded from selection. Otherwise, all ready packets require an explicit decision before the review can be complete. The workflow writes `reviewed-candidates.jsonl`, `pending-review.csv`, `selected-papers.jsonl`, and `selection-manifest.json`. Named shortfall classes distinguish coverage, evidence, review, and quota work. Never lower semantic criteria to fill a quota.
@@ -76,10 +74,8 @@ The importer verifies the request and all discovery artifact hashes, then reject
 
 Acquire the frozen selection explicitly:
 
-```powershell
-python "$skill/scripts/arp.py" acquire corpus `
-  --selection <discovery-run\selection-manifest.json> --output <delivery-root> `
-  --defer-host <publisher.example>
+```text
+arp acquire corpus --selection <discovery-run>/selection-manifest.json --output <delivery-root> --defer-host <publisher.example>
 ```
 
 The acquisition phase verifies the selected-list hash and atomically writes `selection-binding.json` before any publisher request. It routes every frozen record through the same publisher adapters used by `fetch`; it cannot discover extra papers or change semantic decisions. An existing final manifest with the same hash can migrate to the binding contract. A corrupt ledger, a different selection hash, or an unbound/unverified reserved artifact stops the run before overwrite. Delivery is complete only when both files pass:
@@ -87,16 +83,18 @@ The acquisition phase verifies the selected-list hash and atomically writes `sel
 - official PDF validation and SHA-256 recording;
 - official raw BibTeX parse and metadata comparison.
 
-Reserved numbering and relative paths are assigned when selection is frozen, so automatic and manual acquisition target the same slots. Reuse the global registry and artifact hashes for interrupted-run recovery. A rerun skips a delivered item only when all three recorded paths and PDF, BibTeX, and provenance hashes still match.
+Reserved numbering and relative paths are assigned when selection is frozen, so automatic and manual acquisition target the same slots. A rerun skips a delivered item only when all three recorded paths and PDF, BibTeX, and provenance hashes still match.
 
-`--defer-host` is a repeatable, run-scoped control for temporarily disabling publisher contact without changing the selection. It accepts exact hostnames only and compares them case-insensitively. A matching item with no verified prior delivery becomes `manual_required` with `access_required`; a verified prior delivery is still reused. This is publisher-neutral and must not be implemented as a venue-specific selection filter.
+The ledger is checkpointed after every paper. An interrupted run (Ctrl+C, host timeout, crashed browser) leaves `delivery-manifest.json` at status `in_progress` and the current paper as an `in_progress` row; `arp run status` reports it as `interrupted`. Rerun the same command and output: complete pairs whose provenance binds the selection ID and hashes are adopted, and leftovers of the interrupted paper move to `.arp-interrupted/<selection-id>/` instead of being deleted. Any other unverified file in a reserved path stops the run with its path named.
+
+`--defer-host` is a repeatable, run-scoped control for temporarily disabling publisher contact without changing the selection. It accepts exact hostnames only and compares them case-insensitively; a DOI-only record of a supported publisher matches through its DOI registrant prefix. A matching item with no verified prior delivery becomes `manual_required` with `access_required`; a verified prior delivery is still reused. This is publisher-neutral and must not be implemented as a venue-specific selection filter. Host spacing and automatic host pauses are described in [acquisition workflows](workflows.md#ieee-xplore).
 
 Acquisition writes one durable state per selected paper to `acquisition-manifest.jsonl`:
 
 - `delivered`: the official PDF and raw publisher BibTeX are verified;
-- `manual_required`: authorized user interaction or an unsupported safe adapter is required;
-- `retryable`: a transient network or rate-limit failure may be retried;
-- `contract_error`: the official page or returned artifact violates its contract.
+- `manual_required`: authorized user interaction (`access_required`) or a publisher without an adapter (`unsupported_adapter`);
+- `retryable`: a transient network, rate-limit, or browser failure, or a host paused for this run (`host_paused`);
+- `contract_error`: the official page or returned artifact violates its contract, or a local prerequisite is missing (`configuration_required`).
 
 It also writes `manual-download.csv`, `retryable-downloads.csv`, and `delivery-manifest.json`. No outcome removes a record from `selected-papers.jsonl`. The delivered count, not the discovered count, determines acquisition completion.
 
@@ -106,10 +104,8 @@ It also writes `manual-download.csv`, `retryable-downloads.csv`, and `delivery-m
 
 Import a manual pair with the immutable selection identity:
 
-```powershell
-python "$skill/scripts/arp.py" manual-fetch `
-  --selection <discovery-run\selection-manifest.json> --key <selection-id> `
-  --output <delivery-root> --watch <download-directory>
+```text
+arp manual-fetch --selection <discovery-run>/selection-manifest.json --key <selection-id> --output <delivery-root> --watch <download-directory>
 ```
 
 This mode trusts neither editable CSV values nor filenames. It verifies the frozen list, official identity, PDF, and raw publisher BibTeX before filling the reserved paths. Do not add a source-specific shortcut.

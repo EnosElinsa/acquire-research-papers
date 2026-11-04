@@ -4,7 +4,7 @@ Use this reference for gap analysis, nearest-work search, claim citations, citat
 
 ## Plan four complementary passes
 
-Create a `ResearchBrief` conforming to `schemas/research-brief.schema.json`, then execute all four passes with `arp discover research`:
+Create a `ResearchBrief` conforming to `schemas/research-brief.schema.json`, then execute all four passes with `arp discover research --brief <brief.yaml> --output <research-run>` (`arp` means `python <skill-directory>/scripts/arp.py`):
 
 1. direct terminology and close synonyms;
 2. scenario, mechanism, decisions, objectives, and constraints in decomposed combinations;
@@ -17,9 +17,8 @@ Configured Semantic Scholar and OpenAlex clients join Crossref as research searc
 
 Discovery writes an immutable `research-candidates.jsonl` snapshot, `citation-graph.json`, and `research-run.json`. Do not edit them. Review every candidate and write one JSONL decision per packet using `schemas/research-review-decision.schema.json`, preserving `candidate_id` and `candidate_sha256`. Run:
 
-```powershell
-python "$skill/scripts/arp.py" review research `
-  --run <research-run> --decisions <research-review.jsonl>
+```text
+arp review research --run <research-run> --decisions <research-review.jsonl>
 ```
 
 The selection freezes only after every candidate has an explicit include/exclude decision by the executing agent. New records use `schema_version: 2`, actual-host `reviewer` and matching `executor.host`; model/version are included only when available. Legacy Codex v1 reviews remain readable unchanged. The normalized decision JSONL and review manifest are SHA-256-bound into that selection and rechecked before acquisition and evidence import. Keep only the closest papers needed to test the claims, within `analysis.max_full_text_papers`.
@@ -28,20 +27,17 @@ The selection freezes only after every candidate has an explicit include/exclude
 
 Metadata and abstracts nominate papers. Acquire the official PDF and official BibTeX pair for final candidates:
 
-```powershell
-python "$skill/scripts/arp.py" acquire research --run <research-run>
+```text
+arp acquire research --run <research-run>
 ```
 
 This command reuses the frozen-selection acquisition workflow, then parses each verified PDF through the seven-day MinerU cache. `full-text-manifest.jsonl` binds the selection ID, official PDF SHA-256, cached Markdown SHA-256, parser mode, and pending reason. Rerunning reuses verified publisher artifacts and content-addressed parses. A manual publisher item remains selected and pending rather than being silently dropped. The result reports separate `acquisition_pending` and `parsing_pending` counts; its top-level status points to the earliest unfinished gate: missing publisher files, then failed parsing, then evidence review.
 
 For a paper listed in `acquisition/manual-download.csv`, import the user-authorized official pair into the same acquisition root, then resume:
 
-```powershell
-python "$skill/scripts/arp.py" manual-fetch `
-  --selection <research-run\selection\selection-manifest.json> `
-  --key <selection-id> --output <research-run\acquisition> `
-  --pdf <official.pdf> --bibtex <official.bib> --no-open
-python "$skill/scripts/arp.py" acquire research --run <research-run>
+```text
+arp manual-fetch --selection <research-run>/selection/selection-manifest.json --key <selection-id> --output <research-run>/acquisition --pdf <official.pdf> --bibtex <official.bib> --no-open
+arp acquire research --run <research-run>
 ```
 
 Resume accepts the pair only when the reserved paths, manual provenance, selection ID, metadata identity, and recorded file hashes all verify.
@@ -64,9 +60,8 @@ Keep excerpts short. Use them to anchor reasoning, not to reproduce the paper.
 
 Create one evidence-review row for every frozen paper using `schemas/research-evidence-review.schema.json`, then run:
 
-```powershell
-python "$skill/scripts/arp.py" evidence research `
-  --run <research-run> --records <evidence-review.jsonl>
+```text
+arp evidence research --run <research-run> --records <evidence-review.jsonl>
 ```
 
 The importer rejects stale PDF hashes, changed Markdown, unknown claims, mismatched paper IDs, unsupported read scopes, and full-text excerpts not found in the bound Markdown. Use `insufficient-text` with an empty `records` array when the complete parse was read but cannot support a reliable claim record. Do not submit evidence for a paper that remains pending acquisition or parsing.

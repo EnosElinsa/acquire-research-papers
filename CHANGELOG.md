@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Corpus and research acquisition checkpoint the ledger after every paper. An interrupted run resumes with the same command: verified pairs are adopted, the interrupted paper's leftovers move to `.arp-interrupted/`, any other blocking file is named, and `run status` reports `interrupted`.
+- One failure classification serves every acquisition path. Publishers without an adapter enter the manual queue as `unsupported_adapter`; publisher 5xx, DOI resolver network failures, and IEEE navigation failures are retryable; unexpected browser failures are `automation_error` and report only the exception class. `fetch` reports publisher HTTP errors without a traceback.
+- DOI resolution retries with backoff, follows DOI alias hops, and maps Elsevier link-resolver targets to the manual ScienceDirect route. `--defer-host` matches DOI-only records of supported publishers. Publisher HTTP clients back off 1, 2, then 4 seconds.
+- IEEE papers of one run share one dedicated browser (`ARP_IEEE_REUSE_BROWSER=0` opts out); page steps are bounded at 120 s separately from the user's login wait; a transient citation export is retried before the downloaded PDF is discarded. The pinned Playwright installer now accepts the runtime data root.
+- Batches space requests per publisher host and pause a host for the rest of the run after HTTP 429, three consecutive transient failures (`host_paused`), or an institution login failure. `doctor` reports IEEE browser prerequisites.
+- Tests are isolated from real configuration: `AppPaths.for_root()` no longer lets `ARP_CONFIG_ROOT` override its explicit root.
+- `SKILL.md` routes every mode, adds one result-to-next-action table, and is the single copy of the access boundaries; examples use the portable `arp` shorthand.
+
 ## 0.6.0 — 2026-10-21
 
 - New research runs write only discovery state until evidence review, then one `reports/report.md` with located evidence, claim coverage, pending work, scope and an applicable bounded gap conclusion. `evidence research --export-csv` adds merged `papers.csv` and `claim-coverage.csv`; runs without `output_version` keep their legacy layout on resume.
