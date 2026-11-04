@@ -65,7 +65,7 @@ from acquire_research_papers.discovery.contracts import (
     DiscoveryProvider,
 )
 from acquire_research_papers.discovery.coordinator import DiscoveryCoordinator
-from acquire_research_papers.discovery.corpus import CorpusDiscoveryWorkflow
+from acquire_research_papers.discovery.corpus import CorpusDiscoveryResult, CorpusDiscoveryWorkflow
 from acquire_research_papers.discovery.review import CorpusReviewWorkflow
 from acquire_research_papers.discovery.crossref import CrossrefClient
 from acquire_research_papers.discovery.openalex import OpenAlexClient
@@ -181,10 +181,13 @@ def _production_discovery_providers(
         or (api_keys or {}).get("openalex", "").strip()
     )
     # Present even without a key, so an openalex_source venue reports what it needs.
+    venue_client = OpenAlexClient(
+        client=SafeHttpClient(allowed_hosts={"api.openalex.org"}, **_PUBLISHER_RETRY),
+        api_key=venue_key or None)
     providers.append(OpenAlexVenueDiscoveryProvider(
-        OpenAlexClient(client=SafeHttpClient(allowed_hosts={"api.openalex.org"}, **_PUBLISHER_RETRY),
-                       api_key=venue_key or None).source_works,
+        venue_client.source_works,
         configured=bool(venue_key),
+        counter=venue_client.source_count,
     ))
     # Official archive indexes; their year listings can take a minute to serve.
     providers.extend(
@@ -264,6 +267,42 @@ def _production_discovery_enrichers(
     return enrichers
 
 
+_MISSING_KEY_REASONS = {
+    "semantic_scholar": "Semantic Scholar looked up abstracts without a key, at the shared "
+                        "anonymous rate limit; a free key makes the lookup faster and more reliable",
+    "openalex": "OpenAlex abstract lookup is off without a key; a free key enables it",
+}
+
+
+def _corpus_discovery_next_actions(
+    result: CorpusDiscoveryResult, missing_keys: Sequence[str],
+) -> list[dict[str, object]]:
+    actions: list[dict[str, object]] = []
+    if result.pending_metadata and missing_keys:
+        actions.extend(
+            {"action": "config setup", "provider": provider,
+             "command": f"arp config setup {provider}", "reason": _MISSING_KEY_REASONS[provider]}
+            for provider in missing_keys
+        )
+        how = ("rerun the same command with the same output; it repeats the lookups that were "
+               "rate limited or failed" if result.retryable_errors else
+               "run discover corpus into a new output directory, because a rerun into this one "
+               "keeps its finished enrichment")
+        actions.append({
+            "action": "rerun",
+            "reason": f"{result.pending_metadata} candidates still lack an abstract; after adding "
+                      f"a key, {how}",
+        })
+    actions.extend(
+        {"action": "check_coverage", "venue": warning.venue, "year": warning.year,
+         "reason": warning.error_code,
+         "message": f"{warning.message}. Compare with the edition's proceedings and run discover "
+                    "corpus into a new output directory later to pick up works added since."}
+        for warning in result.coverage_warnings
+    )
+    return actions
+
+
 def _supports_dpapi() -> bool:
     return os.name == "nt"
 
@@ -324,6 +363,8 @@ class Application:
     manual_handoff: ManualHandoffWorkflow | None = None
     manual_selection: ManualSelectionWorkflow | None = None
     discovery_coordinator: DiscoveryCoordinator | None = None
+    # Abstract-enrichment providers without an API key ("semantic_scholar", "openalex").
+    missing_discovery_keys: tuple[str, ...] = ()
 
     @classmethod
     def for_test(
@@ -505,6 +546,10 @@ class Application:
             acquisition=application.corpus_acquisition,
             mineru_cache=mineru_cache,
         )
+        if load_discovery_api_keys:
+            application.missing_discovery_keys = tuple(
+                provider for provider, key in (("semantic_scholar", semantic_key),
+                                               ("openalex", openalex_key)) if not key)
         return application
 
     def _deliver_pair(
@@ -1364,6 +1409,9 @@ def run_cli(
                     "pending_metadata_count": result.pending_metadata,
                     "hard_gate_failed": result.hard_gate_failed,
                     "coverage_incomplete": result.coverage_incomplete,
+                    "coverage_warnings": len(result.coverage_warnings),
+                    "next_actions": _corpus_discovery_next_actions(
+                        result, app.missing_discovery_keys),
                 }
             )
             return 0

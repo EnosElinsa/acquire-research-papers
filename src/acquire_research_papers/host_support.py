@@ -135,6 +135,24 @@ IEEE_UNSUPPORTED_PLATFORM_NOTE = (
     "and import them with manual-fetch, or acquire them on a Windows machine.")
 
 
+DISCOVERY_KEY_NOTES = {
+    "semantic_scholar": "No Semantic Scholar API key: corpus discovery looks up abstracts at the "
+                        "shared anonymous rate limit. Add a free key with "
+                        "arp config setup semantic_scholar.",
+    "openalex": "No OpenAlex API key: corpus discovery skips the OpenAlex abstract lookup and "
+                "cannot enumerate openalex_source venues such as the IEEE conference presets. "
+                "Add a free key with arp config setup openalex.",
+}
+
+
+def _missing_discovery_keys(configuration: dict) -> list[str]:
+    if configuration.get("status") != "checked":
+        return []  # an unchecked or unreadable store says nothing about the keys
+    keys = configuration.get("api_keys") or {}
+    return [name for name in DISCOVERY_KEY_NOTES
+            if keys.get(name) is False and not os.environ.get(API_KEYS[name], "").strip()]
+
+
 def _ieee_browser(paths: AppPaths) -> dict:
     """Local prerequisites of IEEE browser automation; no browser or network is started."""
     from acquire_research_papers.acquisition.adapters import ieee
@@ -229,6 +247,8 @@ def dispatch(args: argparse.Namespace) -> dict:
         actions.append("IEEE browser automation is missing: "
                        + ", ".join(report["ieee_browser"]["missing"])
                        + ". Install them or use manual-fetch for IEEE papers.")
+    # Optional keys: informational, so the local status stays complete without them.
+    notes.extend(DISCOVERY_KEY_NOTES[name] for name in _missing_discovery_keys(report["configuration"]))
     report["status"] = "attention_required" if actions else "local_checks_complete"
     report["next_actions"] = actions
     report["notes"] = notes

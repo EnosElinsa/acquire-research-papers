@@ -442,3 +442,31 @@ def test_discovery_artifacts_strip_sensitive_keys_and_signed_query_strings(
     for secret in ("private", "signed", "OSSAccessKeyId", "Signature", "token="):
         assert secret not in artifact_text
     assert "https://objects.example/paper.pdf" in artifact_text
+
+
+def test_a_lag_warning_keeps_coverage_complete_counts_in_the_manifest_and_survives_a_rerun(
+    tmp_path: Path,
+) -> None:
+    calls = []
+    lag = DiscoveryDiagnostic("openalex-venue", "venue-enumeration", "possible_upstream_lag",
+                              "OpenAlex lists 25 works for Venue A 2025 against 262 for 2024",
+                              venue="Venue A", year=2025)
+
+    def discover(request: DiscoveryRequest) -> DiscoveryBatch:
+        calls.append(request)
+        return DiscoveryBatch(
+            candidates=(candidate("a", "Venue A"), candidate("b", "Venue B")),
+            diagnostics=(lag,),
+            coverage=(CoverageSlice("openalex-venue", "Venue A", 2025, "complete", 1, 25),
+                      CoverageSlice("fake", "Venue B", 2025, "complete", 1, 1)),
+        )
+
+    workflow = CorpusDiscoveryWorkflow(discoverer=discover)
+    first = workflow.run(spec(), tmp_path)
+    second = workflow.run(spec(), tmp_path)
+
+    assert (first.status, first.coverage_incomplete) == ("review_required", 0)
+    assert first.coverage_warnings == (lag,)
+    assert json.loads(first.manifest_path.read_text(encoding="utf-8"))["coverage_warnings"] == 1
+    assert len(calls) == 1
+    assert second.coverage_warnings == (lag,)

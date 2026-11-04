@@ -226,6 +226,23 @@ class OpenAlexClient:
             query_url=public_url,
         )
 
+    def source_count(self, source_id: str, year: int) -> int:
+        """How many works OpenAlex lists for ``source_id`` in ``year``, from one small request."""
+        if not self.api_key:
+            raise DiscoveryUnavailable("OpenAlex API key is not configured")
+        if not _SOURCE_ID.fullmatch(source_id):
+            raise ValueError("OpenAlex source IDs look like S1234567")
+        parameters = [
+            ("filter", f"primary_location.source.id:{source_id},publication_year:{int(year)}"),
+            ("per-page", "1"),
+            ("select", "id"),
+            ("api_key", self.api_key),
+        ]
+        count = (self._payload(f"{self.endpoint}?{urlencode(parameters)}").get("meta") or {}).get("count")
+        if not isinstance(count, int) or isinstance(count, bool):
+            raise DiscoveryUnavailable("OpenAlex returned no work count")
+        return count
+
     def find_sources(self, query: str, *, limit: int = 10) -> list[dict[str, Any]]:
         """OpenAlex journal and conference sources whose name matches ``query``."""
         if not self.api_key:

@@ -255,7 +255,9 @@ class OpenAlexVenueDiscoveryProvider:
 
     Used where Crossref has no exact identifier, notably IEEE conference series such as INFOCOM,
     ICC, and GLOBECOM, whose OpenAlex records carry DOIs and abstracts. "complete" means the
-    OpenAlex enumeration finished; OpenAlex can lag behind a recent edition.
+    OpenAlex enumeration finished; OpenAlex can lag behind a recent edition. With a ``counter``,
+    a finished slice holding under ``lag_ratio`` of the previous year's works (when that year
+    has at least ``lag_minimum``) also gets a non-retryable ``possible_upstream_lag`` warning.
     """
 
     searcher: Callable[..., CandidatePage]
@@ -263,6 +265,9 @@ class OpenAlexVenueDiscoveryProvider:
     provider_id: str = "openalex-venue"
     page_size: int = 200
     max_pages: int = 100
+    counter: Callable[[str, int], int] | None = None
+    lag_ratio: float = 0.5
+    lag_minimum: int = 50
 
     def capabilities(self) -> DiscoveryCapabilities:
         return DiscoveryCapabilities(
@@ -345,8 +350,26 @@ class OpenAlexVenueDiscoveryProvider:
                 coverage.append(CoverageSlice(self.provider_id, venue.name, year, state,
                                               pages_fetched=pages, records_fetched=records,
                                               diagnostic_code=error, records_recognized=records))
+                if state == "complete" and (warning := self._lag_warning(venue, year, records)):
+                    diagnostics.append(warning)
         return DiscoveryBatch(candidates=tuple(candidates), diagnostics=tuple(diagnostics),
                               coverage=tuple(coverage))
+
+    def _lag_warning(self, venue: VenueScope, year: int, count: int) -> DiscoveryDiagnostic | None:
+        """Flag an edition that is much smaller than the one before; the slice stays complete."""
+        if self.counter is None:
+            return None
+        try:
+            previous = sum(self.counter(source_id, year - 1) for source_id in venue.openalex_source)
+        except (RateLimited, NetworkTransient, HttpStatusError, RuntimeError, ValueError):
+            return None  # best effort: without the previous count there is nothing to compare
+        if previous < self.lag_minimum or count >= previous * self.lag_ratio:
+            return None
+        return self._diagnostic(
+            "possible_upstream_lag",
+            f"OpenAlex lists {count} works for {venue.name} {year} against {previous} for "
+            f"{year - 1}; OpenAlex may not have indexed the {year} edition fully yet",
+            venue.name, year)
 
 
 def _normalized(value: str) -> str:

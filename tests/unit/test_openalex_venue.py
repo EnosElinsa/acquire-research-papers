@@ -128,3 +128,73 @@ def test_the_spec_accepts_only_source_ids_and_sources_reports_the_route(tmp_path
     spec.write_text(body.format(source="INFOCOM"), encoding="utf-8")
     with pytest.raises(SpecValidationError):
         load_corpus_spec(spec)
+
+
+def lagging_searcher(count: int):
+    def searcher(source_id, year, *, cursor, per_page):
+        return CandidatePage(tuple(work(index) for index in range(count)), total_results=count)
+    return searcher
+
+
+def lag_request(year: int = 2025) -> DiscoveryRequest:
+    value = request()
+    return value.with_scope(value.venues, (year,))
+
+
+def test_an_edition_far_below_the_previous_year_is_complete_but_warned_about():
+    asked = []
+
+    def counter(source_id, year):
+        asked.append((source_id, year))
+        return 262
+
+    batch = OpenAlexVenueDiscoveryProvider(lagging_searcher(25), counter=counter).discover(lag_request())
+
+    assert asked == [("S7407087743", 2024)]
+    (slice_,) = batch.coverage
+    assert (slice_.state, slice_.records_recognized) == ("complete", 25)
+    (warning,) = batch.diagnostics
+    assert (warning.error_code, warning.retryable, warning.venue, warning.year) == (
+        "possible_upstream_lag", False, "INFOCOM", 2025)
+    assert "25 works for INFOCOM 2025 against 262 for 2024" in warning.message
+
+
+@pytest.mark.parametrize(("current", "previous"), [(200, 262), (10, 40)])
+def test_a_normal_year_or_a_small_previous_year_gives_no_warning(current, previous):
+    provider = OpenAlexVenueDiscoveryProvider(lagging_searcher(current),
+                                              counter=lambda source_id, year: previous)
+    assert provider.discover(lag_request()).diagnostics == ()
+
+
+def test_the_lag_check_is_best_effort_and_skipped_for_an_unfinished_slice():
+    def unavailable(source_id, year):
+        raise NetworkTransient("down")
+
+    quiet = OpenAlexVenueDiscoveryProvider(lagging_searcher(25), counter=unavailable)
+    assert quiet.discover(lag_request()).diagnostics == ()
+
+    def failing(*args, **kwargs):
+        raise NetworkTransient("down")
+
+    failed = OpenAlexVenueDiscoveryProvider(
+        failing, counter=lambda *a: pytest.fail("no count for a failed slice"))
+    assert [item.error_code for item in failed.discover(lag_request()).diagnostics] == [
+        "network_transient"]
+
+
+def test_the_client_counts_one_source_year_with_a_single_small_request():
+    seen = []
+
+    def handler(http_request: httpx.Request) -> httpx.Response:
+        seen.append(http_request.url)
+        return httpx.Response(200, json={"meta": {"count": 262}, "results": [{"id": "W1"}]})
+
+    client = SafeHttpClient(allowed_hosts={"api.openalex.org"})
+    client._client = httpx.Client(transport=httpx.MockTransport(handler))
+
+    assert OpenAlexClient(client=client, api_key="k").source_count("S7407087743", 2024) == 262
+    query = parse_qs(urlsplit(str(seen[0])).query)
+    assert query["filter"] == ["primary_location.source.id:S7407087743,publication_year:2024"]
+    assert (query["per-page"], query["select"]) == (["1"], ["id"])
+    with pytest.raises(RuntimeError, match="not configured"):
+        OpenAlexClient(client=client, api_key=None).source_count("S7407087743", 2024)

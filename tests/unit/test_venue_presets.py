@@ -1,0 +1,101 @@
+from __future__ import annotations
+
+import json
+import re
+from pathlib import Path
+
+import pytest
+
+from acquire_research_papers.discovery.contracts import DiscoveryRequest
+from acquire_research_papers.discovery.venue_presets import PRESETS, apply_presets, find_preset
+from acquire_research_papers.source_catalog import describe_sources
+from acquire_research_papers.specs import SpecValidationError, load_corpus_spec
+
+
+def spec(*venues: dict) -> dict:
+    return {"mode": "corpus", "name": "presets", "target": {"minimum": 1, "maximum": 5},
+            "scope": {"venues": list(venues), "years": {"include": [2024]}}}
+
+
+def venue_of(value: dict) -> dict:
+    (venue,) = apply_presets(value)["scope"]["venues"]
+    return venue
+
+
+def write(tmp_path: Path, value: dict) -> Path:
+    path = tmp_path / "spec.json"
+    path.write_text(json.dumps(value), encoding="utf-8")
+    return path
+
+
+def test_a_conference_short_name_receives_the_checked_openalex_series():
+    venue = venue_of(spec({"name": "INFOCOM"}))
+
+    assert venue["preset"] == "ieee-infocom"
+    assert venue["openalex_source"] == ["S7407087743"]
+    assert (venue["kind"], venue["publisher"], venue["short_name"]) == ("conference", "IEEE", "INFOCOM")
+    assert "IEEE Conference on Computer Communications (INFOCOM)" in venue["aliases"]
+    assert DiscoveryRequest.from_spec(apply_presets(spec({"name": "INFOCOM"}))).venues[0].preset == "ieee-infocom"
+
+
+def test_a_journal_alias_receives_its_issn_and_matching_ignores_case_and_punctuation():
+    venue = venue_of(spec({"name": "ieee tmc"}))
+
+    assert (venue["preset"], venue["issn"], venue["kind"]) == ("ieee-tmc", ["1536-1233"], "journal")
+    assert venue_of(spec({"name": "IEEE Communications Surveys and Tutorials"}))["preset"] == "ieee-comst"
+    assert find_preset("IoT-J") is find_preset("iotj") is not None
+
+
+def test_an_explicit_preset_applies_to_any_name_and_none_turns_matching_off():
+    chosen = venue_of(spec({"name": "Main ICC track", "preset": "ieee-icc"}))
+    assert (chosen["preset"], chosen["openalex_source"]) == ("ieee-icc", ["S4306419201"])
+
+    off = venue_of(spec({"name": "INFOCOM", "preset": "none"}))
+    assert off == {"name": "INFOCOM", "preset": "none"}
+
+
+def test_the_venues_own_identifiers_a_different_publisher_or_two_matches_prevent_a_match():
+    own = {"name": "INFOCOM", "openalex_source": ["S1"]}
+    assert venue_of(spec(own)) == own
+    other_publisher = {"name": "ICC", "publisher": "Springer"}
+    assert venue_of(spec(other_publisher)) == other_publisher
+    two = {"name": "TMC", "aliases": ["TWC"]}
+    assert venue_of(spec(two)) == two
+
+
+def test_an_unknown_preset_or_conflicting_identifiers_are_spec_errors(tmp_path: Path):
+    with pytest.raises(SpecValidationError, match="unknown venue preset: ieee-nope"):
+        load_corpus_spec(write(tmp_path, spec({"name": "X", "preset": "ieee-nope"})))
+    conflicting = spec({"name": "INFOCOM", "preset": "ieee-infocom", "openalex_source": ["S1"]})
+    with pytest.raises(SpecValidationError, match="conflicts with the venue's own identifiers"):
+        load_corpus_spec(write(tmp_path, conflicting))
+
+
+def test_an_expanded_spec_such_as_a_copied_request_spec_loads_unchanged(tmp_path: Path):
+    expanded = load_corpus_spec(write(tmp_path, spec({"name": "INFOCOM"}, {"name": "IEEE TWC"})))
+
+    assert load_corpus_spec(write(tmp_path, expanded)) == expanded
+    assert [venue["preset"] for venue in expanded["scope"]["venues"]] == ["ieee-infocom", "ieee-twc"]
+
+
+def test_sources_lists_the_presets_and_shows_which_one_each_slice_uses(tmp_path: Path):
+    result = describe_sources(load_corpus_spec(write(tmp_path, spec({"name": "INFOCOM"}))))
+
+    (slice_,) = result["requested_slices"]
+    assert slice_["preset"] == "ieee-infocom"
+    assert slice_["openalex_venue"]["sources"] == ["S7407087743"]
+    assert slice_["crossref"]["diagnostic"] == "enumerated_by_openalex_source"
+    listed = {preset["id"]: preset for preset in result["venue_presets"]}
+    assert listed["ieee-tmc"]["issn"] == ["1536-1233"]
+    assert listed["ieee-infocom"]["checked"].startswith("OpenAlex S7407087743")
+
+
+def test_every_preset_identifier_is_well_formed_and_accepted_by_the_schema(tmp_path: Path):
+    for preset in PRESETS:
+        assert preset.issn or preset.openalex_source, preset.id
+        assert all(re.fullmatch(r"\d{4}-\d{3}[\dX]", value) for value in preset.issn), preset.id
+        assert all(re.fullmatch(r"S\d{1,15}", value) for value in preset.openalex_source), preset.id
+        assert preset.checked, preset.id
+    venues = [{"name": preset.short_name, "preset": preset.id} for preset in PRESETS]
+    loaded = load_corpus_spec(write(tmp_path, spec(*venues)))
+    assert [venue["preset"] for venue in loaded["scope"]["venues"]] == [preset.id for preset in PRESETS]

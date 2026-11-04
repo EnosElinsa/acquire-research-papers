@@ -17,6 +17,8 @@ class VenueScope:
     years: tuple[int, ...] = ()
     # Exact OpenAlex source IDs (S…) that enumerate this venue, e.g. an IEEE conference series.
     openalex_source: tuple[str, ...] = ()
+    # The built-in venue preset that supplied identifiers (discovery/venue_presets.py), if any.
+    preset: str = ""
 
     @property
     def all_names(self) -> tuple[str, ...]:
@@ -96,6 +98,7 @@ class DiscoveryRequest:
                 publisher=str(item.get("publisher", "")),
                 years=tuple(int(value) for value in item.get("years", ())),
                 openalex_source=tuple(str(value) for value in item.get("openalex_source", ())),
+                preset="" if item.get("preset") in (None, "none") else str(item["preset"]),
             )
             for item in scope.get("venues", ())
         )

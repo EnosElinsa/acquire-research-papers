@@ -464,6 +464,7 @@ def test_progress_is_jsonl_on_stderr_and_final_result_stays_on_stdout(
         pending_metadata=0,
         hard_gate_failed=0,
         coverage_incomplete=0,
+        coverage_warnings=(),
     )
 
     class Workflow:
@@ -481,7 +482,8 @@ def test_progress_is_jsonl_on_stderr_and_final_result_stays_on_stdout(
         nonlocal callback
         callback = kwargs["discovery_progress"]
         return SimpleNamespace(
-            corpus_discovery=Workflow(), repository_root=tmp_path / "repository"
+            corpus_discovery=Workflow(), repository_root=tmp_path / "repository",
+            missing_discovery_keys=(),
         )
 
     monkeypatch.setattr(Application, "default", classmethod(default))

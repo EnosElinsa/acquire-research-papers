@@ -929,6 +929,14 @@ class CorpusDiscoveryResult:
     pending_metadata: int
     hard_gate_failed: int
     coverage_incomplete: int
+    # Complete slices whose source may still be missing records, e.g. possible_upstream_lag.
+    coverage_warnings: tuple[DiscoveryDiagnostic, ...] = ()
+    # Retryable diagnostics; a rerun into the same output repeats those steps.
+    retryable_errors: int = 0
+
+
+# Diagnostics that warn about a complete slice rather than fail it.
+COVERAGE_WARNING_CODES = frozenset({"possible_upstream_lag"})
 
 
 class CorpusDiscoveryWorkflow:
@@ -1293,6 +1301,8 @@ class CorpusDiscoveryWorkflow:
         if diagnostics and not coverage and not expected_slices:
             coverage_incomplete = max(1, coverage_incomplete)
         reviewable = sum(packet.metadata_state == "ready" for packet in packets)
+        coverage_warnings = tuple(
+            item for item in diagnostics if item.error_code in COVERAGE_WARNING_CODES)
         if coverage_incomplete:
             run_status = "coverage_incomplete"
         elif pending_packets:
@@ -1310,6 +1320,7 @@ class CorpusDiscoveryWorkflow:
             "hard_gate_failed": hard_gate_failed,
             "coverage_incomplete": coverage_incomplete,
             "discovery_errors": len(diagnostics),
+            "coverage_warnings": len(coverage_warnings),
             "provider_coverage": list(complete_labels),
             "request": request_path.name,
             "coverage": coverage_path.name,
@@ -1340,4 +1351,6 @@ class CorpusDiscoveryWorkflow:
             pending_metadata=len(pending_packets),
             hard_gate_failed=hard_gate_failed,
             coverage_incomplete=coverage_incomplete,
+            coverage_warnings=coverage_warnings,
+            retryable_errors=sum(item.retryable for item in diagnostics),
         )

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Built-in venue presets: a corpus spec can name a venue by its short name (`name: INFOCOM`, `name: IEEE TMC`) and receive an identifier checked live in November 2026: an ISSN for 19 IEEE journals (TMC, TWC, JSAC, IoT-J, TVT, TCOM, ToN, TNSE, COMST, Wireless Communications, Network, TPDS, TCC, TSC, T-ITS, TNSM, WCL, COMML, TAES) and AAAI, and an OpenAlex series for INFOCOM, ICC, GLOBECOM, WCNC, VTC, ICDCS, ICNP, IWQoS, SECON, and SIGCOMM. A preset applies only when the venue declares no identifier of its own and no different publisher; `preset: <id>` selects one explicitly and `preset: none` turns matching off. The applied preset is recorded in `request-spec.json`, and `arp sources` lists the presets with their evidence and shows the preset of each slice.
+- OpenAlex lag warning: when a finished `openalex-venue` slice holds under half the works of the previous year (and that year has at least 50), discovery adds a non-retryable `possible_upstream_lag` diagnostic, counts it as `coverage_warnings` in the output and manifest, and lists a `check_coverage` next action. The slice stays `complete`. Live: INFOCOM 2025 (25 works against 262 in 2024) is flagged.
+- When abstracts stay pending and a Semantic Scholar or OpenAlex key is missing, `discover corpus` lists `next_actions` with the `arp config setup` command for each missing key; `arp doctor` notes the missing keys.
+
 ## 0.10.0 — 2026-11-04
 
 - IEEE conferences can be enumerated through OpenAlex: a venue that lists exact `openalex_source` IDs is read by the new `openalex-venue` enumerator (every work of that source and year, with DOIs and abstracts), and Crossref no longer reports it as `exact_identifier_required`. `arp sources --find-openalex "<name>"` looks up source IDs, and `arp sources --spec` shows the route per slice. Live: INFOCOM 2024 (262 papers) and ICC 2024 (940) enumerated completely, 1,191 of 1,202 with abstracts, all routed to IEEE Xplore. An OpenAlex API key is required.

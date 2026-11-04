@@ -8,8 +8,8 @@ from typing import Any
 import yaml
 from jsonschema import Draft202012Validator
 
+from acquire_research_papers.discovery.venue_presets import apply_presets
 from acquire_research_papers.schema_resources import schema
-
 
 
 class SpecValidationError(ValueError):
@@ -50,6 +50,11 @@ def load_corpus_spec(path: Path) -> dict[str, Any]:
     target.setdefault("preferred", (minimum + maximum) // 2)
     if not minimum <= target["preferred"] <= maximum:
         raise SpecValidationError("target.preferred: must be between target.minimum and target.maximum")
+    try:
+        # Expanded here so request-spec.json records the identifiers each preset supplied.
+        spec = apply_presets(spec)
+    except ValueError as exc:
+        raise SpecValidationError(f"scope.venues: {exc}") from exc
     spec.setdefault("scope", {})
     spec.setdefault("quotas", {})
     spec.setdefault(

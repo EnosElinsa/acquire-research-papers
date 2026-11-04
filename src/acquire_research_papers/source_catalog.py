@@ -6,6 +6,7 @@ from acquire_research_papers.discovery.official.acl import AclAnthologyDiscovery
 from acquire_research_papers.discovery.official.archives import ARCHIVE_INDEX_PROVIDERS
 from acquire_research_papers.discovery.official.ijcai import IjcaiDiscoveryProvider
 from acquire_research_papers.discovery.providers import crossref_scope
+from acquire_research_papers.discovery.venue_presets import PRESETS
 
 _LEGACY_SCOPES = {"acl-anthology": "ACL long papers", "ijcai-proceedings": "IJCAI main track"}
 
@@ -29,8 +30,8 @@ def describe_sources(spec: dict | None = None) -> dict:
          "scope": "deposited records; exact identifiers preferred"},
         {"id": "openalex-venue", "role": "metadata_venue_enumerator",
          "credentials": "OpenAlex API key",
-         "scope": "venues that declare exact openalex_source IDs, e.g. IEEE conference series; "
-                  "find IDs with arp sources --find-openalex"},
+         "scope": "venues with exact openalex_source IDs, e.g. IEEE conference series; venue "
+                  "presets supply them, or find IDs with arp sources --find-openalex"},
         {"id": "openalex", "role": "optional_search_and_enrichment", "credentials": "optional API configuration"},
         {"id": "semantic-scholar", "role": "optional_search_and_enrichment", "credentials": "optional API configuration"},
         {"id": "orcid", "role": "author_bibliography", "credentials": False},
@@ -63,6 +64,7 @@ def describe_sources(spec: dict | None = None) -> dict:
                 if not crossref["available"] and venue.openalex_source:
                     crossref = {**crossref, "diagnostic": "enumerated_by_openalex_source"}
                 slices.append({"venue": venue.name, "year": year, "publisher": venue.publisher,
+                               "preset": venue.preset or None,
                                "official_indexes": [provider.capabilities().provider_id
                                                     for provider in official],
                                "crossref": crossref,
@@ -71,7 +73,9 @@ def describe_sources(spec: dict | None = None) -> dict:
                                                   "credentials": "OpenAlex API key"},
                                "acquisition": artifact_support, "observed_coverage": None})
     return {"schema_version": 1, "status": "capabilities_only", "sources": sources,
-            "artifact_acquisition": acquisition, "requested_slices": slices,
+            "artifact_acquisition": acquisition,
+            "venue_presets": [preset.to_dict() for preset in PRESETS],
+            "requested_slices": slices,
             "universal_completeness": False, "priority_venues": [],
             "coverage_note": "No network checks performed. Complete enumeration means completion within one source and scope; upstream omissions remain possible. See coverage.jsonl and discovery-errors.jsonl in an actual run.",
             "next_action": "Choose priority venues and verify official venue/year indexes against observed run coverage."}
