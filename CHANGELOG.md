@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.12.0 — 2026-11-04
 
 - A rerun of `discover corpus` into the same output now looks up missing abstracts again while candidates are pending, through every configured enricher, including one a newly added API key enables; finished venue slices are not fetched again. Before, a run whose slices were all complete did nothing on rerun, so adding a key meant discovering into a new directory. Live: after an OpenAlex key was added, rerunning a key-less IEEE TMC 2024 run filled one of its two remaining abstracts without enumerating the venue through Crossref again.
 - A rerun also reads a slice with a `possible_upstream_lag` warning again: works indexed since are added and the warning goes once the count recovers. A recheck that fails keeps the complete slice and its warning for the next rerun. A run with nothing pending and no warning stays idempotent.
