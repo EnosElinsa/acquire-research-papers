@@ -187,19 +187,29 @@ def _kill(pid: int) -> None:
         os.killpg(pid, signal.SIGTERM)  # the job's own session, including browser helpers
 
 
-def _job(root: Path, *, attempts: int = 5, sleeper: Callable[[float], None] = time.sleep
+def _job(root: Path, *, attempts: int = 15, sleeper: Callable[[float], None] = time.sleep
          ) -> dict[str, Any]:
+    path = root / JOB_FILE
+    failure = "missing"
+    job: dict[str, Any] | None = None
     for attempt in range(attempts):
-        job = _read_json(root / JOB_FILE)
-        if job is not None:
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+            job = value if isinstance(value, dict) else None
+            failure = "" if job is not None else "not an object"
             break
-        if not (root / JOB_FILE).exists():
+        except FileNotFoundError:
+            failure = "missing"
             break
-        # A just-written file can be briefly locked on Windows (for example by a virus scan).
-        if attempt + 1 < attempts:
-            sleeper(0.2)
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            # A just-written file can be held briefly by another process (for example a virus
+            # scan) on Windows; wait for it instead of reporting a broken job.
+            failure = type(exc).__name__
+            if attempt + 1 < attempts:
+                sleeper(0.2)
     if job is None or job.get("schema_version") != 1 or not isinstance(job.get("pid"), int):
-        raise ValueError(f"not a background job directory: {root}")
+        reason = f"; job.json {failure}" if failure else ""
+        raise ValueError(f"not a background job directory: {root}{reason}")
     return job
 
 
