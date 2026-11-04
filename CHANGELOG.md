@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.0 — 2026-11-03
 
 - Corpus and research acquisition checkpoint the ledger after every paper. An interrupted run resumes with the same command: verified pairs are adopted, the interrupted paper's leftovers move to `.arp-interrupted/`, any other blocking file is named, and `run status` reports `interrupted`.
 - One failure classification serves every acquisition path. Publishers without an adapter enter the manual queue as `unsupported_adapter`; publisher 5xx, DOI resolver network failures, and IEEE navigation failures are retryable; unexpected browser failures are `automation_error` and report only the exception class. `fetch` reports publisher HTTP errors without a traceback.
