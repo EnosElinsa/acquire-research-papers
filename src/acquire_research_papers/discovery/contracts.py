@@ -15,6 +15,8 @@ class VenueScope:
     short_name: str = ""
     publisher: str = ""
     years: tuple[int, ...] = ()
+    # Exact OpenAlex source IDs (S…) that enumerate this venue, e.g. an IEEE conference series.
+    openalex_source: tuple[str, ...] = ()
 
     @property
     def all_names(self) -> tuple[str, ...]:
@@ -93,6 +95,7 @@ class DiscoveryRequest:
                 short_name=str(item.get("short_name", "")),
                 publisher=str(item.get("publisher", "")),
                 years=tuple(int(value) for value in item.get("years", ())),
+                openalex_source=tuple(str(value) for value in item.get("openalex_source", ())),
             )
             for item in scope.get("venues", ())
         )

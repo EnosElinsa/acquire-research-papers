@@ -38,7 +38,8 @@
               "years": {"type": "array", "items": {"type": "integer"}},
               "issn": {"type": "array", "items": {"type": "string"}},
               "isbn": {"type": "array", "items": {"type": "string"}},
-              "collection_doi": {"type": "array", "items": {"type": "string"}}
+              "collection_doi": {"type": "array", "items": {"type": "string"}},
+              "openalex_source": {"type": "array", "items": {"type": "string", "pattern": "^S[0-9]{1,15}$"}}
             }
           }
         },

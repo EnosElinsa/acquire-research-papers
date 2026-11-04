@@ -77,6 +77,7 @@ from acquire_research_papers.discovery.official import (
 from acquire_research_papers.discovery.providers import (
     CrossrefVenueDiscoveryProvider,
     DoiBatchEnrichmentProvider,
+    OpenAlexVenueDiscoveryProvider,
     QueryApiProvider,
 )
 from acquire_research_papers.discovery.semantic_scholar import (
@@ -175,6 +176,16 @@ def _production_discovery_providers(
         AclAnthologyDiscoveryProvider(client=acl_client),
         IjcaiDiscoveryProvider(client=ijcai_client),
     ]
+    venue_key = (
+        (os.environ if environment is None else environment).get("OPENALEX_API_KEY", "").strip()
+        or (api_keys or {}).get("openalex", "").strip()
+    )
+    # Present even without a key, so an openalex_source venue reports what it needs.
+    providers.append(OpenAlexVenueDiscoveryProvider(
+        OpenAlexClient(client=SafeHttpClient(allowed_hosts={"api.openalex.org"}, **_PUBLISHER_RETRY),
+                       api_key=venue_key or None).source_works,
+        configured=bool(venue_key),
+    ))
     # Official archive indexes; their year listings can take a minute to serve.
     providers.extend(
         provider(SafeHttpClient(allowed_hosts=provider(None).production_hosts, timeout=120.0,
@@ -889,6 +900,11 @@ def build_parser() -> argparse.ArgumentParser:
                           help="kill the process now; a rerun of the command resumes")
     sources = subparsers.add_parser("sources", help="describe offline source capabilities and venue/year gaps")
     sources.add_argument("--spec", type=Path, help="validate and diagnose a corpus specification")
+    sources.add_argument(
+        "--find-openalex",
+        metavar="NAME",
+        help="look up OpenAlex journal/conference source IDs for a venue name (one network request)",
+    )
     from acquire_research_papers import configuration_commands, library_cli
     library_cli.register(subparsers)
     schema_command = subparsers.add_parser("schema", help="print a bundled public JSON schema")
@@ -1105,6 +1121,30 @@ def run_cli(
         except (ValueError, OSError, KeyError, TypeError) as exc:
             _emit({"status": "error", "error_code": "invalid_input", "message": str(exc)})
             return 64
+    if args.command == "sources" and args.find_openalex:
+        from acquire_research_papers import configuration_commands
+        from acquire_research_papers.discovery.openalex import DiscoveryUnavailable
+        try:
+            manager = configuration_commands.credential_manager(
+                AppPaths.default(), env_file=args.env_file)
+            key = (os.environ.get("OPENALEX_API_KEY", "").strip()
+                   or manager.api_provider("openalex", API_PROVIDER_HOSTS["openalex"]).optional())
+            found = OpenAlexClient(client=SafeHttpClient(allowed_hosts={"api.openalex.org"}),
+                                   api_key=key or None).find_sources(args.find_openalex)
+        except DiscoveryUnavailable as exc:
+            _emit({"status": "configuration_required", "error_code": "configuration_required",
+                   "message": f"{exc}; run arp config setup openalex"})
+            return 78
+        except (RateLimited, NetworkTransient) as exc:
+            _emit({"status": "error", "error_code": "network_transient", "message": str(exc)})
+            return 75
+        except (ValueError, OSError) as exc:
+            _emit({"status": "error", "error_code": "invalid_input", "message": str(exc)})
+            return 64
+        _emit({"status": "complete", "query": args.find_openalex, "sources": found,
+               "next_action": "Put the exact source ID of the venue series in the venue's "
+                              "openalex_source list; check works counts per year after discovery."})
+        return 0
     if args.command == "sources":
         from acquire_research_papers.source_catalog import describe_sources
         try:

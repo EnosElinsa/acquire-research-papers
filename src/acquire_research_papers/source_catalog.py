@@ -27,6 +27,10 @@ def describe_sources(spec: dict | None = None) -> dict:
     sources.extend([
         {"id": "crossref", "role": "metadata_venue_enumerator", "credentials": False,
          "scope": "deposited records; exact identifiers preferred"},
+        {"id": "openalex-venue", "role": "metadata_venue_enumerator",
+         "credentials": "OpenAlex API key",
+         "scope": "venues that declare exact openalex_source IDs, e.g. IEEE conference series; "
+                  "find IDs with arp sources --find-openalex"},
         {"id": "openalex", "role": "optional_search_and_enrichment", "credentials": "optional API configuration"},
         {"id": "semantic-scholar", "role": "optional_search_and_enrichment", "credentials": "optional API configuration"},
         {"id": "orcid", "role": "author_bibliography", "credentials": False},
@@ -55,10 +59,16 @@ def describe_sources(spec: dict | None = None) -> dict:
                 artifact_support = acquisition.get(venue.publisher, "unknown")
                 if official and artifact_support == "unknown":
                     artifact_support = getattr(official[0], "acquisition", "official_pair")
+                crossref = crossref_scope(venue)
+                if not crossref["available"] and venue.openalex_source:
+                    crossref = {**crossref, "diagnostic": "enumerated_by_openalex_source"}
                 slices.append({"venue": venue.name, "year": year, "publisher": venue.publisher,
                                "official_indexes": [provider.capabilities().provider_id
                                                     for provider in official],
-                               "crossref": crossref_scope(venue),
+                               "crossref": crossref,
+                               "openalex_venue": {"available": bool(venue.openalex_source),
+                                                  "sources": list(venue.openalex_source),
+                                                  "credentials": "OpenAlex API key"},
                                "acquisition": artifact_support, "observed_coverage": None})
     return {"schema_version": 1, "status": "capabilities_only", "sources": sources,
             "artifact_acquisition": acquisition, "requested_slices": slices,

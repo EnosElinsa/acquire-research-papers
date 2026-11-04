@@ -84,6 +84,9 @@ class CrossrefVenueDiscoveryProvider:
                 if slice_label in request.completed_slices:
                     continue
                 if not crossref_scope(venue)["available"]:
+                    if venue.openalex_source:
+                        # The declared OpenAlex source enumerates this venue instead.
+                        continue
                     diagnostics.append(
                         self._diagnostic(
                             error_code="exact_identifier_required",
@@ -244,6 +247,106 @@ class CrossrefVenueDiscoveryProvider:
             diagnostics=tuple(diagnostics),
             coverage=tuple(coverage),
         )
+
+
+@dataclass(frozen=True)
+class OpenAlexVenueDiscoveryProvider:
+    """Enumerate a venue/year through the exact OpenAlex source IDs declared on the venue.
+
+    Used where Crossref has no exact identifier, notably IEEE conference series such as INFOCOM,
+    ICC, and GLOBECOM, whose OpenAlex records carry DOIs and abstracts. "complete" means the
+    OpenAlex enumeration finished; OpenAlex can lag behind a recent edition.
+    """
+
+    searcher: Callable[..., CandidatePage]
+    configured: bool = True
+    provider_id: str = "openalex-venue"
+    page_size: int = 200
+    max_pages: int = 100
+
+    def capabilities(self) -> DiscoveryCapabilities:
+        return DiscoveryCapabilities(
+            provider_id=self.provider_id,
+            source_class="venue_enumerator",
+            evidence_fields=frozenset({"title", "abstract", "authors", "venue",
+                                       "publication_type", "publication_date"}),
+            requires_credentials=not self.configured,
+        )
+
+    def _diagnostic(self, error_code: str, message: str, venue: str, year: int,
+                    *, retryable: bool = False) -> DiscoveryDiagnostic:
+        return DiscoveryDiagnostic(provider_id=self.provider_id, phase="venue-enumeration",
+                                   error_code=error_code, message=message, venue=venue,
+                                   year=year, retryable=retryable)
+
+    def discover(self, request: DiscoveryRequest) -> DiscoveryBatch:
+        candidates: list[CandidateMetadata] = []
+        diagnostics: list[DiscoveryDiagnostic] = []
+        coverage: list[CoverageSlice] = []
+        for venue in request.venues:
+            if not venue.openalex_source:
+                continue
+            for year in request.years:
+                if not venue.supports_year(year):
+                    continue
+                if f"{self.provider_id}:{venue.name}:{year}" in request.completed_slices:
+                    continue
+                if not self.configured:
+                    diagnostics.append(self._diagnostic(
+                        "configuration_required",
+                        "openalex_source venues need an OpenAlex API key (arp config setup openalex)",
+                        venue.name, year))
+                    coverage.append(CoverageSlice(self.provider_id, venue.name, year, "failed",
+                                                  diagnostic_code="configuration_required"))
+                    continue
+                pages = records = finished = 0
+                error = ""
+                for source_id in venue.openalex_source:
+                    cursor: str | None = "*"
+                    fetched = 0
+                    for _ in range(self.max_pages):
+                        try:
+                            page = self.searcher(source_id, year, cursor=cursor,
+                                                 per_page=self.page_size)
+                        except (RateLimited, NetworkTransient):
+                            error = error or "network_transient"
+                            diagnostics.append(self._diagnostic(
+                                "network_transient", "OpenAlex venue enumeration is temporarily "
+                                "unavailable", venue.name, year, retryable=True))
+                            break
+                        except (HttpStatusError, RuntimeError, ValueError):
+                            error = error or "provider_error"
+                            diagnostics.append(self._diagnostic(
+                                "provider_error", "OpenAlex venue enumeration failed",
+                                venue.name, year))
+                            break
+                        pages += 1
+                        page_candidates = tuple(
+                            replace(candidate, venue=venue.name, provenance={
+                                **candidate.provenance, "reported_venue": candidate.venue})
+                            for candidate in page.candidates
+                        )
+                        candidates.extend(page_candidates)
+                        fetched += len(page_candidates)
+                        if (not page_candidates or not page.next_cursor
+                                or (page.total_results is not None
+                                    and fetched >= page.total_results)):
+                            finished += 1
+                            break
+                        cursor = page.next_cursor
+                    else:
+                        error = error or "page_limit"
+                        diagnostics.append(self._diagnostic(
+                            "page_limit", "OpenAlex venue enumeration reached its page limit",
+                            venue.name, year))
+                    records += fetched
+                state = ("complete" if finished == len(venue.openalex_source)
+                         else "partial" if pages else "failed")
+                coverage.append(CoverageSlice(self.provider_id, venue.name, year, state,
+                                              pages_fetched=pages, records_fetched=records,
+                                              diagnostic_code=error, records_recognized=records))
+        return DiscoveryBatch(candidates=tuple(candidates), diagnostics=tuple(diagnostics),
+                              coverage=tuple(coverage))
 
 
 def _normalized(value: str) -> str:

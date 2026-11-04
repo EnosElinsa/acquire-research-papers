@@ -214,11 +214,15 @@ def test_production_provider_registry_fails_closed_without_optional_keys() -> No
         "crossref",
         "acl-anthology",
         "ijcai-proceedings",
+        "openalex-venue",
         "neurips-proceedings",
         "pmlr",
         "cvf-open-access",
     ]
     assert isinstance(providers[0], CrossrefVenueDiscoveryProvider)
+    # Without a key the OpenAlex venue enumerator only reports configuration_required.
+    assert providers[3].configured is False
+    assert providers[3].capabilities().requires_credentials is True
 
 
 def test_production_registry_uses_keyless_doi_enrichment() -> None:

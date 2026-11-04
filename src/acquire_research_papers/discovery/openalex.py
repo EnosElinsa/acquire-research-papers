@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 from typing import Any
 from urllib.parse import urlencode
 
@@ -16,6 +17,9 @@ from acquire_research_papers.models import normalize_doi
 
 class DiscoveryUnavailable(RuntimeError):
     """An optional metadata source cannot be used in the current configuration."""
+
+
+_SOURCE_ID = re.compile(r"S\d{1,15}")
 
 
 _WORK_SELECT = ",".join(
@@ -168,6 +172,76 @@ class OpenAlexClient:
 
     def corpus_searcher(self, query: str, rows: int) -> tuple[CandidateMetadata, ...]:
         return self.search(query, per_page=rows).candidates
+
+    def _payload(self, url: str) -> dict[str, Any]:
+        try:
+            payload = self.client.get(url).json()
+        except RateLimited as exc:
+            raise RateLimited(exc.status_code, self.endpoint,
+                              retry_after_seconds=exc.retry_after_seconds) from None
+        except HttpStatusError as exc:
+            raise DiscoveryUnavailable(f"OpenAlex request failed with HTTP {exc.status_code}") from None
+        except NetworkTransient:
+            raise NetworkTransient("OpenAlex request is temporarily unavailable") from None
+        if not isinstance(payload, dict):
+            raise DiscoveryUnavailable("OpenAlex returned an unexpected response")
+        return payload
+
+    def source_works(
+        self,
+        source_id: str,
+        year: int,
+        *,
+        cursor: str = "*",
+        per_page: int = 200,
+    ) -> CandidatePage:
+        """One page of every work whose primary location is ``source_id`` in ``year``."""
+        if not self.api_key:
+            raise DiscoveryUnavailable("OpenAlex API key is not configured")
+        if not _SOURCE_ID.fullmatch(source_id):
+            raise ValueError("OpenAlex source IDs look like S1234567")
+        parameters = [
+            ("filter", f"primary_location.source.id:{source_id},publication_year:{int(year)}"),
+            ("per-page", str(max(1, min(per_page, 200)))),
+            ("cursor", cursor),
+            ("select", _WORK_SELECT),
+            ("api_key", self.api_key),
+        ]
+        payload = self._payload(f"{self.endpoint}?{urlencode(parameters)}")
+        public_url = f"{self.endpoint}?" + urlencode(
+            [(name, value) for name, value in parameters if name not in {"api_key", "cursor"}])
+        candidates = []
+        for item in payload.get("results") or []:
+            if not isinstance(item, dict):
+                continue
+            candidate = self._candidate(item, public_url)
+            raw = str((item.get("primary_location") or {}).get("raw_source_name") or "")
+            candidates.append(replace(candidate, provenance={
+                **candidate.provenance, "openalex_source": source_id, "raw_source_name": raw}))
+        meta = payload.get("meta") or {}
+        return CandidatePage(
+            candidates=tuple(candidates),
+            next_cursor=str(meta["next_cursor"]) if meta.get("next_cursor") else None,
+            total_results=int(meta["count"]) if isinstance(meta.get("count"), int) else None,
+            query_url=public_url,
+        )
+
+    def find_sources(self, query: str, *, limit: int = 10) -> list[dict[str, Any]]:
+        """OpenAlex journal and conference sources whose name matches ``query``."""
+        if not self.api_key:
+            raise DiscoveryUnavailable("OpenAlex API key is not configured")
+        endpoint = self.endpoint.rsplit("/", 1)[0] + "/sources"
+        parameters = [("search", query), ("per-page", str(max(1, min(limit, 50)))),
+                      ("select", "id,display_name,type,works_count,issn,host_organization_name"),
+                      ("api_key", self.api_key)]
+        payload = self._payload(f"{endpoint}?{urlencode(parameters)}")
+        return [
+            {"openalex_source": str(item.get("id") or "").rstrip("/").rsplit("/", 1)[-1],
+             "name": str(item.get("display_name") or ""), "type": item.get("type"),
+             "works": item.get("works_count"), "issn": item.get("issn") or [],
+             "publisher": item.get("host_organization_name")}
+            for item in payload.get("results") or [] if isinstance(item, dict)
+        ]
 
     def lookup_dois(self, dois: list[str]) -> tuple[CandidateMetadata, ...]:
         normalized = list(
