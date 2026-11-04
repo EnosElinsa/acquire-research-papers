@@ -34,6 +34,16 @@ def test_official_bibtex_matches_metadata_and_preserves_raw() -> None:
     assert parsed.key == "verified2026"
 
 
+def test_a_doi_entry_key_stands_in_for_a_missing_doi_field_only_when_equal() -> None:
+    entry = ('@InProceedings{{{key},\nauthor="Lovelace, Ada\nand Turing, Alan",\n'
+             'title="Verified Paper: A Test",\nbooktitle="IEEE Test",\nyear="2026"\n}}\n')
+    verify_bibliography(verified_metadata(), parse_bibtex(entry.format(key="10.1109/test.1")))
+    with pytest.raises(MetadataMismatch, match="DOI mismatch"):
+        verify_bibliography(verified_metadata(), parse_bibtex(entry.format(key="10.1109/test.2")))
+    with pytest.raises(MetadataMismatch, match="DOI mismatch"):
+        verify_bibliography(verified_metadata(), parse_bibtex(entry.format(key="lovelace2026")))
+
+
 def test_title_verification_ignores_inline_markup_from_discovery_metadata() -> None:
     metadata = PaperMetadata(
         title=(

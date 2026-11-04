@@ -131,6 +131,9 @@ def _venue_equivalent(expected: str, actual: str) -> bool:
 def verify_bibliography(metadata: PaperMetadata, parsed: ParsedBibliography) -> None:
     fields = parsed.fields
     actual_doi = normalize_doi(fields.get("doi"))
+    if actual_doi is None and metadata.doi and normalize_doi(parsed.key) == metadata.doi:
+        # Springer's chapter exports carry the DOI only as the entry key.
+        actual_doi = metadata.doi
     if metadata.doi and actual_doi != metadata.doi:
         raise MetadataMismatch(f"DOI mismatch: expected {metadata.doi}, got {actual_doi or 'missing'}")
 

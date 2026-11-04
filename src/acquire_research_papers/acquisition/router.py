@@ -17,6 +17,7 @@ _DEFAULT_HOST_NAMES = {
     "proceedings.neurips.cc": "neurips-proceedings",
     "proceedings.mlr.press": "pmlr",
     "openaccess.thecvf.com": "cvf-open-access",
+    "link.springer.com": "springer-link",
 }
 
 # Registrant prefixes of the supported publishers. Used only to name the publisher host of a
@@ -28,6 +29,7 @@ DOI_PREFIX_HOSTS = {
     "10.18653": "aclanthology.org",
     "10.24963": "www.ijcai.org",
     "10.1609": "ojs.aaai.org",
+    "10.1007": "link.springer.com",
 }
 
 _LINKINGHUB_PII = re.compile(r"/retrieve/pii/([A-Za-z0-9]+)/?")
@@ -37,7 +39,7 @@ _NEURIPS_HOSTS = frozenset({"papers.nips.cc", "proceedings.neurips.cc"})
 _NEURIPS_LEGACY_PATH = re.compile(r"/paper/((?:19|20)\d{2})/hash/([0-9a-f]{32}-Abstract[^/]*\.html)")
 # doi.org still registers plain-HTTP targets for many older IEEE DOIs (e.g. 10.1109/CVPR.2016.90).
 _HTTPS_ONLY_HOSTS = frozenset({"ojs.aaai.org", "proceedings.mlr.press", "openaccess.thecvf.com",
-                               "ieeexplore.ieee.org", *_NEURIPS_HOSTS})
+                               "ieeexplore.ieee.org", "link.springer.com", *_NEURIPS_HOSTS})
 
 
 def canonical_landing_url(url: str) -> str:
