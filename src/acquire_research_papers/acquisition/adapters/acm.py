@@ -17,6 +17,12 @@ from acquire_research_papers.models import PaperMetadata, normalize_doi
 
 
 ACM_HOST = "dl.acm.org"
+# Observed Nov 2026: dl.acm.org answers every non-browser request, and an automated Chrome,
+# with a Cloudflare challenge that only a person in a normal browser passes.
+_BOT_CHALLENGE = (
+    "ACM Digital Library answered with a bot check that only a person in a normal browser can "
+    "pass; download the PDF and BibTeX there and import them with manual-fetch"
+)
 
 
 class AcmDigitalLibraryAdapter:
@@ -51,7 +57,8 @@ class AcmDigitalLibraryAdapter:
             response = self.client.get(landing_url)
         except HttpStatusError as exc:
             if exc.status_code in {401, 403}:
-                raise AccessRequired("ACM page requires an authorized browser or subscription") from exc
+                raise AccessRequired(_BOT_CHALLENGE if exc.bot_challenge else
+                                     "ACM page requires an authorized browser or subscription") from exc
             raise
         soup = BeautifulSoup(response.text, "html.parser")
 
@@ -129,7 +136,8 @@ class AcmDigitalLibraryAdapter:
             bibtex_raw = self.client.get(document.bibtex_url).content
         except HttpStatusError as exc:
             if exc.status_code in {401, 403}:
-                raise AccessRequired("ACM artifact requires authorized access") from exc
+                raise AccessRequired(_BOT_CHALLENGE if exc.bot_challenge else
+                                     "ACM artifact requires authorized access") from exc
             raise
         from acquire_research_papers.bibliography import decode_bibtex_bytes
 

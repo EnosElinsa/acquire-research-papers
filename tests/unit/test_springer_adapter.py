@@ -174,6 +174,28 @@ def test_a_pdf_link_for_another_doi_breaks_the_page_contract():
         adapter_for(site).resolve(f"https://link.springer.com/article/{ARTICLE_DOI}")
 
 
+def test_a_cloudflare_bot_check_is_reported_as_a_manual_download_with_its_reason():
+    from acquire_research_papers.acquisition.adapters.acm import AcmDigitalLibraryAdapter
+    from acquire_research_papers.acquisition.base import AccessRequired
+    from acquire_research_papers.acquisition.outcomes import failure_outcome
+    from acquire_research_papers.http import HttpStatusError
+
+    def challenge(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, text="Just a moment...", headers={"cf-mitigated": "challenge"})
+
+    client = SafeHttpClient(allowed_hosts={"dl.acm.org"})
+    client._client = httpx.Client(transport=httpx.MockTransport(challenge), follow_redirects=False)
+    with pytest.raises(HttpStatusError) as raised:
+        client.get("https://dl.acm.org/doi/10.1145/1")
+    assert raised.value.bot_challenge is True
+    outcome = failure_outcome(raised.value)
+    assert outcome["error_code"] == "access_required"
+    assert "bot check" in outcome["message"] and "manual-fetch" in outcome["message"]
+
+    with pytest.raises(AccessRequired, match="bot check"):
+        AcmDigitalLibraryAdapter(client=client).resolve("https://dl.acm.org/doi/10.1145/1")
+
+
 def test_springer_dois_and_plain_http_links_route_to_springer_link():
     assert doi_publisher_host(ARTICLE_DOI) == SPRINGER_HOST
     assert canonical_landing_url(f"http://link.springer.com/article/{ARTICLE_DOI}") == (

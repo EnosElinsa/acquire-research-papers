@@ -16,10 +16,12 @@ class HostBoundaryError(ValueError):
 
 
 class HttpStatusError(RuntimeError):
-    def __init__(self, status_code: int, url: str) -> None:
+    def __init__(self, status_code: int, url: str, *, bot_challenge: bool = False) -> None:
         super().__init__(f"HTTP {status_code} for {url}")
         self.status_code = status_code
         self.url = url
+        # The site answered with a bot check (e.g. Cloudflare) rather than an access decision.
+        self.bot_challenge = bot_challenge
 
 
 _MAX_RETRY_AFTER_SECONDS = 300.0
@@ -132,7 +134,10 @@ class SafeHttpClient:
                 self._sleeper(self.backoff_seconds * (2**attempt))
                 continue
             if response.status_code >= 400:
-                raise HttpStatusError(response.status_code, url)
+                raise HttpStatusError(
+                    response.status_code, url,
+                    bot_challenge=response.headers.get("cf-mitigated", "").casefold() == "challenge",
+                )
             return response
         raise NetworkTransient(f"network retries exhausted for {url}") from last_error
 

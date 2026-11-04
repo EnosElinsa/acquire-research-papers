@@ -117,7 +117,12 @@ def failure_outcome(error: BaseException) -> dict[str, str]:
             code = "access_required"
         else:
             code = "contract_error"
-        return {"error_code": code, "message": f"HTTP {status} from {_host(error.url)}"}
+        message = f"HTTP {status} from {_host(error.url)}"
+        if code == "access_required":
+            message += (" (a bot check that only a normal browser passes)"
+                        if getattr(error, "bot_challenge", False) else "")
+            message += "; download it in a browser and import it with manual-fetch"
+        return {"error_code": code, "message": message}
     if isinstance(
         error,
         (AmbiguousInput, PageContractChanged, NotOfficial, MetadataMismatch, BibMissing,
