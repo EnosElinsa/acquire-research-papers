@@ -214,6 +214,9 @@ def test_production_provider_registry_fails_closed_without_optional_keys() -> No
         "crossref",
         "acl-anthology",
         "ijcai-proceedings",
+        "neurips-proceedings",
+        "pmlr",
+        "cvf-open-access",
     ]
     assert isinstance(providers[0], CrossrefVenueDiscoveryProvider)
 

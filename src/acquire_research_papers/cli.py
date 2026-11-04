@@ -63,6 +63,7 @@ from acquire_research_papers.discovery.review import CorpusReviewWorkflow
 from acquire_research_papers.discovery.crossref import CrossrefClient
 from acquire_research_papers.discovery.openalex import OpenAlexClient
 from acquire_research_papers.discovery.official import (
+    ARCHIVE_INDEX_PROVIDERS,
     AclAnthologyDiscoveryProvider,
     IjcaiDiscoveryProvider,
 )
@@ -151,6 +152,12 @@ def _production_discovery_providers(
         AclAnthologyDiscoveryProvider(client=acl_client),
         IjcaiDiscoveryProvider(client=ijcai_client),
     ]
+    # Official archive indexes; their year listings can take a minute to serve.
+    providers.extend(
+        provider(SafeHttpClient(allowed_hosts=provider(None).production_hosts, timeout=120.0,
+                                **_PUBLISHER_RETRY))
+        for provider in ARCHIVE_INDEX_PROVIDERS
+    )
     configured = os.environ if environment is None else environment
     stored = api_keys or {}
     openalex_key = (

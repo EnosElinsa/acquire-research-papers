@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Corpus discovery enumerates three more official archives: the NeurIPS yearly listing (main track and, from 2022, Datasets and Benchmarks), PMLR volumes of ICML, AISTATS, COLT, UAI, CoRL, ALT, ACML, L4DC, and CLeaR (one official BibTeX file per volume, abstracts included), and CVF Open Access listings of CVPR, ICCV, and WACV, including pre-2021 per-day pages. Candidates carry the landing URL the acquisition adapters accept, so these venues now run end to end in batch mode, and Crossref skips any slice these indexes complete.
+- NeurIPS and CVF read paper pages with bounded concurrency; a resumed partial slice rereads only papers still missing. A paper failure costs that paper, not the slice. A CVPR or ICCV venue declared with `publisher: IEEE` keeps the IEEE route.
+- `arp sources` lists the new indexes and their artifact type. AAAI remains a Crossref venue (by ISSN) whose records already carry abstracts and OJS landing URLs.
+
 ## 0.7.0 — 2026-11-03
 
 - Added automatic acquisition from four official open-access archives: AAAI OJS (PDF and OJS BibTeX export; AAAI DOIs work), NeurIPS proceedings (PDF and per-paper BibTeX file), PMLR, and CVF Open Access. PMLR and CVF publish no BibTeX file; their delivered BibTeX is the entry printed on the official page, recorded as `publisher_page_embedded`. CVF deliveries are CVF's open-access versions, not the final IEEE Xplore versions. Legacy `papers.nips.cc` and `/paper/<year>/` NeurIPS links and plain-HTTP links to these archives are canonicalized without a request. None of the four archives has an official venue enumerator yet; NeurIPS, PMLR, and CVF acquisition needs the landing-page URL.

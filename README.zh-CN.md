@@ -347,10 +347,10 @@ Crossref、OpenAlex、Semantic Scholar、普通仓库和镜像都不能满足最
 | Crossref | 主要 venue/year 枚举和 research 搜索 | 不支持 | 稳定的公开元数据来源，但字段完整度仍取决于出版社 |
 | ACL Anthology | 官方 proceedings 枚举 | 自动 | 成熟，已经用于真实批量任务 |
 | IJCAI proceedings | 官方 proceedings 和 track 解析 | 自动 | 成熟，已经用于真实批量任务 |
-| AAAI（ojs.aaai.org） | Crossref venue 枚举；AAAI DOI 直接解析到官方归档 | 自动 | 官方 OJS PDF 和 BibTeX 导出。已用一篇 AAAI-24 主会论文和一篇 AAAI 研讨会论文做过真实验证 |
-| NeurIPS proceedings | 没有官方枚举器。NeurIPS DOI 解析到 Curran Associates，需要提供 `proceedings.neurips.cc` 摘要页 URL | 提供摘要页 URL 后自动 | 官方 PDF 和逐篇 BibTeX 文件。已用 2019、2022 Datasets and Benchmarks 和 2023 论文做过真实验证 |
-| PMLR | 没有官方枚举器；论文没有 DOI，需要提供论文页 URL | 提供论文页 URL 后自动 | BibTeX 取自官方页面上显示的条目（provenance 记为 `publisher_page_embedded`）。已用 ICML 2019 和 2023 做过真实验证 |
-| CVF Open Access | 没有官方枚举器；论文没有 DOI，需要提供论文页 URL | 提供论文页 URL 后自动 | CVF 开放获取版本，除水印外与录用版本一致；最终出版版本在 IEEE Xplore。BibTeX 取自页面。已用 CVPR 2019、2023、一个 CVPR workshop 和 WACV 2024 做过真实验证 |
+| AAAI（ojs.aaai.org） | 用 AAAI ISSN 做 Crossref venue 枚举；记录自带摘要和官方归档 URL | 自动 | 官方 OJS PDF 和 BibTeX 导出。真实验证：AAAI-24 枚举出 2,867 条带摘要的记录，抽样论文已交付 |
+| NeurIPS proceedings | 官方年度列表：主会，以及 2022 年起的 Datasets and Benchmarks | 由发现阶段或摘要页 URL 自动获取 | 官方 PDF 和逐篇 BibTeX 文件。NeurIPS DOI 解析到 Curran Associates，单凭 DOI 不能下载。真实验证：2019 年列出 1,428 篇带摘要的论文；2019、2022 D&B 和 2023 论文已交付 |
+| PMLR | ICML、AISTATS、COLT、UAI、CoRL、ALT、ACML、L4DC、CLeaR 各卷的官方 BibTeX 文件 | 由发现阶段或论文页 URL 自动获取 | BibTeX 取自官方页面上显示的条目（provenance 记为 `publisher_page_embedded`）。真实验证：ICML 2023 列出 1,828 篇带摘要的论文；ICML 2019 和 2023 论文已交付 |
+| CVF Open Access | CVPR、ICCV、WACV 主会官方列表 | 由发现阶段或论文页 URL 自动获取 | CVF 开放获取版本，除水印外与录用版本一致；最终出版版本在 IEEE Xplore（在 venue 上声明 `publisher: IEEE` 可改走 IEEE）。BibTeX 取自页面。真实验证：WACV 2024 列出 846 篇带摘要的论文；CVPR 2019、2023、一个 CVPR workshop 和 WACV 2024 论文已交付 |
 | IEEE Xplore | 候选主要来自 Crossref/OpenAlex/Semantic Scholar | 配置 CARSI 院校档案后自动 | 使用通用 profile；已在一个 CARSI 院校完成端到端真实验证。每个新增院校都需要首次适配和一篇代表论文冒烟测试 |
 | ACM Digital Library | 通常由 Crossref collection 枚举和可选查询 API 发现 | 条件式 HTTP adapter | 只有正式页面和文件接口允许独立客户端访问时才能自动完成；目前没有生产级 ACM 浏览器 adapter，被拦截时转人工 |
 | ScienceDirect | Crossref/OpenAlex/Semantic Scholar 发现；Elsevier API 可解析预期身份 | 仅人工 | 用户在正常授权浏览器中下载，CLI 核验并接管本地文件；不自动登录或操作 ScienceDirect |

@@ -3,19 +3,26 @@ from __future__ import annotations
 
 from acquire_research_papers.discovery.contracts import DiscoveryRequest
 from acquire_research_papers.discovery.official.acl import AclAnthologyDiscoveryProvider
+from acquire_research_papers.discovery.official.archives import ARCHIVE_INDEX_PROVIDERS
 from acquire_research_papers.discovery.official.ijcai import IjcaiDiscoveryProvider
 from acquire_research_papers.discovery.providers import crossref_scope
 
+_LEGACY_SCOPES = {"acl-anthology": "ACL long papers", "ijcai-proceedings": "IJCAI main track"}
+
+
+def _scope(provider) -> str:
+    return getattr(provider, "scope_description", "") or _LEGACY_SCOPES[
+        provider.capabilities().provider_id]
+
 
 def describe_sources(spec: dict | None = None) -> dict:
-    providers = [AclAnthologyDiscoveryProvider(None), IjcaiDiscoveryProvider(None)]
-    indexes = [provider.capabilities() for provider in providers]
+    providers = [AclAnthologyDiscoveryProvider(None), IjcaiDiscoveryProvider(None),
+                 *(provider(None) for provider in ARCHIVE_INDEX_PROVIDERS)]
     sources = [
-        {"id": capability.provider_id, "role": "official_index",
-         "venue_aliases": sorted(capability.venue_aliases),
-         "scope": "ACL long papers" if capability.provider_id == "acl-anthology" else "IJCAI main track",
-         "credentials": False}
-        for capability in indexes
+        {"id": provider.capabilities().provider_id, "role": "official_index",
+         "venue_aliases": sorted(provider.capabilities().venue_aliases),
+         "scope": _scope(provider), "credentials": False}
+        for provider in providers
     ]
     sources.extend([
         {"id": "crossref", "role": "metadata_venue_enumerator", "credentials": False,
@@ -30,9 +37,8 @@ def describe_sources(spec: dict | None = None) -> dict:
     acquisition = {"ACL": "official_pair", "IJCAI": "official_pair", "IEEE": "official_pair_institution_access",
                    "ACM": "official_pair_access_dependent", "Elsevier": "manual_only",
                    "ScienceDirect": "manual_only", "AAAI": "official_pair",
-                   "NeurIPS": "official_pair_landing_url_required",
-                   "PMLR": "official_pair_page_embedded_bibtex_landing_url_required",
-                   "CVF": "open_access_version_page_embedded_bibtex_landing_url_required"}
+                   "NeurIPS": "official_pair", "PMLR": "official_pair_page_embedded_bibtex",
+                   "CVF": "open_access_version_page_embedded_bibtex"}
     slices = []
     if spec is not None:
         request = DiscoveryRequest.from_spec(spec)
@@ -41,15 +47,17 @@ def describe_sources(spec: dict | None = None) -> dict:
                 if not venue.supports_year(year):
                     continue
                 scoped = request.with_scope((venue,), (year,))
-                official = [provider.capabilities().provider_id for provider in providers
+                official = [provider for provider in providers
                             if provider.capabilities().supports(venue)
                             and provider.capabilities().supports_year(year)
                             and provider._supports_request(scoped)]
                 artifact_support = acquisition.get(venue.publisher, "unknown")
                 if official and artifact_support == "unknown":
-                    artifact_support = "official_pair"
+                    artifact_support = getattr(official[0], "acquisition", "official_pair")
                 slices.append({"venue": venue.name, "year": year, "publisher": venue.publisher,
-                               "official_indexes": official, "crossref": crossref_scope(venue),
+                               "official_indexes": [provider.capabilities().provider_id
+                                                    for provider in official],
+                               "crossref": crossref_scope(venue),
                                "acquisition": artifact_support, "observed_coverage": None})
     return {"schema_version": 1, "status": "capabilities_only", "sources": sources,
             "artifact_acquisition": acquisition, "requested_slices": slices,
