@@ -23,6 +23,7 @@ from acquire_research_papers.acquisition.adapters.ieee import (
     reuse_browser_enabled,
 )
 from acquire_research_papers.acquisition.adapters.ijcai import IjcaiProceedingsAdapter
+from acquire_research_papers.acquisition.adapters.open_access import OPEN_ACCESS_ADAPTERS
 from acquire_research_papers.acquisition.adapters.elsevier_api import (
     ELSEVIER_API_HOST,
     ElsevierApiError,
@@ -342,6 +343,8 @@ class Application:
         acm = AcmDigitalLibraryAdapter(
             client=SafeHttpClient(allowed_hosts={"dl.acm.org"}, **_PUBLISHER_RETRY)
         )
+        open_access = [adapter.for_production(**_PUBLISHER_RETRY)
+                       for adapter in OPEN_ACCESS_ADAPTERS]
         sciencedirect = ScienceDirectAdapter.for_production()
         from acquire_research_papers import configuration_commands
         manager = configuration_commands.credential_manager(paths, env_file=env_file)
@@ -404,7 +407,7 @@ class Application:
             repository_root=repository_root,
             registry=Registry(paths.registry),
             resolver=Resolver(
-                AdapterRouter.with_defaults([acl, ijcai, ieee, acm, sciencedirect])
+                AdapterRouter.with_defaults([acl, ijcai, ieee, acm, sciencedirect, *open_access])
             ),
             corpus_discovery=CorpusDiscoveryWorkflow(
                 discoverer=coordinator.discover,

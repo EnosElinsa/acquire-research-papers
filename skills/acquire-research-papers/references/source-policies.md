@@ -10,7 +10,9 @@ Start from a canonical DOI or confirmed publisher landing page. Follow only exac
 - the publisher's raw BibTeX export;
 - provenance with landing, PDF, and BibTeX URLs plus hashes.
 
-Crossref, OpenAlex, Semantic Scholar, search engines, repositories, and mirrors are discovery sources. They are not final PDF/BibTeX authorities. A public repository PDF may be used only when it is the official venue archive covered by an adapter, such as ACL Anthology or IJCAI proceedings.
+Crossref, OpenAlex, Semantic Scholar, search engines, repositories, and mirrors are discovery sources. They are not final PDF/BibTeX authorities. A public repository PDF may be used only when it is the official venue archive covered by an adapter: ACL Anthology, IJCAI proceedings, AAAI OJS, NeurIPS proceedings, PMLR, or CVF Open Access.
+
+When an official archive publishes no BibTeX file, the entry it prints on the paper's landing page is its export. Deliver that entry exactly as displayed, record `bibtex_source: publisher_page_embedded`, and set the official BibTeX URL to the landing page. Never assemble or repair such an entry.
 
 ## Provider contracts
 
@@ -21,6 +23,15 @@ Require an exact Anthology ID. The `.pdf`, `.bib`, DOI, title, authors, year, an
 ### IJCAI proceedings
 
 Require one visible PDF link, one visible BibTeX link, matching DOI, and a parsed track. Main-track requests must reject demo, poster, tutorial, workshop, or other non-target tracks.
+
+### Open-access conference archives
+
+Each adapter derives the expected PDF and BibTeX locations from the landing path, accepts the page only when its citation metadata agrees with them, and sends every request to the landing page's own host.
+
+- **AAAI OJS** (`ojs.aaai.org`): require an `/index.php/<journal>/article/view/<id>` page with one `10.1609/` DOI, `citation_pdf_url` at `/article/download/<id>/<galley>`, and exactly one BibTeX export link for the same `submissionId`. The track comes from `DC.Type.articleType`.
+- **NeurIPS** (`proceedings.neurips.cc`): require a `/paper_files/paper/<year>/hash/<hash>-Abstract[-<track>].html` page whose PDF metadata and Paper link name the same hash and track. Download `<hash>-Bibtex.bib` from the same year; the page's own Bibtex link is either that file or the broken `/paper_files/paper/<n>-/bibtex` route. The track suffix sets the publication type.
+- **PMLR** (`proceedings.mlr.press`): require a `/<volume>/<key>.html` page whose PDF metadata is `/<volume>/<key>/<key>.pdf` and whose single `code#bibtex` entry has key `pmlr-<volume>-<key>`.
+- **CVF Open Access** (`openaccess.thecvf.com`): require a `/content/<CONF><YEAR>[W/<workshop>]/html/<stem>_paper.html` or pre-2020 `/content_<CONF>_<YEAR>/html/<stem>_paper.html` page with exactly one same-host pdf link equal to the PDF metadata, a matching year, and one `div.bibref` entry. Record that this is CVF's open-access version; the final version is the IEEE Xplore artifact for the same paper.
 
 ### IEEE Xplore
 

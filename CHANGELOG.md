@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Added automatic acquisition from four official open-access archives: AAAI OJS (PDF and OJS BibTeX export; AAAI DOIs work), NeurIPS proceedings (PDF and per-paper BibTeX file), PMLR, and CVF Open Access. PMLR and CVF publish no BibTeX file; their delivered BibTeX is the entry printed on the official page, recorded as `publisher_page_embedded`. CVF deliveries are CVF's open-access versions, not the final IEEE Xplore versions.
+- Legacy `papers.nips.cc` and `/paper/<year>/` NeurIPS links and plain-HTTP links to these archives are canonicalized without a request. `--defer-host` matches DOI-only AAAI records.
+- None of the four archives has an official venue enumerator yet; NeurIPS, PMLR, and CVF acquisition needs the landing-page URL.
+
 ## 0.7.0 — 2026-11-03
 
 - Corpus and research acquisition checkpoint the ledger after every paper. An interrupted run resumes with the same command: verified pairs are adopted, the interrupted paper's leftovers move to `.arp-interrupted/`, any other blocking file is named, and `run status` reports `interrupted`.

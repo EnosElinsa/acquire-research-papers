@@ -13,6 +13,10 @@ _DEFAULT_HOST_NAMES = {
     "ieeexplore.ieee.org": "ieee-xplore",
     "dl.acm.org": "acm-dl",
     "www.sciencedirect.com": "sciencedirect",
+    "ojs.aaai.org": "aaai-ojs",
+    "proceedings.neurips.cc": "neurips-proceedings",
+    "proceedings.mlr.press": "pmlr",
+    "openaccess.thecvf.com": "cvf-open-access",
 }
 
 # Registrant prefixes of the supported publishers. Used only to name the publisher host of a
@@ -23,16 +27,24 @@ DOI_PREFIX_HOSTS = {
     "10.1016": "www.sciencedirect.com",
     "10.18653": "aclanthology.org",
     "10.24963": "www.ijcai.org",
+    "10.1609": "ojs.aaai.org",
 }
 
 _LINKINGHUB_PII = re.compile(r"/retrieve/pii/([A-Za-z0-9]+)/?")
+# NeurIPS still serves the legacy papers.nips.cc host and /paper/<year>/hash/ paths; both name
+# the same abstract page as the canonical /paper_files/paper/<year>/hash/ path.
+_NEURIPS_HOSTS = frozenset({"papers.nips.cc", "proceedings.neurips.cc"})
+_NEURIPS_LEGACY_PATH = re.compile(r"/paper/((?:19|20)\d{2})/hash/([0-9a-f]{32}-Abstract[^/]*\.html)")
+_HTTPS_ONLY_HOSTS = frozenset({"ojs.aaai.org", "proceedings.mlr.press", "openaccess.thecvf.com",
+                               *_NEURIPS_HOSTS})
 
 
 def canonical_landing_url(url: str) -> str:
-    """Rewrite a known publisher link resolver to its canonical landing page without a request.
+    """Rewrite a known alias of an official landing page to its canonical form without a request.
 
     DOI and Crossref links for Elsevier articles point at linkinghub.elsevier.com, which only
-    redirects to the ScienceDirect article page for the same PII.
+    redirects to the ScienceDirect article page for the same PII. Metadata services also
+    return legacy NeurIPS addresses and plain-HTTP links to HTTPS-only archives.
     """
     try:
         parsed = urlsplit(url)
@@ -43,6 +55,13 @@ def canonical_landing_url(url: str) -> str:
         match = _LINKINGHUB_PII.fullmatch(parsed.path)
         if match:
             return f"https://www.sciencedirect.com/science/article/pii/{match.group(1).upper()}"
+    if host in _NEURIPS_HOSTS:
+        legacy = _NEURIPS_LEGACY_PATH.fullmatch(parsed.path)
+        path = (f"/paper_files/paper/{legacy.group(1)}/hash/{legacy.group(2)}"
+                if legacy else parsed.path)
+        return f"https://proceedings.neurips.cc{path}"
+    if host in _HTTPS_ONLY_HOSTS and parsed.scheme == "http" and parsed.port is None:
+        return f"https://{host}{parsed.path}" + (f"?{parsed.query}" if parsed.query else "")
     return url
 
 

@@ -29,7 +29,10 @@ def describe_sources(spec: dict | None = None) -> dict:
     ])
     acquisition = {"ACL": "official_pair", "IJCAI": "official_pair", "IEEE": "official_pair_institution_access",
                    "ACM": "official_pair_access_dependent", "Elsevier": "manual_only",
-                   "ScienceDirect": "manual_only"}
+                   "ScienceDirect": "manual_only", "AAAI": "official_pair",
+                   "NeurIPS": "official_pair_landing_url_required",
+                   "PMLR": "official_pair_page_embedded_bibtex_landing_url_required",
+                   "CVF": "open_access_version_page_embedded_bibtex_landing_url_required"}
     slices = []
     if spec is not None:
         request = DiscoveryRequest.from_spec(spec)
