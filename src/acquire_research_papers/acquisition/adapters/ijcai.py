@@ -6,6 +6,7 @@ from urllib.parse import urljoin, urlsplit
 
 from bs4 import BeautifulSoup
 
+from acquire_research_papers.acquisition.adapters._page import given_family
 from acquire_research_papers.acquisition.base import (
     AcquiredPair,
     NotOfficial,
@@ -16,8 +17,12 @@ from acquire_research_papers.http import SafeHttpClient
 from acquire_research_papers.models import PaperMetadata, normalize_doi
 
 
+IJCAI_HOSTS = frozenset({"ijcai.org", "www.ijcai.org"})
 _LANDING_PATH = re.compile(r"^/proceedings/((?:19|20)\d{2})/(\d+)/?$")
-_TRACK = re.compile(r"^([A-Za-z][A-Za-z &/-]*Track)\.\s*Pages\b", re.IGNORECASE)
+_PDF_PATH = re.compile(r"/proceedings/(?:19|20)\d{2}/\d+\.pdf")
+_BIBTEX_PATH = re.compile(r"/proceedings/(?:19|20)\d{2}/bibtex/\d+/?")
+# The 2026 layout puts a stray "." before the track ("\n.\n Main Track. Pages 3-11.").
+_TRACK = re.compile(r"^[\s.]*([A-Za-z][A-Za-z &/-]*Track)\.\s*Pages\b", re.IGNORECASE)
 
 
 class IjcaiProceedingsAdapter:
@@ -27,7 +32,9 @@ class IjcaiProceedingsAdapter:
         self,
         client: SafeHttpClient,
         *,
-        production_hosts: set[str] | frozenset[str] = frozenset({"www.ijcai.org"}),
+        # IJCAI moved to ijcai.org in 2026; www.ijcai.org now redirects there, and older DOIs,
+        # selections, and libraries still name it.
+        production_hosts: set[str] | frozenset[str] = IJCAI_HOSTS,
     ) -> None:
         self.client = client
         self.production_hosts = frozenset(host.casefold() for host in production_hosts)
@@ -49,13 +56,13 @@ class IjcaiProceedingsAdapter:
 
     def resolve(self, landing_url: str) -> SourceDocument:
         if not self.supports(landing_url):
-            raise NotOfficial("IJCAI landing URL is outside www.ijcai.org")
+            raise NotOfficial("IJCAI landing URL is outside ijcai.org")
         return self.parse(landing_url, self.client.get(landing_url).text)
 
     def parse(self, landing_url: str, html: str) -> SourceDocument:
         parsed_landing = urlsplit(landing_url)
         if not self.supports(landing_url) or not parsed_landing.hostname:
-            raise NotOfficial("IJCAI landing URL is outside www.ijcai.org")
+            raise NotOfficial("IJCAI landing URL is outside ijcai.org")
         match = _LANDING_PATH.fullmatch(parsed_landing.path)
         if not match:
             raise PageContractChanged("IJCAI landing path is not a proceedings paper")
@@ -75,25 +82,27 @@ class IjcaiProceedingsAdapter:
                 raise PageContractChanged(f"IJCAI page has missing or ambiguous {label}")
             return found[0]
 
-        pdf_links: list[str] = []
-        bibtex_links: list[str] = []
+        # Links are recognized by their official paths, not their labels: the 2026 redesign
+        # labels the PDF "PDF Download" and repeats the BibTeX link.
+        pdf_links: set[str] = set()
+        bibtex_links: set[str] = set()
         for anchor in soup.find_all("a", href=True):
-            label = anchor.get_text(" ", strip=True).casefold()
-            if label == "pdf":
-                pdf_links.append(str(anchor["href"]))
-            elif label == "bibtex":
-                bibtex_links.append(str(anchor["href"]))
+            path = urlsplit(urljoin(landing_url, str(anchor["href"]))).path
+            if _PDF_PATH.fullmatch(path):
+                pdf_links.add(path)
+            elif _BIBTEX_PATH.fullmatch(path):
+                bibtex_links.add(path.rstrip("/"))
         if len(pdf_links) != 1 or len(bibtex_links) != 1:
             raise PageContractChanged("IJCAI page must expose one PDF and one BibTeX link")
 
-        pdf_path = urlsplit(pdf_links[0]).path
+        pdf_path = next(iter(pdf_links))
         pdf_match = re.fullmatch(rf"/proceedings/{year}/(\d+)\.pdf", pdf_path)
         if not pdf_match or int(pdf_match.group(1)) != int(number):
             raise PageContractChanged("IJCAI PDF URL does not match the proceedings ID")
         if urlsplit(one("citation_pdf_url", "PDF metadata")).path != pdf_path:
             raise PageContractChanged("IJCAI visible and metadata PDF URLs disagree")
         expected_bib_path = f"/proceedings/{year}/bibtex/{number}"
-        if urlsplit(bibtex_links[0]).path.rstrip("/") != expected_bib_path:
+        if next(iter(bibtex_links)) != expected_bib_path:
             raise PageContractChanged("IJCAI BibTeX URL does not match the proceedings ID")
 
         expected_doi = f"10.24963/ijcai.{year}/{int(number)}"
@@ -112,7 +121,8 @@ class IjcaiProceedingsAdapter:
         date = one("citation_publication_date", "publication date")
         if year not in date:
             raise PageContractChanged("IJCAI publication year disagrees with landing path")
-        authors = tuple(values("citation_author"))
+        # The 2026 layout writes "Family, Given"; the earlier one wrote "Given Family".
+        authors = tuple(given_family(name) for name in values("citation_author"))
         if not authors:
             raise PageContractChanged("IJCAI page has no authors")
 
@@ -130,7 +140,8 @@ class IjcaiProceedingsAdapter:
             ),
             pdf_url=urljoin(origin, pdf_path),
             bibtex_url=urljoin(origin, expected_bib_path),
-            allowed_hosts=frozenset({parsed_landing.hostname.casefold()}),
+            # Files on a www.ijcai.org landing page redirect to ijcai.org.
+            allowed_hosts=self.production_hosts,
         )
         return document
 

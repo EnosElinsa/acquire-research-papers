@@ -315,3 +315,22 @@ def test_ijcai_provider_keeps_published_year_when_new_year_is_unavailable(
     assert batch.diagnostics[0].year == 2026
     assert batch.coverage[0].venue == "IJCAI"
     assert batch.coverage[1].venue == "IJCAI"
+
+
+def test_ijcai_provider_parses_the_2026_index_and_detail_layout(fixture_server) -> None:
+    fixture_server.serve_text("/proceedings/2025/",
+                              (FIXTURES / "index-2026.html").read_text(encoding="utf-8"))
+    fixture_server.serve_text("/proceedings/2025/12",
+                              (FIXTURES / "paper-2026.html").read_text(encoding="utf-8"))
+
+    batch = provider(fixture_server).discover(request())
+
+    (candidate,) = batch.candidates
+    assert candidate.key == "10.24963/ijcai.2025/12"
+    assert candidate.authors == ("Ada Lovelace",)
+    assert candidate.abstract == (
+        "We combine a large language model with evolutionary optimization for hard search problems.")
+    assert candidate.keywords == ("Search: Evolutionary optimization",
+                                  "Machine Learning: Large language models")
+    assert (batch.coverage[0].state, batch.coverage[0].records_recognized) == ("complete", 1)
+    assert batch.diagnostics == ()

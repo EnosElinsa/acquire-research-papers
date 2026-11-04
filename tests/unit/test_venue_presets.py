@@ -92,10 +92,63 @@ def test_sources_lists_the_presets_and_shows_which_one_each_slice_uses(tmp_path:
 
 def test_every_preset_identifier_is_well_formed_and_accepted_by_the_schema(tmp_path: Path):
     for preset in PRESETS:
-        assert preset.issn or preset.openalex_source, preset.id
+        assert preset.issn or preset.openalex_source or preset.collection_doi, preset.id
         assert all(re.fullmatch(r"\d{4}-\d{3}[\dX]", value) for value in preset.issn), preset.id
         assert all(re.fullmatch(r"S\d{1,15}", value) for value in preset.openalex_source), preset.id
+        assert all(re.fullmatch(r"10\.\d{4,9}/\S+", value) for value in preset.collection_doi), \
+            preset.id
         assert preset.checked, preset.id
     venues = [{"name": preset.short_name, "preset": preset.id} for preset in PRESETS]
     loaded = load_corpus_spec(write(tmp_path, spec(*venues)))
     assert [venue["preset"] for venue in loaded["scope"]["venues"]] == [preset.id for preset in PRESETS]
+
+
+def test_renamed_and_per_edition_presets_carry_every_identifier():
+    ton = venue_of(spec({"name": "IEEE Transactions on Networking"}))
+    assert (ton["preset"], ton["issn"]) == ("ieee-ton", ["1063-6692", "2998-4157"])
+
+    mobicom = venue_of(spec({"name": "MobiCom"}))
+    assert mobicom["preset"] == "acm-mobicom" and mobicom["publisher"] == "ACM"
+    assert "10.1145/3636534" in mobicom["collection_doi"]  # the 2024 edition
+    request = DiscoveryRequest.from_spec(apply_presets(spec({"name": "MobiCom"})))
+    assert request.venues[0].collection_doi == tuple(mobicom["collection_doi"])
+
+
+def test_crossref_receives_every_issn_of_a_venue_in_one_request():
+    from acquire_research_papers.discovery.contracts import CandidatePage
+    from acquire_research_papers.discovery.providers import CrossrefVenueDiscoveryProvider
+
+    seen = []
+
+    def searcher(query, **kwargs):
+        seen.append(kwargs["filters"])
+        return CandidatePage(())
+
+    request = DiscoveryRequest.from_spec(apply_presets(spec({"name": "IEEE ToN"})))
+    batch = CrossrefVenueDiscoveryProvider(searcher).discover(request)
+
+    assert seen[0]["issn"] == ("1063-6692", "2998-4157")
+    assert batch.coverage[0].state == "complete"
+
+
+def test_the_crossref_client_repeats_a_filter_for_each_value():
+    from urllib.parse import parse_qs, urlsplit
+
+    import httpx
+
+    from acquire_research_papers.discovery.crossref import CrossrefClient
+    from acquire_research_papers.http import SafeHttpClient
+
+    urls = []
+
+    def handler(http_request: httpx.Request) -> httpx.Response:
+        urls.append(str(http_request.url))
+        return httpx.Response(200, json={"message": {"items": [], "total-results": 0}})
+
+    client = SafeHttpClient(allowed_hosts={"api.crossref.org"})
+    client._client = httpx.Client(transport=httpx.MockTransport(handler))
+    CrossrefClient(client=client).search("", filters={"issn": ("1063-6692", "2998-4157"),
+                                                      "from-pub-date": "2025-01-01"})
+
+    (value,) = parse_qs(urlsplit(urls[0]).query)["filter"]
+    assert value == "from-pub-date:2025-01-01,issn:1063-6692,issn:2998-4157"

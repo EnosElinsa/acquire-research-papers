@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- IJCAI works again. In 2026 IJCAI moved to `ijcai.org` (with `www.ijcai.org` redirecting there) and redesigned its index and paper pages, so 0.13.0 failed every IJCAI discovery and fetch with a host-boundary or page-contract error. Both hosts are accepted now, and the new layout is read: detail links that appear twice per paper, the "PDF Download" label, the repeated BibTeX link, "Family, Given" authors, and the new abstract and keyword blocks; the old layout still parses. Live: IJCAI 2023 lists 639 main-track papers, sample pages parse with abstracts, and papers from 2023 and 2024 deliver from DOI, `www.ijcai.org`, and `ijcai.org` links.
+- `arp review template --run <discovery-run> --output <file> --reviewer <host> --rule-version <id>` writes an importable decisions file with one `pending` record per ready evidence packet, already carrying its candidate ID, evidence hash, and v2 reviewer metadata, so a reviewer only fills in decisions and reasons. Live: a 256-paper INFOCOM 2024 template with three accepts froze the same selection as hand-written decisions.
+- 20 more venue presets, each checked live: 18 IEEE journals (TCCN, TGCN, TMLCN, TII, TSP, TC, TDSC, TIFS, TEVC, TCYB, TNNLS, TSMC, T-IV, T-SUSC, TETC, Transactions on Big Data, T-ASE, TIT) and, through per-edition Crossref proceedings DOIs, ACM MobiCom 2022–2025 and MobiHoc 2021–2026. The ToN preset gains ISSN 2998-4157: IEEE/ACM Transactions on Networking became IEEE Transactions on Networking in 2025, and the old ISSN has no records from 2025 on, so 0.13.0 found no ToN 2025 papers. Live: ToN 2025 enumerates 257 records and MobiCom 2024 286.
+- A venue with several ISSNs is enumerated in one Crossref request (Crossref ORs repeated filters), so each work arrives once; before, only the first ISSN was used.
+- Maintainers: `python scripts/release.py smoke [--public]` runs the release smoke test from the repository (built ZIP and wheel, or the public release URL) with expected outcomes per check; `scripts/check_sources.py` and the `weekly source check` workflow recheck every preset and official index each Monday. Its first run found the IJCAI and ToN changes above.
+
 ## 0.13.0 — 2026-11-04
 
 - `manual-fetch --queue --open-all` opens the official pages of the first 30 waiting papers at once, with a short pause between pages, so the user can work through the tabs in any order while the session imports each verified pair; later papers open in turn. `manual-download.html` shows this command. Browsers block a local page from opening many tabs with one click, so the page offers the command instead of a button.

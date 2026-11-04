@@ -115,13 +115,15 @@ class CrossrefVenueDiscoveryProvider:
                 first_error = ""
                 resume_cursor: str | None = None
                 for collection_doi in collection_dois:
-                    filters = {
+                    filters: dict[str, str | tuple[str, ...]] = {
                         "from-pub-date": f"{year:04d}-01-01",
                         "until-pub-date": f"{year:04d}-12-31",
                     }
                     query = venue.name
                     if venue.issn:
-                        filters["issn"] = venue.issn[0]
+                        # All ISSNs in one request: Crossref ORs them, so print and online
+                        # ISSNs, or the ISSNs before and after a rename, yield each work once.
+                        filters["issn"] = tuple(venue.issn)
                         query = ""
                     elif collection_doi:
                         filters["alternative-id"] = collection_doi

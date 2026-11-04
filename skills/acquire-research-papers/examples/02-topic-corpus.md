@@ -8,7 +8,7 @@ arp review corpus --run <work>/discovery --decisions <work>/review-decisions.jso
 arp acquire corpus --selection <work>/discovery/selection-manifest.json --output <delivery>
 ```
 
-Between discovery and review, the executing agent must inspect `evidence-packets.jsonl` and create title-and-abstract decisions bound to actual packet hashes. Keywords are optional; full text is not required for corpus relevance. Use v2 reviewer metadata naming the real host, and preserve specialized corpus fields. Missing abstracts stay pending. Selection only uses explicit accepted decisions and retains coverage/quota shortfalls.
+Between discovery and review, the executing agent must inspect `evidence-packets.jsonl` and create title-and-abstract decisions bound to actual packet hashes. `arp review template --run <work>/discovery --output <work>/review-decisions.jsonl --reviewer <actual-host> --rule-version <id>` writes that file with every ready packet's hash and all decisions `pending`; fill in the papers you judge. Keywords are optional; full text is not required for corpus relevance. Use v2 reviewer metadata naming the real host, and preserve specialized corpus fields. Missing abstracts stay pending. Selection only uses explicit accepted decisions and retains coverage/quota shortfalls.
 
 Expected output: coverage records, immutable evidence packets, reviewed candidates, a frozen selection, verified official pairs, and manual/retry queues. Discovery performs no acquisition.
 

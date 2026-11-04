@@ -9,6 +9,7 @@ from acquire_research_papers.acquisition.base import SourceAdapter
 
 _DEFAULT_HOST_NAMES = {
     "aclanthology.org": "acl-anthology",
+    "ijcai.org": "ijcai-proceedings",
     "www.ijcai.org": "ijcai-proceedings",
     "ieeexplore.ieee.org": "ieee-xplore",
     "dl.acm.org": "acm-dl",
@@ -27,7 +28,7 @@ DOI_PREFIX_HOSTS = {
     "10.1145": "dl.acm.org",
     "10.1016": "www.sciencedirect.com",
     "10.18653": "aclanthology.org",
-    "10.24963": "www.ijcai.org",
+    "10.24963": "ijcai.org",
     "10.1609": "ojs.aaai.org",
     "10.1007": "link.springer.com",
 }

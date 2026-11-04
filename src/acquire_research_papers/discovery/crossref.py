@@ -92,7 +92,7 @@ class CrossrefClient:
         *,
         rows: int = 100,
         cursor: str = "*",
-        filters: dict[str, str] | None = None,
+        filters: dict[str, str | tuple[str, ...]] | None = None,
         query_field: str = "bibliographic",
     ) -> CandidatePage:
         if query_field not in {"bibliographic", "container-title"}:
@@ -108,9 +108,13 @@ class CrossrefClient:
         if query:
             parameters.insert(0, (f"query.{query_field}", query))
         if filters:
-            parameters.append(
-                ("filter", ",".join(f"{name}:{value}" for name, value in sorted(filters.items())))
-            )
+            # A tuple value repeats the filter; Crossref ORs repeated filters of one name,
+            # e.g. the ISSNs of a journal before and after a rename.
+            parameters.append(("filter", ",".join(
+                f"{name}:{item}"
+                for name, value in sorted(filters.items())
+                for item in (value if isinstance(value, tuple) else (value,))
+            )))
         query_url = f"{self.endpoint}?{urlencode(parameters)}"
         payload = self.client.get(query_url).json()
         message = payload.get("message") or {}

@@ -589,3 +589,56 @@ def test_valid_spec_without_delivery_uses_generic_layout(tmp_path: Path) -> None
         .records[0]
         .relative_pdf.endswith("/paper.pdf")
     )
+
+
+def test_a_review_template_imports_as_is_and_after_filling_in_decisions(tmp_path: Path) -> None:
+    from acquire_research_papers.discovery.review import TEMPLATE_REASON, write_review_template
+
+    run = create_run(
+        tmp_path / "run",
+        (candidate("conference", "Conference"), candidate("journal", "Journal"),
+         candidate("missing", "Journal", abstract="")),
+        corpus_spec(),
+    )
+    template = tmp_path / "decisions.jsonl"
+
+    result = write_review_template(run, template, reviewer="kiro", rule_version="topic-1",
+                                   model="claude")
+
+    assert (result["records"], result["pending_metadata_left_out"]) == (2, 1)
+    records = [json.loads(line) for line in template.read_text(encoding="utf-8").splitlines()]
+    by_id = {record["candidate_id"]: record for record in records}
+    expected = packets(run)
+    for candidate_id, record in by_id.items():
+        assert record["evidence_hash"] == expected[candidate_id]["evidence_hash"]
+        assert (record["decision"], record["reason"]) == ("pending", TEMPLATE_REASON)
+        assert record["executor"] == {"host": "kiro", "model": "claude"}
+    with pytest.raises(ReviewValidationError, match="already exists"):
+        write_review_template(run, template, reviewer="kiro", rule_version="topic-1")
+
+    untouched = CorpusReviewWorkflow().run(run, template)
+    assert (untouched.accepted, untouched.pending) == (0, 3)
+
+    filled = tmp_path / "filled.jsonl"
+    for record in records:
+        record.update(decision="accept", matched_topics=["evolutionary algorithm"],
+                      reason="The title and abstract address evolutionary search.")
+    write_decisions(filled, records)
+    rerun = create_run(tmp_path / "rerun", (candidate("conference", "Conference"),
+                                            candidate("journal", "Journal")), corpus_spec())
+    for record in records:  # the same packets, so the same hashes, in a fresh run directory
+        assert record["evidence_hash"] == packets(rerun)[record["candidate_id"]]["evidence_hash"]
+
+    reviewed = CorpusReviewWorkflow().run(rerun, filled)
+
+    assert (reviewed.status, reviewed.accepted) == ("frozen", 2)
+
+
+def test_a_review_template_needs_a_reviewer_and_rule_version(tmp_path: Path) -> None:
+    from acquire_research_papers.discovery.review import write_review_template
+
+    run = create_run(tmp_path / "run", (candidate("conference", "Conference"),), corpus_spec())
+    for reviewer, rule in (("", "topic-1"), ("kiro", " ")):
+        with pytest.raises(ReviewValidationError, match="reviewer host and a rule version"):
+            write_review_template(run, tmp_path / "out.jsonl", reviewer=reviewer,
+                                  rule_version=rule)

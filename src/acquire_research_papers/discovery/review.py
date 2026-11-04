@@ -87,6 +87,64 @@ class SemanticReviewRecord:
         )
 
 
+TEMPLATE_REASON = "Not reviewed yet."
+_TEMPLATE_FIELDS = ("title", "abstract", "keywords")
+
+
+def write_review_template(
+    run: Path,
+    output: Path,
+    *,
+    reviewer: str,
+    rule_version: str,
+    model: str | None = None,
+) -> dict[str, Any]:
+    """Write an importable v2 decisions file with one ``pending`` record per ready packet.
+
+    Each record already carries the packet's candidate ID and evidence hash and the reviewer
+    metadata, so the reviewer only changes ``decision``, ``reason``, and ``matched_topics`` of
+    the papers they judge. Packets still missing an abstract cannot be accepted and are left out.
+    """
+    reviewer, rule_version = reviewer.strip(), rule_version.strip()
+    if not reviewer or not rule_version:
+        raise ReviewValidationError("review template needs a reviewer host and a rule version")
+    if model is not None and not model.strip():
+        raise ReviewValidationError("review template model must be a nonempty name")
+    destination = output.resolve()
+    if destination.exists():
+        raise ReviewValidationError(f"{destination.name} already exists; choose a new file")
+    evidence_path = run.resolve() / "evidence-packets.jsonl"
+    try:
+        packets = [EvidencePacket.from_dict(payload)
+                   for payload in CorpusReviewWorkflow._read_jsonl(evidence_path)]
+    except (TypeError, ValueError, KeyError) as exc:
+        raise ReviewValidationError("evidence packets could not be read") from exc
+    executor = {"host": reviewer, **({"model": model.strip()} if model else {})}
+    records = [
+        {"schema_version": 2, "candidate_id": packet.candidate_id,
+         "evidence_hash": packet.evidence_hash, "decision": "pending", "matched_topics": [],
+         "evidence_fields": [name for name in _TEMPLATE_FIELDS if name in packet.evidence_fields],
+         "reason": TEMPLATE_REASON, "reviewer": reviewer, "executor": executor,
+         "rule_version": rule_version}
+        for packet in packets
+        if packet.metadata_state == "ready"
+    ]
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    CorpusReviewWorkflow._write_jsonl(destination, records)
+    return {
+        "status": "template_written",
+        "decisions": str(destination),
+        "records": len(records),
+        "pending_metadata_left_out": len(packets) - len(records),
+        "next_action": (
+            "For each paper you judge from its title and abstract in evidence-packets.jsonl, set "
+            "decision to accept or reject with a concrete reason (and matched_topics for an "
+            "accept); leave the rest pending, then run arp review corpus --run <run> "
+            f"--decisions {destination}"
+        ),
+    }
+
+
 @dataclass(frozen=True)
 class CorpusReviewResult:
     status: str

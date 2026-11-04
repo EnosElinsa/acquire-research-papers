@@ -121,7 +121,7 @@ def test_crossref_provider_enumerates_every_venue_year_cursor_without_topic_quer
         calls.append({"query": query, **kwargs})
         if kwargs["filters"].get("issn"):
             assert query == ""
-            assert kwargs["filters"]["issn"] == "1111-2222"
+            assert kwargs["filters"]["issn"] == ("1111-2222",)
             if kwargs["cursor"] == "*":
                 return CandidatePage(
                     (crossref_candidate("a1", "Journal A"),),

@@ -2,7 +2,9 @@
 
   python scripts/release.py bump 0.13.0
   python scripts/release.py build
+  python scripts/release.py smoke            # live checks of the built ZIP and wheel
   python scripts/release.py publish --title "v0.13.0 — …" --notes-file notes.md
+  python scripts/release.py smoke --public   # the same checks from the public release URL
 
 ``bump`` rewrites every version string in one pass and changes nothing if any file is not as
 expected. ``build`` builds the wheel and skill ZIP, rebuilds them in a temporary directory to
@@ -144,12 +146,16 @@ def _asset_names(version: str) -> tuple[str, str]:
             f"{NAME}-skill-{version}.zip")
 
 
-def _default_builder(root: Path, output: Path, *, update_source_manifest: bool) -> dict:
-    spec = importlib.util.spec_from_file_location(
-        "build_distribution", Path(__file__).resolve().parent / "build_distribution.py")
+def _load_sibling(name: str):
+    spec = importlib.util.spec_from_file_location(name, Path(__file__).resolve().parent / f"{name}.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.build(root, output, update_source_manifest=update_source_manifest)
+    return module
+
+
+def _default_builder(root: Path, output: Path, *, update_source_manifest: bool) -> dict:
+    return _load_sibling("build_distribution").build(
+        root, output, update_source_manifest=update_source_manifest)
 
 
 def build_release(root: Path, output: Path | None = None, *,
@@ -335,6 +341,11 @@ def main(argv: list[str] | None = None) -> int:
     bump_parser.add_argument("--date", help="CHANGELOG date, default today (YYYY-MM-DD)")
     build_parser = commands.add_parser("build", help="build reproducible assets and SHA256SUMS")
     build_parser.add_argument("--output", type=Path)
+    smoke_parser = commands.add_parser(
+        "smoke", help="bootstrap the built skill in isolated roots and run live checks")
+    smoke_parser.add_argument("--public", action="store_true",
+                              help="bootstrap from the public release URL, not the built wheel")
+    smoke_parser.add_argument("--dist", type=Path)
     publish_parser = commands.add_parser("publish", help="upload and publish the GitHub release")
     publish_parser.add_argument("--title", required=True)
     publish_parser.add_argument("--notes-file", type=Path, required=True)
@@ -351,6 +362,11 @@ def main(argv: list[str] | None = None) -> int:
             if not shutil.which("uv"):
                 raise ReleaseError("uv is required to build the wheel")
             result = build_release(root, args.output)
+        elif args.command == "smoke":
+            result = _load_sibling("release_smoke").smoke(root, dist=args.dist,
+                                                          public=args.public)
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+            return 0 if result["status"] == "passed" else 1
         else:
             if not shutil.which("gh"):
                 raise ReleaseError("the GitHub CLI (gh) is required to publish")

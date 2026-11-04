@@ -25,23 +25,35 @@ class VenuePreset:
     aliases: tuple[str, ...] = ()
     issn: tuple[str, ...] = ()
     openalex_source: tuple[str, ...] = ()
+    # Crossref proceedings DOIs, one per listed edition; other years need their own DOI.
+    collection_doi: tuple[str, ...] = ()
     checked: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         identifiers: dict[str, Any] = {}
-        if self.issn:
-            identifiers["issn"] = list(self.issn)
-        if self.openalex_source:
-            identifiers["openalex_source"] = list(self.openalex_source)
+        for name in _PRESET_IDENTIFIERS:
+            if getattr(self, name):
+                identifiers[name] = list(getattr(self, name))
         return {"id": self.id, "name": self.name, "short_name": self.short_name,
                 "kind": self.kind, "publisher": self.publisher, "aliases": list(self.aliases),
                 **identifiers, "checked": self.checked}
+
+
+_PRESET_IDENTIFIERS = ("issn", "openalex_source", "collection_doi")
 
 
 def _journal(preset_id: str, name: str, short: str, issn: str, count: int,
              *aliases: str) -> VenuePreset:
     return VenuePreset(preset_id, name, short, "journal", "IEEE", aliases, issn=(issn,),
                        checked=f"Crossref ISSN {issn} = '{name}'; 2024: {count} records")
+
+
+def _proceedings(preset_id: str, name: str, short: str, editions: dict[int, tuple[str, int]],
+                 *aliases: str, publisher: str = "ACM") -> VenuePreset:
+    listed = ", ".join(f"{year} {doi} ({count})" for year, (doi, count) in sorted(editions.items()))
+    return VenuePreset(preset_id, name, short, "conference", publisher, aliases,
+                       collection_doi=tuple(doi for _, (doi, _) in sorted(editions.items())),
+                       checked=f"Crossref proceedings DOIs, records in the edition year: {listed}")
 
 
 def _series(preset_id: str, name: str, short: str, source: str, count: int,
@@ -64,8 +76,13 @@ PRESETS: tuple[VenuePreset, ...] = (
              "IEEE TVT"),
     _journal("ieee-tcom", "IEEE Transactions on Communications", "TCOM", "0090-6778", 600,
              "IEEE TCOM"),
-    _journal("ieee-ton", "IEEE/ACM Transactions on Networking", "ToN", "1063-6692", 391,
-             "IEEE/ACM ToN", "IEEE ToN"),
+    # Renamed in 2025: the IEEE/ACM ISSN has no records from 2025, the new one none before.
+    VenuePreset("ieee-ton", "IEEE/ACM Transactions on Networking", "ToN", "journal", "IEEE",
+                ("IEEE/ACM ToN", "IEEE ToN", "IEEE Transactions on Networking"),
+                issn=("1063-6692", "2998-4157"),
+                checked="Crossref ISSN 1063-6692 = 'IEEE/ACM Transactions on Networking' "
+                        "(2024: 391, 2025: 0); ISSN 2998-4157 = 'IEEE Transactions on "
+                        "Networking' (2024: 0, 2025: 257)"),
     _journal("ieee-tnse", "IEEE Transactions on Network Science and Engineering", "TNSE",
              "2327-4697", 522, "IEEE TNSE"),
     _journal("ieee-comst", "IEEE Communications Surveys & Tutorials", "COMST", "1553-877X", 82,
@@ -89,6 +106,41 @@ PRESETS: tuple[VenuePreset, ...] = (
              "IEEE CL", "IEEE COMML"),
     _journal("ieee-taes", "IEEE Transactions on Aerospace and Electronic Systems", "TAES",
              "0018-9251", 682, "IEEE TAES"),
+    _journal("ieee-tccn", "IEEE Transactions on Cognitive Communications and Networking",
+             "TCCN", "2332-7731", 188, "IEEE TCCN"),
+    _journal("ieee-tgcn", "IEEE Transactions on Green Communications and Networking", "TGCN",
+             "2473-2400", 162, "IEEE TGCN"),
+    _journal("ieee-tmlcn", "IEEE Transactions on Machine Learning in Communications and "
+             "Networking", "TMLCN", "2831-316X", 102, "IEEE TMLCN"),
+    _journal("ieee-tii", "IEEE Transactions on Industrial Informatics", "TII", "1551-3203", 1410,
+             "IEEE TII"),
+    _journal("ieee-tsp", "IEEE Transactions on Signal Processing", "TSP", "1053-587X", 382,
+             "IEEE TSP"),
+    _journal("ieee-tc", "IEEE Transactions on Computers", "TC", "0018-9340", 220, "IEEE TC"),
+    _journal("ieee-tdsc", "IEEE Transactions on Dependable and Secure Computing", "TDSC",
+             "1545-5971", 412, "IEEE TDSC"),
+    _journal("ieee-tifs", "IEEE Transactions on Information Forensics and Security", "TIFS",
+             "1556-6013", 735, "IEEE TIFS"),
+    _journal("ieee-tevc", "IEEE Transactions on Evolutionary Computation", "TEVC", "1089-778X",
+             161, "IEEE TEVC", "IEEE TEC"),
+    _journal("ieee-tcyb", "IEEE Transactions on Cybernetics", "TCYB", "2168-2267", 713,
+             "IEEE TCYB"),
+    _journal("ieee-tnnls", "IEEE Transactions on Neural Networks and Learning Systems", "TNNLS",
+             "2162-237X", 1501, "IEEE TNNLS"),
+    _journal("ieee-tsmc", "IEEE Transactions on Systems, Man, and Cybernetics: Systems", "TSMC",
+             "2168-2216", 790, "IEEE TSMC", "IEEE TSMC-S"),
+    _journal("ieee-tiv", "IEEE Transactions on Intelligent Vehicles", "T-IV", "2379-8858", 822,
+             "IEEE T-IV", "IEEE TIV"),
+    _journal("ieee-tsusc", "IEEE Transactions on Sustainable Computing", "T-SUSC", "2377-3782",
+             75, "IEEE T-SUSC", "IEEE TSUSC"),
+    _journal("ieee-tetc", "IEEE Transactions on Emerging Topics in Computing", "TETC",
+             "2168-6750", 106, "IEEE TETC"),
+    _journal("ieee-tbdata", "IEEE Transactions on Big Data", "IEEE Trans. Big Data", "2332-7790",
+             89),
+    _journal("ieee-tase", "IEEE Transactions on Automation Science and Engineering", "T-ASE",
+             "1545-5955", 627, "IEEE T-ASE", "IEEE TASE"),
+    _journal("ieee-tit", "IEEE Transactions on Information Theory", "TIT", "0018-9448", 547,
+             "IEEE TIT", "IEEE T-IT"),
     VenuePreset("aaai", "Proceedings of the AAAI Conference on Artificial Intelligence", "AAAI",
                 "conference", "AAAI", ("AAAI Conference on Artificial Intelligence",),
                 issn=("2374-3468",),
@@ -114,6 +166,18 @@ PRESETS: tuple[VenuePreset, ...] = (
             "Networking (SECON)", "SECON", "S7407086276", 45, "IEEE SECON"),
     _series("acm-sigcomm", "ACM SIGCOMM Conference", "SIGCOMM", "S7407086014", 62,
             "ACM SIGCOMM", publisher="ACM"),
+    _proceedings("acm-mobicom",
+                 "ACM International Conference on Mobile Computing and Networking (MobiCom)",
+                 "MobiCom", {2022: ("10.1145/3495243", 111), 2023: ("10.1145/3570361", 152),
+                             2024: ("10.1145/3636534", 286), 2025: ("10.1145/3680207", 158)},
+                 "ACM MobiCom"),
+    _proceedings("acm-mobihoc",
+                 "ACM International Symposium on Theory, Algorithmic Foundations, and Protocol "
+                 "Design for Mobile Networks and Mobile Computing (MobiHoc)",
+                 "MobiHoc", {2021: ("10.1145/3466772", 29), 2022: ("10.1145/3492866", 40),
+                             2023: ("10.1145/3565287", 94), 2024: ("10.1145/3641512", 57),
+                             2025: ("10.1145/3704413", 72), 2026: ("10.1145/3842721", 115)},
+                 "ACM MobiHoc"),
 )
 
 _IDENTIFIER_FIELDS = ("issn", "isbn", "collection_doi", "openalex_source")
@@ -185,7 +249,7 @@ def apply_presets(spec: dict[str, Any]) -> dict[str, Any]:
                     f"venue {venue['name']}: preset {preset.id} conflicts with the venue's own "
                     "identifiers; keep either the preset or the identifiers")
         venue["preset"] = preset.id
-        for field in ("issn", "openalex_source"):
+        for field in _PRESET_IDENTIFIERS:
             values = getattr(preset, field)
             if values:
                 venue[field] = list(values)

@@ -22,7 +22,7 @@ from acquire_research_papers.acquisition.adapters.ieee import (
     IeeeXploreAdapter,
     reuse_browser_enabled,
 )
-from acquire_research_papers.acquisition.adapters.ijcai import IjcaiProceedingsAdapter
+from acquire_research_papers.acquisition.adapters.ijcai import IJCAI_HOSTS, IjcaiProceedingsAdapter
 from acquire_research_papers.acquisition.adapters.open_access import OPEN_ACCESS_ADAPTERS
 from acquire_research_papers.acquisition.adapters.elsevier_api import (
     ELSEVIER_API_HOST,
@@ -66,7 +66,7 @@ from acquire_research_papers.discovery.contracts import (
 )
 from acquire_research_papers.discovery.coordinator import DiscoveryCoordinator
 from acquire_research_papers.discovery.corpus import CorpusDiscoveryResult, CorpusDiscoveryWorkflow
-from acquire_research_papers.discovery.review import CorpusReviewWorkflow
+from acquire_research_papers.discovery.review import CorpusReviewWorkflow, write_review_template
 from acquire_research_papers.discovery.crossref import CrossrefClient
 from acquire_research_papers.discovery.openalex import OpenAlexClient
 from acquire_research_papers.discovery.official import (
@@ -420,7 +420,7 @@ class Application:
         # Publisher hosts get 1 s, 2 s, 4 s backoff so a brief outage does not fail a paper.
         acl = AclAnthologyAdapter(SafeHttpClient(allowed_hosts={"aclanthology.org"},
                                                  **_PUBLISHER_RETRY))
-        ijcai = IjcaiProceedingsAdapter(SafeHttpClient(allowed_hosts={"www.ijcai.org"},
+        ijcai = IjcaiProceedingsAdapter(SafeHttpClient(allowed_hosts=set(IJCAI_HOSTS),
                                                        **_PUBLISHER_RETRY))
         acm = AcmDigitalLibraryAdapter(
             client=SafeHttpClient(allowed_hosts={"dl.acm.org"}, **_PUBLISHER_RETRY)
@@ -1028,6 +1028,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     review_corpus.add_argument("--run", type=Path, required=True)
     review_corpus.add_argument("--decisions", type=Path, required=True)
+    review_template = review_modes.add_parser(
+        "template", help="write a pending decisions file for every ready corpus evidence packet"
+    )
+    review_template.add_argument("--run", type=Path, required=True)
+    review_template.add_argument("--output", type=Path, required=True)
+    review_template.add_argument("--reviewer", required=True,
+                                 help="the executing host, recorded as reviewer and executor.host")
+    review_template.add_argument("--rule-version", required=True)
+    review_template.add_argument("--model", help="executor model, only when actually known")
     review_research = review_modes.add_parser(
         "research", help="freeze explicitly reviewed closest research papers"
     )
@@ -1455,6 +1464,15 @@ def run_cli(
                     "claim_coverage": str(result.delivery.claim_coverage) if result.delivery.claim_coverage else None,
                 }
             )
+            return 0
+        if args.command == "review" and args.review_mode == "template":
+            try:
+                run_root = ensure_outside_repository(args.run, app.repository_root)
+                output = ensure_outside_repository(args.output, app.repository_root)
+                _emit(write_review_template(run_root, output, reviewer=args.reviewer,
+                                            rule_version=args.rule_version, model=args.model))
+            except ValueError as exc:
+                raise AmbiguousInput(str(exc)) from exc
             return 0
         if args.command == "review" and args.review_mode == "corpus":
             try:

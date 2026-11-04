@@ -7,7 +7,7 @@ from urllib.parse import urljoin, urlsplit
 
 from bs4 import BeautifulSoup
 
-from acquire_research_papers.acquisition.adapters.ijcai import IjcaiProceedingsAdapter
+from acquire_research_papers.acquisition.adapters.ijcai import IJCAI_HOSTS, IjcaiProceedingsAdapter
 from acquire_research_papers.acquisition.base import NotOfficial, PageContractChanged
 from acquire_research_papers.discovery.contracts import (
     CandidateMetadata,
@@ -83,6 +83,12 @@ def _abstract(soup: BeautifulSoup) -> str:
     labelled = soup.select_one("section#abstract, #abstract")
     if labelled is not None:
         return labelled.get_text(" ", strip=True)
+    # 2026 layout: <div class="article__abstract"><p class="eyebrow">Abstract</p><p>…</p></div>
+    current = soup.select_one("div.article__abstract")
+    if current is not None:
+        paragraphs = [node.get_text(" ", strip=True) for node in current.find_all("p")
+                      if "eyebrow" not in (node.get("class") or ())]
+        return " ".join(text for text in paragraphs if text)
     blocks = [
         node
         for node in soup.select("div.proceedings-detail > div.row > div.col-md-12")
@@ -97,6 +103,9 @@ def _keywords(soup: BeautifulSoup) -> tuple[str, ...]:
     metadata = _meta_values(soup, "keywords")
     if len(metadata) == 1:
         return _split_values(metadata[0])
+    current = soup.select("div.article__keywords li")  # 2026 layout
+    if current:
+        return tuple(text for node in current if (text := node.get_text(" ", strip=True)))
     return tuple(
         node.get_text(" ", strip=True)
         for node in soup.select("div.proceedings-detail .keywords .topic")
@@ -132,8 +141,8 @@ class IjcaiDiscoveryProvider:
         self,
         client: SafeHttpClient,
         *,
-        index_template: str = "https://www.ijcai.org/proceedings/{year}/",
-        production_hosts: set[str] | frozenset[str] = frozenset({"www.ijcai.org"}),
+        index_template: str = "https://ijcai.org/proceedings/{year}/",
+        production_hosts: set[str] | frozenset[str] = IJCAI_HOSTS,
     ) -> None:
         self.client = client
         self.index_template = index_template
@@ -201,7 +210,10 @@ class IjcaiDiscoveryProvider:
                 for anchor in node.find_all("a", href=True)
                 if expected_path.fullmatch(urlsplit(str(anchor.get("href", ""))).path)
             ]
-            if len(detail_anchors) != 1:
+            # The 2026 layout links the title and a "Details" button to the same page.
+            detail_paths = {urlsplit(str(anchor["href"])).path.rstrip("/")
+                            for anchor in detail_anchors}
+            if len(detail_paths) != 1:
                 continue
             anchor = detail_anchors[0]
             href = str(anchor.get("href", "")).strip()
