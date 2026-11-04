@@ -38,7 +38,7 @@ Run discovery as its own phase (`arp` means `python <skill-directory>/scripts/ar
 arp discover corpus --progress --spec <job.yaml> --output <discovery-run>
 ```
 
-`--progress` writes sanitized JSON lines to stderr with closed phase names, provider slugs, and integer counts. The final result remains the only JSON object on stdout. DOI abstract enrichment runs Semantic Scholar first and, when its independent key is configured, OpenAlex second; a Semantic Scholar rate limit does not prevent the OpenAlex pass.
+`--progress` writes sanitized JSON lines to stderr with closed phase names, provider slugs, and integer counts. The final result remains the only JSON object on stdout. DOI abstract enrichment runs Semantic Scholar first and, when its independent key is configured, OpenAlex second; a Semantic Scholar rate limit does not prevent the OpenAlex pass. The optional OpenAlex and Semantic Scholar topic searches run only while some requested venue/year slice lacks a complete official index; once official indexes complete every slice they would only return other venues' papers, so they are skipped (progress event `provider_skipped`).
 
 Discovery produces:
 
@@ -97,6 +97,8 @@ Acquisition writes one durable state per selected paper to `acquisition-manifest
 - `contract_error`: the official page or returned artifact violates its contract, or a local prerequisite is missing (`configuration_required`).
 
 It also writes `manual-download.csv`, `retryable-downloads.csv`, and `delivery-manifest.json`. No outcome removes a record from `selected-papers.jsonl`. The delivered count, not the discovered count, determines acquisition completion.
+
+A rerun requests every undelivered paper again except one whose last attempt was refused: the publisher or institution answered `access_required` for that paper itself (an entitlement gap, HTTP 401/403, a manual-only publisher, or a Springer page without access). Such a row carries `access_refused: true`, is kept as it is, and is counted in `not_retried`; this avoids reopening an institution login or repeating a refusal on every rerun. Deferred papers, papers of a paused host, and papers whose institution login failed are not refusals and are requested again. Add `--retry-manual` to request refused papers again after access has changed. `unsupported_adapter` papers are always requested again, so a newly added adapter picks them up.
 
 ## Review output
 

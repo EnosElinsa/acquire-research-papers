@@ -28,7 +28,8 @@ Acquire Research Papers 是一个多个 Agent 宿主共用的 skill 和确定性
 | 已有 PDF/BibTeX 文件夹 | `library audit/update/import/organize` → `library apply` | 版本证据、配对文件名、原始引用字节、带哈希的变更计划和备份 |
 | 需要作者论文列表或本地查漏 | `discover author` | 正式发表、Early Access 和预印本分组，以及身份歧义和来源覆盖说明 |
 | 要从指定 venue、年份和主题中建立论文集 | `discover corpus` → Agent 评审 → `review corpus` → `acquire corpus` | 覆盖证据、冻结选集、正式文件以及人工/重试队列 |
-| 出版社要求用户在授权浏览器中操作 | `manual-fetch` | 接管用户下载的正式文件，核验身份后放入预留交付位置 |
+| 出版社要求用户在授权浏览器中操作 | `manual-fetch`（整个人工下载队列用 `--queue`） | 接管用户下载的正式文件，核验身份后放入预留交付位置 |
+| 命令运行时间超过 Agent 的命令超时 | `--background <任务目录>` → `job status` | 命令在独立进程中运行；status 报告进度和最终结果 |
 | 要找相近工作、观点引用、Related Work 或验证 gap | `discover research` → `review research` → `acquire research` → `evidence research` | 引用图、冻结的最相近论文、经过核验的全文和 claim 级证据报告 |
 | 明确需要把 PDF 转成 Markdown | `export-md` | 按要求导出成功的 MinerU 结果；普通论文获取不会产生 Markdown |
 
@@ -351,6 +352,7 @@ Crossref、OpenAlex、Semantic Scholar、普通仓库和镜像都不能满足最
 | NeurIPS proceedings | 官方年度列表：主会，以及 2022 年起的 Datasets and Benchmarks | 由发现阶段或摘要页 URL 自动获取 | 官方 PDF 和逐篇 BibTeX 文件。NeurIPS DOI 解析到 Curran Associates，单凭 DOI 不能下载。真实验证：2019 年列出 1,428 篇带摘要的论文；2019、2022 D&B 和 2023 论文已交付 |
 | PMLR | ICML、AISTATS、COLT、UAI、CoRL、ALT、ACML、L4DC、CLeaR 各卷的官方 BibTeX 文件 | 由发现阶段或论文页 URL 自动获取 | BibTeX 取自官方页面上显示的条目（provenance 记为 `publisher_page_embedded`）。真实验证：ICML 2023 列出 1,828 篇带摘要的论文；ICML 2019 和 2023 论文已交付 |
 | CVF Open Access | CVPR、ICCV、WACV 主会官方列表 | 由发现阶段或论文页 URL 自动获取 | CVF 开放获取版本，除水印外与录用版本一致；最终出版版本在 IEEE Xplore（在 venue 上声明 `publisher: IEEE` 可改走 IEEE）。BibTeX 取自页面。真实验证：WACV 2024 列出 846 篇带摘要的论文；CVPR 2019、2023、一个 CVPR workshop 和 WACV 2024 论文已交付 |
+| Springer Link | 由 Crossref/OpenAlex/Semantic Scholar 发现；`10.1007` DOI | 期刊论文和书籍章节（LNCS）在页面表明本网络有权限时自动获取 | 官方 PDF 和 Springer 引用导出服务提供的 BibTeX 文件。开放获取论文在任何网络下都可下载，订阅论文只在有权限的网络（如校园网）下载；否则为 `access_required`。不做登录。真实验证：两篇 Machine Learning 期刊论文和一篇 ECCV 章节已交付 |
 | IEEE Xplore | 候选主要来自 Crossref/OpenAlex/Semantic Scholar | 配置 CARSI 院校档案后自动 | 使用通用 profile；已在一个 CARSI 院校完成端到端真实验证。每个新增院校都需要首次适配和一篇代表论文冒烟测试 |
 | ACM Digital Library | 通常由 Crossref collection 枚举和可选查询 API 发现 | 条件式 HTTP adapter | 只有正式页面和文件接口允许独立客户端访问时才能自动完成；目前没有生产级 ACM 浏览器 adapter，被拦截时转人工 |
 | ScienceDirect | Crossref/OpenAlex/Semantic Scholar 发现；Elsevier API 可解析预期身份 | 仅人工 | 用户在正常授权浏览器中下载，CLI 核验并接管本地文件；不自动登录或操作 ScienceDirect |

@@ -40,13 +40,17 @@ Each command prints one JSON object on stdout. Batch ledgers record one state pe
 | State (error codes) | Meaning | Next action |
 | --- | --- | --- |
 | `delivered` | Official PDF and raw BibTeX verified | Report the paths. |
-| `manual_required` (`access_required`, `unsupported_adapter`) | Needs the user's authorized download, an institution login, or a publisher without an adapter (IEEE outside Windows) | The user downloads both files from the official pages. Import the whole queue in one session with `arp manual-fetch --selection <selection-manifest.json> --queue --output <delivery-root>`, add `--from <folder>` when the files are already downloaded, use `--key <selection-id>` for one item, or `--input <DOI>` for a single paper. |
+| `manual_required` (`access_required`, `unsupported_adapter`) | Needs the user's authorized download, an institution login, or a publisher without an adapter (IEEE outside Windows) | The user downloads both files from the official pages. Import the whole queue in one session with `arp manual-fetch --selection <selection-manifest.json> --queue --output <delivery-root>`, add `--from <folder>` when the files are already downloaded, use `--key <selection-id>` for one item, or `--input <DOI>` for a single paper. A rerun of `acquire` does not request a paper whose access was refused again (`not_retried`); add `--retry-manual` after access changes. |
 | `retryable` (`network_transient`, `rate_limited`, `automation_error`, `host_paused`) | Temporary failure, or the host was paused for the rest of the run | Rerun the same command with the same output later; verified papers are skipped. |
 | `contract_error` (`contract_error`) | The official page or artifact broke its contract or identity check | Report the message. Do not retry blindly or substitute another source. |
 | `contract_error` (`configuration_required`) | A local prerequisite such as the IEEE browser runtime is missing | Check `arp doctor`, configure only that capability, or use `manual-fetch` for the paper. |
 | `in_progress` (`run status`: `interrupted`) | The run stopped mid-paper | Rerun the same command and output; leftovers move to `.arp-interrupted/`. |
 
 Agent review, user download, missing configuration, rate limits, retryable errors, and permanent failures remain distinct states. Use `arp run status --run <directory>` to inspect a run.
+
+## Long commands
+
+`manual-fetch --queue --watch`, an institution login, a large `discover corpus`, or a long `acquire` can outlast a host's command timeout. Start such a command with `arp --background <new-job-directory> <command> ...`; it returns at once. Then run `arp job status --job <job-directory> --wait 60` until `status` is `finished`, `stopped`, or `crashed`; `progress` shows the latest lines and `result` holds the JSON the command would have printed. Relay `progress` lines that ask the user to act. `arp job stop --job <job-directory>` ends the command as Ctrl+C would; `--force` kills it, and rerunning the command resumes.
 
 ## Completion rules
 
