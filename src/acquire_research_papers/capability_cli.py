@@ -75,6 +75,8 @@ def register(subparsers, *, discover_modes, review_modes, evidence_modes, acquir
     acquire = acquire_modes.add_parser("selection", help="acquire a generic frozen selection")
     acquire.add_argument("--selection", type=Path, required=True)
     acquire.add_argument("--defer-host", action="append", default=[])
+    acquire.add_argument("--retry-manual", action="store_true",
+                         help="request again papers whose access was refused in an earlier run")
     acquire.add_argument("--ieee-profile")
     _output_options(acquire)
     export = subparsers.add_parser("export", help="export records as JSON, CSV or Markdown")
@@ -278,7 +280,8 @@ def dispatch(args, *, application=None) -> dict:
             payload = validate_fulltext(parse_result, read_records(args.records))
         elif args.command == "acquire":
             result = app().corpus_acquisition.run(args.selection, output,
-                                                  deferred_hosts=args.defer_host)
+                                                  deferred_hosts=args.defer_host,
+                                                  retry_manual=args.retry_manual)
             rows = read_records(result.acquisition_path)
             states = {"delivered": "complete", "manual_required": "user_download",
                       "retryable": "retryable", "contract_error": "failed"}

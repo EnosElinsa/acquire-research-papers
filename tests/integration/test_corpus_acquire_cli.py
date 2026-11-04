@@ -221,7 +221,17 @@ def test_acquire_corpus_separates_delivered_and_manual_states(
     assert paper_manifest[1]["pdf"] == "Invented Society IV/2.pdf"
     assert selection.selected_path.read_bytes() == selected_before
 
-    resumed = CorpusAcquisitionWorkflow(acquirer=delivered_outcome).run(selection.manifest_path, output)
+    # A paper refused with access_required is not requested again by a plain rerun.
+    rerun_calls = []
+    kept = CorpusAcquisitionWorkflow(
+        acquirer=lambda record, destination: rerun_calls.append(record.key) or {}
+    ).run(selection.manifest_path, output)
+    assert rerun_calls == []
+    assert (kept.not_retried, kept.manual_required) == (1, 1)
+    assert json.loads(kept.manifest_path.read_text())["not_retried"] == 1
+
+    resumed = CorpusAcquisitionWorkflow(acquirer=delivered_outcome).run(
+        selection.manifest_path, output, retry_manual=True)
     assert resumed.complete
     assert resumed.manual_download_path is None
     assert resumed.retryable_path is None
@@ -861,6 +871,8 @@ def test_defer_host_matches_doi_only_records_by_registrant_prefix(tmp_path: Path
     ).run(selection.manifest_path, tmp_path / "delivery", deferred_hosts=["ieeexplore.ieee.org"])
     assert calls == []
     assert result.manual_required == 1
+    # A deferral is not a refusal, so the next run without --defer-host requests the paper.
+    assert json.loads(result.acquisition_path.read_text(encoding="utf-8"))["access_refused"] is False
 
 
 def make_many(root: Path, count: int, publisher_host: str = "publisher.example") -> SelectionStore:
@@ -939,6 +951,40 @@ def test_entitlement_gaps_do_not_pause_the_host(tmp_path: Path) -> None:
 
     CorpusAcquisitionWorkflow(acquirer=acquirer).run(selection.manifest_path, tmp_path / "delivery")
     assert calls == ["paper-1", "paper-2", "paper-3"]
+
+
+def test_rerun_skips_only_papers_whose_access_was_refused(tmp_path: Path) -> None:
+    from acquire_research_papers.acquisition.adapters.ieee import IeeeBridgeError
+
+    selection = make_many(tmp_path / "selection", 3, publisher_host="ieeexplore.ieee.org")
+    delivery = tmp_path / "delivery"
+
+    def first(record, destination):
+        if record.key == "paper-1":
+            raise IeeeBridgeError("download-after-auth", "entitlement does not cover the item")
+        raise IeeeBridgeError("authentication-not-complete", "CAPTCHA or OTP required")
+
+    rows = _ledger(CorpusAcquisitionWorkflow(acquirer=first).run(selection.manifest_path, delivery))
+    # paper-2's login failure pauses the host, so paper-3 is not attempted at all.
+    assert [row["access_refused"] for row in rows] == [True, False, False]
+
+    calls: list[str] = []
+
+    def second(record, destination):
+        calls.append(record.key)
+        return delivered_outcome(record, destination)
+
+    result = CorpusAcquisitionWorkflow(acquirer=second).run(selection.manifest_path, delivery)
+    assert calls == ["paper-2", "paper-3"]
+    assert (result.delivered, result.manual_required, result.not_retried) == (2, 1, 1)
+    assert _ledger(result)[0]["message"] == (
+        "entitlement does not cover the item (IEEE phase: download-after-auth)")
+
+    calls.clear()
+    result = CorpusAcquisitionWorkflow(acquirer=second).run(
+        selection.manifest_path, delivery, retry_manual=True)
+    assert calls == ["paper-1"]
+    assert result.complete
 
 
 def test_consecutive_transient_failures_pause_and_success_resets_the_streak(tmp_path: Path) -> None:

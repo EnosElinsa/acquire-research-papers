@@ -35,6 +35,8 @@ _HOST_LABEL = re.compile(r"(?!-)[a-z0-9-]{1,63}(?<!-)\Z", re.IGNORECASE)
 _SELECTION_ID = re.compile(r"[0-9a-f]{8,64}\Z")
 IN_PROGRESS_STATE = "in_progress"
 INTERRUPTED_DIRECTORY = ".arp-interrupted"
+# Ledger flag: the last attempt ended access_required because this paper itself was refused.
+ACCESS_REFUSED = "access_refused"
 
 
 def normalized_state(outcome: Mapping[str, Any]) -> str:
@@ -507,6 +509,8 @@ class AcquisitionRunResult:
     retryable: int
     contract_error: int
     complete: bool
+    # manual_required papers kept from an earlier refusal instead of being requested again.
+    not_retried: int = 0
 
 
 def _write_acquisition_outputs(
@@ -516,6 +520,7 @@ def _write_acquisition_outputs(
     *,
     selection_sha256: str,
     selected_snapshot: bytes,
+    not_retried: int = 0,
 ) -> AcquisitionRunResult:
     """Write the final ledger, queues, inventory, and delivery manifest of one run."""
     acquisition_path = destination / "acquisition-manifest.jsonl"
@@ -594,6 +599,7 @@ def _write_acquisition_outputs(
         "selection_sha256": selection_sha256,
         "total": len(rows),
         **counts,
+        "not_retried": not_retried,
         "complete": complete,
         "acquisition_manifest": acquisition_path.name,
         "manual_download": manual_path.name if manual_path else None,
@@ -617,6 +623,7 @@ def _write_acquisition_outputs(
         retryable=counts["retryable"],
         contract_error=counts["contract_error"],
         complete=complete,
+        not_retried=not_retried,
     )
 
 
@@ -700,8 +707,10 @@ class CorpusAcquisitionWorkflow:
         output: Path,
         *,
         deferred_hosts: Iterable[str] = (),
+        retry_manual: bool = False,
     ) -> AcquisitionRunResult:
         deferred = _normalize_exact_hosts(deferred_hosts)
+        not_retried = 0
         selection = SelectionStore.load(selection_manifest)
         selected_snapshot = selection.selected_path.read_bytes()
         destination = output.resolve()
@@ -811,8 +820,15 @@ class CorpusAcquisitionWorkflow:
                 path.exists() for path in _expected_paths(record, destination).values()
             ):
                 raise _unverified_reserved_error(record, destination)
+            if not retry_manual and prior and prior.get(ACCESS_REFUSED) is True:
+                # The publisher or institution refused this paper last time; asking again would
+                # reopen a login or repeat the refusal. --retry-manual asks again.
+                rows.append(dict(prior))
+                not_retried += 1
+                continue
             publisher_host = _normalized_record_host(record)
             paused = guard.paused(publisher_host)
+            attempted = False
             if publisher_host in deferred:
                 outcome = {
                     "error_code": "access_required",
@@ -828,6 +844,7 @@ class CorpusAcquisitionWorkflow:
                 except Exception as exc:
                     outcome = failure_outcome(exc)
                 guard.record(publisher_host, outcome)
+                attempted = True
             if normalized_state(outcome) == "delivered":
                 row = _delivered_row(record, outcome, destination)
                 if row is None:
@@ -838,6 +855,13 @@ class CorpusAcquisitionWorkflow:
                     row = _failure_row(record, outcome)
             else:
                 row = _failure_row(record, outcome)
+                # Only a refusal of this paper is remembered. Deferral, a paused host, and an
+                # institution login failure (which pauses the host) are retried on rerun.
+                row[ACCESS_REFUSED] = (
+                    attempted
+                    and row["error_code"] == "access_required"
+                    and not outcome.get(PAUSE_HOST)
+                )
             if row["state"] != "delivered" and any(
                 path.exists() for path in _expected_paths(record, destination).values()
             ):
@@ -851,6 +875,7 @@ class CorpusAcquisitionWorkflow:
             rows,
             selection_sha256=selection_sha256,
             selected_snapshot=selected_snapshot,
+            not_retried=not_retried,
         )
 
 

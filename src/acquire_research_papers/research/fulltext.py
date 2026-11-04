@@ -68,6 +68,7 @@ class ResearchFullTextWorkflow:
         root: Path,
         *,
         deferred_hosts: tuple[str, ...] | list[str] = (),
+        retry_manual: bool = False,
     ) -> ResearchFullTextResult:
         destination = root.resolve()
         run = read_run_manifest(destination)
@@ -87,6 +88,7 @@ class ResearchFullTextWorkflow:
             selection_path,
             destination / "acquisition",
             deferred_hosts=deferred_hosts,
+            retry_manual=retry_manual,
         )
         acquisition_rows = {
             str(row.get("selection_id") or ""): row

@@ -30,6 +30,7 @@ from acquire_research_papers.acquisition.adapters.elsevier_api import (
     ElsevierSearchClient,
 )
 from acquire_research_papers.acquisition.adapters.sciencedirect import ScienceDirectAdapter
+from acquire_research_papers.acquisition.adapters.springer import SpringerLinkAdapter
 from acquire_research_papers.acquisition.base import AccessRequired, PageContractChanged, SourceAdapter
 from acquire_research_papers.acquisition.corpus import (
     CorpusAcquisitionWorkflow,
@@ -131,6 +132,9 @@ _IEEE_ACCESS_PHASES = IEEE_ACCESS_PHASES
 _PUBLISHER_RETRY = {"retries": 3, "backoff_seconds": 1.0}
 # Minimum spacing between two papers from the same publisher host in a batch.
 _PUBLISHER_INTERVAL_SECONDS = 2.0
+_RETRY_MANUAL_HELP = (
+    "request again papers whose publisher or institution refused access in an earlier run"
+)
 
 
 def _is_ieee_access_phase(phase: str) -> bool:
@@ -359,6 +363,7 @@ class Application:
         open_access = [adapter.for_production(**_PUBLISHER_RETRY)
                        for adapter in OPEN_ACCESS_ADAPTERS]
         sciencedirect = ScienceDirectAdapter.for_production()
+        springer = SpringerLinkAdapter.for_production(**_PUBLISHER_RETRY)
         from acquire_research_papers import configuration_commands
         manager = configuration_commands.credential_manager(paths, env_file=env_file)
         store = configuration_commands.store_for(paths, manager=manager)
@@ -420,7 +425,8 @@ class Application:
             repository_root=repository_root,
             registry=Registry(paths.registry),
             resolver=Resolver(
-                AdapterRouter.with_defaults([acl, ijcai, ieee, acm, sciencedirect, *open_access])
+                AdapterRouter.with_defaults(
+                    [acl, ijcai, ieee, acm, sciencedirect, springer, *open_access])
             ),
             corpus_discovery=CorpusDiscoveryWorkflow(
                 discoverer=coordinator.discover,
@@ -849,7 +855,24 @@ class Application:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="arp")
     parser.add_argument("--version", action="store_true")
+    parser.add_argument(
+        "--background",
+        type=Path,
+        metavar="JOB_DIR",
+        help="run a long fetch, manual-fetch, discover, or acquire command in its own process "
+        "and return at once; follow it with job status",
+    )
     subparsers = parser.add_subparsers(dest="command")
+    job = subparsers.add_parser("job", help="follow or stop a command started with --background")
+    job_modes = job.add_subparsers(dest="job_mode", required=True)
+    job_status = job_modes.add_parser("status", help="report progress and the final result")
+    job_status.add_argument("--job", type=Path, required=True)
+    job_status.add_argument("--wait", type=float, default=0.0,
+                            help="wait up to this many seconds for the job to end")
+    job_stop = job_modes.add_parser("stop", help="end the job at its next safe point")
+    job_stop.add_argument("--job", type=Path, required=True)
+    job_stop.add_argument("--force", action="store_true",
+                          help="kill the process now; a rerun of the command resumes")
     sources = subparsers.add_parser("sources", help="describe offline source capabilities and venue/year gaps")
     sources.add_argument("--spec", type=Path, help="validate and diagnose a corpus specification")
     from acquire_research_papers import configuration_commands, library_cli
@@ -961,6 +984,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         help="defer an exact publisher hostname to the manual-download queue (repeatable)",
     )
+    acquire_corpus.add_argument("--retry-manual", action="store_true", help=_RETRY_MANUAL_HELP)
     acquire_research = acquire_modes.add_parser(
         "research", help="acquire and parse a frozen closest-paper selection"
     )
@@ -978,6 +1002,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         help="defer an exact publisher hostname to the manual-download queue (repeatable)",
     )
+    acquire_research.add_argument("--retry-manual", action="store_true", help=_RETRY_MANUAL_HELP)
 
     evidence = subparsers.add_parser(
         "evidence", help="validate claim evidence against hash-bound full text"
@@ -1016,10 +1041,30 @@ def run_cli(
     application: Application | None = None,
     credential_status: Callable[[], Mapping[str, bool]] | None = None,
 ) -> int:
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
+    if raw_argv[:3] == ["job", "run", "--job"] and len(raw_argv) >= 5 and raw_argv[4] == "--":
+        # Internal: the body of a process started by --background.
+        from acquire_research_papers import jobs
+        return jobs.run(Path(raw_argv[3]), raw_argv[5:], runner=run_cli)
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.version:
         _emit({"name": "acquire-research-papers", "version": __version__})
+        return 0
+    if args.command == "job" or args.background is not None:
+        from acquire_research_papers import jobs
+        try:
+            if args.command == "job" and args.job_mode == "status":
+                result = jobs.status(args.job, wait_seconds=max(0.0, args.wait))
+            elif args.command == "job":
+                result = jobs.stop(args.job, force=args.force)
+            else:
+                result = jobs.start(args.background, args.command or "",
+                                    jobs.strip_background_option(raw_argv))
+        except (ValueError, OSError) as exc:
+            _emit({"status": "error", "error_code": "invalid_input", "message": str(exc)})
+            return 64
+        _emit(result)
         return 0
     from acquire_research_papers import configuration_commands
     from acquire_research_papers import capability_cli
@@ -1347,6 +1392,7 @@ def run_cli(
                     args.selection,
                     destination,
                     deferred_hosts=args.defer_host,
+                    retry_manual=args.retry_manual,
                 )
             except ValueError as exc:
                 raise AmbiguousInput(str(exc)) from exc
@@ -1363,6 +1409,7 @@ def run_cli(
                     "manual_required": result.manual_required,
                     "retryable": result.retryable,
                     "contract_error": result.contract_error,
+                    "not_retried": result.not_retried,
                     "complete": result.complete,
                 }
             )
@@ -1375,6 +1422,7 @@ def run_cli(
                 result = app.research_fulltext.run(
                     run_root,
                     deferred_hosts=args.defer_host,
+                    retry_manual=args.retry_manual,
                 )
             except ValueError as exc:
                 raise AmbiguousInput(str(exc)) from exc
@@ -1389,6 +1437,7 @@ def run_cli(
                     "pending": result.pending,
                     "acquisition_pending": result.acquisition_pending,
                     "parsing_pending": result.parsing_pending,
+                    "not_retried": result.acquisition.not_retried,
                 }
             )
             return 0
