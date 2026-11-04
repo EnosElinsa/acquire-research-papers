@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.11.0 — 2026-11-04
 
 - Built-in venue presets: a corpus spec can name a venue by its short name (`name: INFOCOM`, `name: IEEE TMC`) and receive an identifier checked live in November 2026: an ISSN for 19 IEEE journals (TMC, TWC, JSAC, IoT-J, TVT, TCOM, ToN, TNSE, COMST, Wireless Communications, Network, TPDS, TCC, TSC, T-ITS, TNSM, WCL, COMML, TAES) and AAAI, and an OpenAlex series for INFOCOM, ICC, GLOBECOM, WCNC, VTC, ICDCS, ICNP, IWQoS, SECON, and SIGCOMM. A preset applies only when the venue declares no identifier of its own and no different publisher; `preset: <id>` selects one explicitly and `preset: none` turns matching off. The applied preset is recorded in `request-spec.json`, and `arp sources` lists the presets with their evidence and shows the preset of each slice.
 - OpenAlex lag warning: when a finished `openalex-venue` slice holds under half the works of the previous year (and that year has at least 50), discovery adds a non-retryable `possible_upstream_lag` diagnostic, counts it as `coverage_warnings` in the output and manifest, and lists a `check_coverage` next action. The slice stays `complete`. Live: INFOCOM 2025 (25 works against 262 in 2024) is flagged.
