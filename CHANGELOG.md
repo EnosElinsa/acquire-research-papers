@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.0 — 2026-11-04
 
 - Corpus discovery enumerates three more official archives: the NeurIPS yearly listing (main track and, from 2022, Datasets and Benchmarks), PMLR volumes of ICML, AISTATS, COLT, UAI, CoRL, ALT, ACML, L4DC, and CLeaR (one official BibTeX file per volume, abstracts included), and CVF Open Access listings of CVPR, ICCV, and WACV, including pre-2021 per-day pages. Candidates carry the landing URL the acquisition adapters accept, so these venues now run end to end in batch mode, and Crossref skips any slice these indexes complete.
 - NeurIPS and CVF read paper pages with bounded concurrency; a resumed partial slice rereads only papers still missing. A paper failure costs that paper, not the slice. A CVPR or ICCV venue declared with `publisher: IEEE` keeps the IEEE route.
