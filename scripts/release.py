@@ -131,7 +131,8 @@ def bump(root: Path, new: str, *, today: str | None = None) -> dict:
     for relative, text in changes.items():  # nothing is written until every file checked out
         (root / relative).write_bytes(text.encode("utf-8"))
     return {"status": "bumped", "from": old, "to": new, "date": day, "replacements": counts,
-            "next_action": "Run the tests, then python scripts/release.py build."}
+            "next_action": "Run python scripts/release.py build, then the tests and "
+                           "validate_skill.py; runtime.json pins the new wheel only after build."}
 
 
 def _sha256(path: Path) -> str:
