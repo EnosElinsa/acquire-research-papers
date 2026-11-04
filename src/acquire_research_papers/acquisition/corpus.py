@@ -67,6 +67,8 @@ def _manual_page(rows: list[dict[str, Any]], selection_manifest: Path, destinati
     )
     command = (f'arp manual-fetch --selection "{selection_manifest}" --queue '
                f'--output "{destination}" --from "<folder with the downloads>"')
+    open_all = (f'arp manual-fetch --selection "{selection_manifest}" --queue '
+                f'--output "{destination}" --open-all')
     return f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><title>Manual downloads ({len(rows)})</title>
 <style>body{{font-family:system-ui,sans-serif;margin:2em}}table{{border-collapse:collapse}}
@@ -76,6 +78,9 @@ td,th{{border:1px solid #ccc;padding:.4em;vertical-align:top}}code{{font-size:.8
 <p>Open each title, sign in where needed, and download the official PDF and the publisher's raw
 BibTeX export into one folder. Then import them all at once:</p>
 <pre>{html.escape(command)}</pre>
+<p>Or let arp open the official pages of up to 30 papers at once and import each pair from your
+Downloads folder as soon as it arrives, in any order:</p>
+<pre>{html.escape(open_all)}</pre>
 <table><tr><th>#</th><th>Title (official page)</th><th>DOI</th><th>Publisher</th>
 <th>Reason</th><th>Delivered as</th></tr>
 {items}

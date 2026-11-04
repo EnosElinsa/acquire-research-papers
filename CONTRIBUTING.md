@@ -54,7 +54,17 @@ Release publishing is a separate explicitly authorized operation. Build and test
 
 Update both READMEs, CHANGELOG.md, the Python version, and the runtime manifest together. Run the full supported test matrix, build the final wheel/ZIP, then verify their hashes and a separate installed runtime. Build after any change to packaged source, helpers, schemas, or README metadata. The manifest itself is outside the CLI wheel, so updating its digest does not change that wheel.
 
-Publish only after the source commit is on `main` and CI is green. Tag that exact commit as `v<version>`. Upload the matching wheel, versioned thin-skill ZIP, and a `SHA256SUMS` file listing their hashes. Prepare release notes from the changelog with installation, migration, platform limits, and validation evidence. Never replace assets under an already published version; a correction to published runtime bytes needs a new version and digest.
+Publish only after the source commit is on `main` and CI is green. Tag that exact commit as `v<version>`. Upload the matching wheel, versioned thin-skill ZIP, and a `SHA256SUMS` file listing their hashes.
+
+`scripts/release.py` performs the mechanical steps; each prints one JSON object and stops at the first failed check:
+
+```text
+uv run python scripts/release.py bump <new-version> [--date YYYY-MM-DD]
+uv run python scripts/release.py build [--output <fresh-directory>]
+uv run python scripts/release.py publish --title "v<version> — <summary>" --notes-file <notes.md>
+```
+
+`bump` rewrites the version in `pyproject.toml`, `__init__.py`, the project entry of `uv.lock`, the release-pinned test fixtures, the release sections of both READMEs, and the `## Unreleased` CHANGELOG heading (to `## <version> — <date>`), and writes nothing if any file is not as expected. `build` builds into `dist/release-<version>` (which must not exist yet), refreshes `runtime.json`, rebuilds in a temporary directory to prove the wheel and ZIP byte-reproducible, and writes `SHA256SUMS` with LF lines. Then smoke-test the assets, commit and tag the release, and push `main` and the tag yourself. `publish` checks that the working tree is clean, that `origin` has `main` and the tag at `HEAD`, and that every `test` workflow run for that commit passed (`--skip-ci-check` overrides only this check); it then creates a draft release, uploads each asset with retries, checks the uploaded sizes, publishes the draft as latest, and downloads the assets again to compare hashes. A draft left by an interrupted `publish` is reused; an already published release is refused. Prepare release notes from the changelog with installation, migration, platform limits, and validation evidence. Never replace assets under an already published version; a correction to published runtime bytes needs a new version and digest.
 
 The `verify public release` workflow runs after publication on Linux, Windows, and macOS. It installs the tagged skill with the real Skills installer and bootstraps its public wheel URL with no local-wheel override. The workflow can also be dispatched against a named tag or branch. Verify the default-branch installation command as well, since that is the documented user path. GitHub source archives are developer downloads; the skill ZIP is the manual-install artifact.
 

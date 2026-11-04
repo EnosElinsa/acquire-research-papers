@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- `manual-fetch --queue --open-all` opens the official pages of the first 30 waiting papers at once, with a short pause between pages, so the user can work through the tabs in any order while the session imports each verified pair; later papers open in turn. `manual-download.html` shows this command. Browsers block a local page from opening many tabs with one click, so the page offers the command instead of a button.
+- Maintainers: `scripts/release.py` runs the release steps (`bump`, `build`, `publish`). It rewrites every version string all or nothing, proves the build reproducible and writes `SHA256SUMS`, checks that the release commit, tag, and CI are in place, uploads each asset with retries, publishes the draft, and compares the downloaded assets with the local build. See CONTRIBUTING.md.
+- The DPAPI credential test allows 180 s for Windows PowerShell to start; a CI runner once needed more than the previous 30 s.
+
 ## 0.12.0 — 2026-11-04
 
 - A rerun of `discover corpus` into the same output now looks up missing abstracts again while candidates are pending, through every configured enricher, including one a newly added API key enables; finished venue slices are not fetched again. Before, a run whose slices were all complete did nothing on rerun, so adding a key meant discovering into a new directory. Live: after an OpenAlex key was added, rerunning a key-less IEEE TMC 2024 run filled one of its two remaining abstracts without enumerating the venue through Crossref again.

@@ -17,6 +17,10 @@ from acquire_research_papers.bibliography import BibMissing
 from acquire_research_papers.cli import build_parser
 from acquire_research_papers.http import NetworkTransient
 
+# Windows PowerShell can take over 30 s to start on a busy CI runner (seen on
+# windows-latest/Python 3.11 at v0.12.0); the scripts themselves finish in about a second.
+POWERSHELL_TIMEOUT_SECONDS = 180
+
 
 def bridge_result(*, bibtex: str | None = None) -> IeeeBridgeResult:
     return IeeeBridgeResult(
@@ -237,7 +241,7 @@ def test_optional_dpapi_account_read_preserves_denial_and_corruption_errors(tmp_
     )
     subprocess.run(
         ["powershell", "-NoProfile", "-File", str(prepare), str(scripts), str(tmp_path)],
-        capture_output=True, text=True, check=True, timeout=30,
+        capture_output=True, text=True, check=True, timeout=POWERSHELL_TIMEOUT_SECONDS,
     )
     (tmp_path / "corrupt.clixml").write_text("invalid ciphertext", encoding="utf-8")
     encrypted = (tmp_path / "named.clixml").read_text(encoding="utf-16")
@@ -252,7 +256,7 @@ def test_optional_dpapi_account_read_preserves_denial_and_corruption_errors(tmp_
         return subprocess.run(
             ["powershell", "-NoProfile", "-File", str(reader), "-SecretPath",
              str(tmp_path / filename), "-ExpectedHost", host, *arguments],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, timeout=POWERSHELL_TIMEOUT_SECONDS,
         )
 
     for filename, extra in [

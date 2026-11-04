@@ -808,6 +808,7 @@ class Application:
         timeout_seconds: float,
         open_browser: bool,
         progress: Callable[[str], None],
+        open_all: bool = False,
     ) -> dict[str, Any]:
         """Import every manual-download item of a finished acquisition in one session."""
         if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
@@ -838,7 +839,8 @@ class Application:
             outcomes = session.import_folder(folder)
         else:
             outcomes = session.watch(
-                folder, timeout_seconds=timeout_seconds, open_browser=open_browser
+                folder, timeout_seconds=timeout_seconds, open_browser=open_browser,
+                open_all=open_all,
             )
         try:
             ledger = reconcile_manual_imports(selection_manifest, destination)
@@ -999,6 +1001,12 @@ def build_parser() -> argparse.ArgumentParser:
         dest="from_folder",
         type=Path,
         help="with --queue, import pairs already in this folder instead of watching for downloads",
+    )
+    manual_fetch.add_argument(
+        "--open-all",
+        action="store_true",
+        help="with --queue, open the official pages of the first 30 waiting papers at once "
+             "instead of one at a time, then import downloads in any order",
     )
 
     export_md = subparsers.add_parser(
@@ -1304,6 +1312,9 @@ def run_cli(
                 )
             if args.from_folder is not None and args.watch is not None:
                 raise AmbiguousInput("--from and --watch cannot be combined")
+            if args.open_all and (args.from_folder is not None or args.no_open):
+                raise AmbiguousInput("--open-all opens pages while watching; it cannot be "
+                                     "combined with --from or --no-open")
 
             def progress(line: str) -> None:
                 print(line, file=sys.stderr, flush=True)
@@ -1317,12 +1328,15 @@ def run_cli(
                     timeout_seconds=args.timeout,
                     open_browser=not args.no_open,
                     progress=progress,
+                    open_all=args.open_all,
                 )
             )
             return 0
         if args.command == "manual-fetch":
             if args.from_folder is not None:
                 raise AmbiguousInput("--from requires --queue")
+            if args.open_all:
+                raise AmbiguousInput("--open-all requires --queue")
             if (args.selection is None) != (args.key is None):
                 raise AmbiguousInput(
                     "manual-fetch requires either --input or both --selection and --key"

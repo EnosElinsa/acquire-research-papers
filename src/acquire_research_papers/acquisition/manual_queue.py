@@ -34,6 +34,9 @@ from acquire_research_papers.selection import SelectionRecord
 IMPORTED = "imported"
 WAITING = "waiting"
 AMBIGUOUS = "ambiguous"
+# open_all opens at most this many official pages up front; later papers open in turn.
+OPEN_ALL_LIMIT = 30
+OPEN_ALL_PAUSE_SECONDS = 0.3
 
 
 @dataclass(frozen=True)
@@ -110,8 +113,13 @@ class ManualQueueSession:
         *,
         timeout_seconds: float,
         open_browser: bool,
+        open_all: bool = False,
     ) -> list[QueueOutcome]:
-        """Prompt for each waiting paper in turn and import pairs as they arrive."""
+        """Prompt for each waiting paper in turn and import pairs as they arrive.
+
+        With ``open_all``, the official pages of the first ``OPEN_ALL_LIMIT`` waiting papers
+        open at once, so the user can download them in any order while the session watches.
+        """
         if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
             raise ValueError("manual download timeout must be positive")
         watcher = ManualDownloadWatcher(root)
@@ -123,12 +131,14 @@ class ManualQueueSession:
                 f"Watching {watcher.root} for new downloads; the {len(baseline)} PDF or BibTeX "
                 "files already there are ignored (import them with --from)."
             )
+        opened = self._open_all(watcher.root) if open_browser and open_all else set()
         try:
             for number, selection_id in enumerate(self._order, start=1):
                 paper = self._papers[selection_id]
                 if paper.status != WAITING:
                     continue
-                self._announce(number, total, paper, watcher.root, open_browser=open_browser)
+                self._announce(number, total, paper, watcher.root,
+                               open_browser=open_browser and selection_id not in opened)
                 deadline = self._monotonic() + timeout_seconds
                 while True:
                     self._match(self._stable_changes(watcher, baseline, observations))
@@ -280,15 +290,34 @@ class ManualQueueSession:
             f"[{number}/{total}] Download the official PDF and raw BibTeX of "
             f"\"{paper.record.title}\" from {url} into {root}"
         )
-        if not open_browser:
-            return
-        try:
-            opened = self._opener(url)
-        except (OSError, webbrowser.Error):
-            opened = False
-        if not opened:
+        if open_browser and not self._open(url):
             # One unopened page must not end the session for the remaining papers.
             self._progress(f"[{number}/{total}] Could not open a browser; open the page yourself.")
+
+    def _open(self, url: str) -> bool:
+        try:
+            return bool(self._opener(url))
+        except (OSError, webbrowser.Error):
+            return False
+
+    def _open_all(self, root: Path) -> set[str]:
+        waiting = self._waiting()
+        first = waiting[:OPEN_ALL_LIMIT]
+        opened: set[str] = set()
+        for index, paper in enumerate(first):
+            if index:
+                self._sleeper(OPEN_ALL_PAUSE_SECONDS)  # let the browser keep up
+            if self._open(paper.document.metadata.landing_url):
+                opened.add(paper.record.selection_id)
+        message = (f"Opened {len(opened)} of {len(waiting)} official pages; download each "
+                   f"paper's PDF and BibTeX into {root} in any order.")
+        if len(waiting) > len(first):
+            message += (f" The other {len(waiting) - len(first)} pages open one at a time as "
+                        "their turn comes.")
+        if len(opened) < len(first):
+            message += " Pages that did not open are tried again when their turn comes."
+        self._progress(message)
+        return opened
 
     @staticmethod
     def _missing_message(paper: _Paper, where: str) -> str:

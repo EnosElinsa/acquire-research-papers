@@ -1057,6 +1057,7 @@ def test_the_manual_queue_has_an_escaped_checklist_page_until_it_is_empty(tmp_pa
     assert '<a href="https://blocked.example/blocked-1"' in page
     assert "&lt;script&gt;" in page and "<script>" not in page
     assert "--queue" in page
+    assert "--open-all" in page
     assert json.loads(queued.manifest_path.read_text())["manual_download_page"] == (
         "manual-download.html")
 

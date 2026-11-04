@@ -9,6 +9,7 @@ from pypdf import PdfWriter
 
 from acquire_research_papers.acquisition.corpus import CorpusAcquisitionWorkflow
 from acquire_research_papers.acquisition.manual_handoff import ManualSelectionWorkflow
+from acquire_research_papers.acquisition import manual_queue
 from acquire_research_papers.acquisition.manual_queue import ManualQueueSession
 from acquire_research_papers.cli import Application, run_cli
 from acquire_research_papers.discovery.contracts import CandidateMetadata, VenueScope
@@ -288,3 +289,90 @@ def test_from_requires_queue(tmp_path, capsys):
     )
     assert exit_code == 64
     assert "--from requires --queue" in json.loads(capsys.readouterr().out)["message"]
+
+
+def open_all_session(records, downloads, arrivals, opened, progress, pauses):
+    """A session whose clock advances by sleeps; arrivals land once the clock passes a time."""
+    clock = {"now": 0.0}
+
+    def sleeper(seconds: float) -> None:
+        if seconds == manual_queue.OPEN_ALL_PAUSE_SECONDS:
+            pauses.append(seconds)
+        clock["now"] += seconds
+        for at in sorted(arrivals):
+            if clock["now"] >= at:
+                for writer, name, title in arrivals.pop(at):
+                    writer(downloads / name, title)
+
+    return ManualQueueSession(
+        records,
+        deliver=lambda record, selection: None,
+        opener=lambda url: opened.append(url) or True,
+        progress=progress.append,
+        monotonic=lambda: clock["now"],
+        sleeper=sleeper,
+    )
+
+
+def test_open_all_opens_every_page_first_and_imports_downloads_in_any_order(tmp_path):
+    records = make_selection(tmp_path / "selection").records
+    downloads = tmp_path / "downloads"
+    downloads.mkdir()
+    arrivals = {
+        5.0: [(write_pdf, "gamma.pdf", TITLES[2]), (write_bib, "gamma.bib", TITLES[2])],
+        9.0: [(write_pdf, "beta.pdf", TITLES[1]), (write_bib, "beta.bib", TITLES[1]),
+              (write_pdf, "alpha.pdf", TITLES[0]), (write_bib, "alpha.bib", TITLES[0])],
+    }
+    opened: list[str] = []
+    progress: list[str] = []
+    pauses: list[float] = []
+    session = open_all_session(records, downloads, arrivals, opened, progress, pauses)
+
+    outcomes = session.watch(downloads, timeout_seconds=60, open_browser=True, open_all=True)
+
+    assert opened == [record.official_url for record in records]
+    assert len(pauses) == 2
+    assert progress[0].startswith("Opened 3 of 3 official pages")
+    assert {outcome.status for outcome in outcomes} == {"imported"}
+
+
+def test_open_all_opens_at_most_the_limit_and_the_rest_in_turn(tmp_path, monkeypatch):
+    monkeypatch.setattr(manual_queue, "OPEN_ALL_LIMIT", 2)
+    records = make_selection(tmp_path / "selection").records
+    downloads = tmp_path / "downloads"
+    downloads.mkdir()
+    opened: list[str] = []
+    progress: list[str] = []
+    session = open_all_session(records, downloads, {}, opened, progress, [])
+
+    session.watch(downloads, timeout_seconds=5, open_browser=True, open_all=True)
+
+    assert opened == [record.official_url for record in records]
+    assert "Opened 2 of 3 official pages" in progress[0]
+    assert "The other 1 pages open one at a time" in progress[0]
+    assert sum("Download the official PDF" in line for line in progress) == 3
+
+
+@pytest.mark.parametrize("extra", [["--from", "{downloads}"], ["--no-open"]])
+def test_open_all_rejects_from_and_no_open(tmp_path, capsys, extra):
+    store, delivery = acquired(tmp_path)
+    downloads = tmp_path / "downloads"
+    downloads.mkdir()
+    exit_code = run_cli(
+        ["manual-fetch", "--selection", str(store.manifest_path), "--queue", "--open-all",
+         "--output", str(delivery), *(value.format(downloads=downloads) for value in extra)],
+        application=application(tmp_path),
+    )
+    assert exit_code == 64
+    assert "--open-all" in json.loads(capsys.readouterr().out)["message"]
+
+
+def test_open_all_requires_queue(tmp_path, capsys):
+    store, delivery = acquired(tmp_path)
+    exit_code = run_cli(
+        ["manual-fetch", "--selection", str(store.manifest_path), "--key",
+         store.records[0].selection_id, "--output", str(delivery), "--open-all"],
+        application=application(tmp_path),
+    )
+    assert exit_code == 64
+    assert "--open-all requires --queue" in json.loads(capsys.readouterr().out)["message"]
