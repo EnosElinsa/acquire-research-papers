@@ -661,3 +661,121 @@ def test_acquire_corpus_reconciles_verified_manual_pair_on_resume(tmp_path: Path
     imported = next(row for row in rows if row["selection_id"] == record.selection_id)
     assert imported["state"] == "delivered"
     assert imported["provenance_sha256"] == sha256_file(provenance)
+
+
+def test_acquire_corpus_resumes_after_an_interrupted_paper(tmp_path: Path) -> None:
+    from acquire_research_papers.legacy_runs import status as run_status
+
+    selection = make_selection(tmp_path / "selection")
+    output = tmp_path / "delivery"
+    blocked, available = selection.records
+
+    def interrupted(record, destination: Path):
+        if record.key == "blocked":
+            return delivered_outcome(record, destination)
+        partial = destination / record.relative_pdf
+        partial.parent.mkdir(parents=True, exist_ok=True)
+        partial.write_bytes(b"%PDF-partial")
+        raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        CorpusAcquisitionWorkflow(acquirer=interrupted).run(selection.manifest_path, output)
+
+    ledger = [
+        json.loads(line)
+        for line in (output / "acquisition-manifest.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert [(row["selection_id"], row["state"]) for row in ledger] == [
+        (blocked.selection_id, "delivered"),
+        (available.selection_id, "in_progress"),
+    ]
+    assert json.loads((output / "delivery-manifest.json").read_text())["status"] == "in_progress"
+    assert run_status(output)["steps"]["acquisition"]["next_actions"][0]["action"] == "resume"
+
+    calls: list[str] = []
+
+    def resume(record, destination: Path):
+        calls.append(record.key)
+        return delivered_outcome(record, destination)
+
+    result = CorpusAcquisitionWorkflow(acquirer=resume).run(selection.manifest_path, output)
+
+    assert result.complete
+    assert calls == ["available"]
+    quarantined = list((output / ".arp-interrupted" / available.selection_id).rglob("*"))
+    assert [path.read_bytes() for path in quarantined if path.is_file()] == [b"%PDF-partial"]
+    assert json.loads(result.manifest_path.read_text())["status"] == "delivered"
+
+
+def test_acquire_corpus_adopts_a_verified_delivery_missing_from_the_ledger(
+    tmp_path: Path,
+) -> None:
+    selection = make_selection(tmp_path / "selection")
+    output = tmp_path / "delivery"
+    titles = {record.official_url: record for record in selection.records}
+
+    class PublisherAdapter(SourceAdapter):
+        name = "publisher"
+        production_hosts = frozenset({"publisher.example"})
+
+        def resolve(self, value: str) -> SourceDocument:
+            record = titles[value]
+            return SourceDocument(
+                metadata=PaperMetadata(
+                    title=record.title,
+                    authors=("Ada Lovelace",),
+                    year=record.year,
+                    venue=record.venue,
+                    doi=record.doi,
+                    publisher="Invented Society",
+                    landing_url=value,
+                ),
+                pdf_url=value + ".pdf",
+                bibtex_url=value + ".bib",
+                allowed_hosts=frozenset({"publisher.example"}),
+            )
+
+        def acquire(self, document: SourceDocument) -> AcquiredPair:
+            metadata = document.metadata
+            return AcquiredPair(
+                document=document,
+                pdf_bytes=b"%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF\n",
+                bibtex_text=(
+                    f"@article{{k,title={{{metadata.title}}},author={{Lovelace, Ada}},"
+                    f"year={{{metadata.year}}},journal={{{metadata.venue}}},doi={{{metadata.doi}}}}}"
+                ),
+            )
+
+    application = Application.for_test(
+        app_root=tmp_path / "app",
+        repository_root=tmp_path / "repository",
+        adapter=PublisherAdapter(),
+    )
+    first = CorpusAcquisitionWorkflow(acquirer=application.acquire_selected).run(
+        selection.manifest_path, output
+    )
+    assert first.complete
+    # Simulate an older release that crashed before writing its end-of-run ledger.
+    (output / "acquisition-manifest.jsonl").unlink()
+
+    calls: list[str] = []
+    resumed = CorpusAcquisitionWorkflow(
+        acquirer=lambda record, _: calls.append(record.key) or {}
+    ).run(selection.manifest_path, output)
+
+    assert resumed.complete
+    assert calls == []
+
+
+def test_acquire_corpus_names_the_blocking_reserved_artifact(tmp_path: Path) -> None:
+    selection = make_selection(tmp_path / "selection")
+    output = tmp_path / "delivery"
+    CorpusAcquisitionWorkflow(
+        acquirer=lambda *_: {"error_code": "access_required", "message": "manual"}
+    ).run(selection.manifest_path, output)
+    reserved = output / selection.records[0].relative_pdf
+    reserved.parent.mkdir(parents=True, exist_ok=True)
+    reserved.write_bytes(b"unverified")
+
+    with pytest.raises(ValueError, match=r"Invented Society IV/1\.pdf"):
+        CorpusAcquisitionWorkflow(acquirer=lambda *_: {}).run(selection.manifest_path, output)

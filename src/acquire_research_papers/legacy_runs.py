@@ -71,15 +71,25 @@ def status(root: Path) -> dict:
                 current = "review_required"
             elif kind == "acquisition":
                 rows_path = _bound(root, value["acquisition_manifest"])
+                interrupted = value.get("status") == "in_progress"
                 rows = [json.loads(line) for line in rows_path.read_text(encoding="utf-8").splitlines()
-                        if line.strip()]
+                        if line.strip()] if rows_path.is_file() or not interrupted else []
                 identities = [row.get("selection_id") for row in rows]
-                if (len(rows) != value.get("total") or None in identities
-                        or len(set(identities)) != len(rows)):
+                if None in identities or len(set(identities)) != len(rows):
                     raise ValueError("acquisition manifest rows differ from frozen delivery")
-                for item_state in ("delivered", "manual_required", "retryable", "contract_error"):
-                    if sum(row.get("state") == item_state for row in rows) != value.get(item_state):
-                        raise ValueError("acquisition counts changed")
+                if interrupted:
+                    # The ledger is checkpointed per paper; counts are final only after a run ends.
+                    if len(rows) > int(value.get("total") or 0):
+                        raise ValueError("acquisition manifest rows differ from frozen delivery")
+                    current = "interrupted"
+                else:
+                    if len(rows) != value.get("total"):
+                        raise ValueError("acquisition manifest rows differ from frozen delivery")
+                    for item_state in ("delivered", "manual_required", "retryable",
+                                       "contract_error"):
+                        if sum(row.get("state") == item_state for row in rows) != value.get(
+                                item_state):
+                            raise ValueError("acquisition counts changed")
                 for row in rows:
                     if row.get("state") != "delivered":
                         continue

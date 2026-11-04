@@ -3,9 +3,11 @@ from __future__ import annotations
 import csv
 import io
 import json
+import os
 import re
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import quote, urlsplit
@@ -24,6 +26,9 @@ _MANUAL_CODES = frozenset(
 )
 _RETRYABLE_CODES = frozenset({"network_transient", "rate_limited"})
 _HOST_LABEL = re.compile(r"(?!-)[a-z0-9-]{1,63}(?<!-)\Z", re.IGNORECASE)
+_SELECTION_ID = re.compile(r"[0-9a-f]{8,64}\Z")
+IN_PROGRESS_STATE = "in_progress"
+INTERRUPTED_DIRECTORY = ".arp-interrupted"
 
 
 def normalized_state(outcome: Mapping[str, Any]) -> str:
@@ -267,6 +272,102 @@ def _verified_manual_import(
     }
 
 
+def _adopted_delivery(
+    record: SelectionRecord,
+    prior: Mapping[str, Any] | None,
+    root: Path,
+) -> dict[str, Any] | None:
+    """Recognise a complete pair delivered for this selection before its ledger row was saved."""
+    if prior and prior.get("state") == "delivered":
+        # A recorded delivery whose files no longer verify was changed after delivery.
+        return None
+    expected = _expected_paths(record, root)
+    if not all(path.is_file() for path in expected.values()):
+        return None
+    try:
+        provenance = json.loads(expected["provenance"].read_text(encoding="utf-8"))
+        validate_pdf(expected["pdf"])
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(provenance, dict) or provenance.get("selection_id") != record.selection_id:
+        return None
+    if provenance.get("acquisition_method") == "manual_publisher_download":
+        return _verified_manual_import(record, {"state": "manual_required"}, root)
+    metadata = provenance.get("metadata")
+    if not isinstance(metadata, dict):
+        return None
+    pdf_sha256 = sha256_file(expected["pdf"])
+    bibtex_sha256 = sha256_file(expected["bibtex"])
+    if (
+        provenance.get("pdf_sha256") != pdf_sha256
+        or provenance.get("bibtex_sha256") != bibtex_sha256
+    ):
+        return None
+    expected_doi = normalize_doi(record.doi)
+    delivered_doi = normalize_doi(metadata.get("doi"))
+    if expected_doi and delivered_doi and expected_doi != delivered_doi:
+        return None
+    return {
+        **_identity_row(record),
+        "state": "delivered",
+        "error_code": "",
+        "message": "",
+        **{kind: str(path) for kind, path in expected.items()},
+        "pdf_sha256": pdf_sha256,
+        "bibtex_sha256": bibtex_sha256,
+        "provenance_sha256": sha256_file(expected["provenance"]),
+    }
+
+
+def _quarantine_interrupted(record: SelectionRecord, root: Path) -> list[str]:
+    """Move leftovers of this run's own interrupted attempt aside; never delete them."""
+    expected = _expected_paths(record, root)
+    present = {kind: path for kind, path in expected.items() if path.exists()}
+    if not present:
+        return []
+    if not _SELECTION_ID.fullmatch(record.selection_id):
+        raise ValueError("selection ID cannot name an interruption folder")
+    resolved_root = root.resolve()
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+    target = resolved_root / INTERRUPTED_DIRECTORY / record.selection_id / stamp
+    target.mkdir(parents=True, exist_ok=False)
+    moved: list[str] = []
+    for kind, path in present.items():
+        destination = target / f"{kind}--{path.name}"
+        os.replace(path, destination)
+        moved.append(destination.relative_to(resolved_root).as_posix())
+    return moved
+
+
+def _in_progress_row(record: SelectionRecord) -> dict[str, Any]:
+    return {
+        **_identity_row(record),
+        "state": IN_PROGRESS_STATE,
+        "error_code": "",
+        "message": "acquisition started; an interruption leaves this row for resume",
+        "pdf": "",
+        "bibtex": "",
+        "provenance": "",
+        "pdf_sha256": "",
+        "bibtex_sha256": "",
+        "provenance_sha256": "",
+    }
+
+
+def _unverified_reserved_error(record: SelectionRecord, root: Path) -> ValueError:
+    resolved_root = root.resolve()
+    present = [
+        path.relative_to(resolved_root).as_posix()
+        for path in _expected_paths(record, root).values()
+        if path.exists()
+    ]
+    return ValueError(
+        "acquisition output contains an unverified reserved artifact: "
+        + ", ".join(present)
+        + "; move it out of the delivery root or complete it with manual-fetch --selection"
+    )
+
+
 def _delivered_row(
     record: SelectionRecord,
     outcome: Mapping[str, Any],
@@ -475,22 +576,49 @@ class CorpusAcquisitionWorkflow:
                 "existing acquisition output has an unreadable acquisition manifest"
             )
 
+        # The ledger is checkpointed after every paper so an interrupted run can resume.
+        _write_json_object(
+            manifest_path,
+            {
+                "schema_version": 1,
+                "phase": "acquisition",
+                "status": IN_PROGRESS_STATE,
+                "selection_sha256": selection_sha256,
+                "total": len(selection.records),
+                "acquisition_manifest": acquisition_path.name,
+                "selection_binding": binding_path.name,
+            },
+        )
+        order = [record.selection_id for record in selection.records]
+        ledger: dict[str, dict[str, Any]] = dict(previous)
+
+        def checkpoint(selection_id: str, row: dict[str, Any]) -> None:
+            ledger[selection_id] = row
+            atomic_write_bytes(
+                acquisition_path,
+                _jsonl([ledger[key] for key in order if key in ledger]),
+            )
+
         rows: list[dict[str, Any]] = []
         for record in selection.records:
             prior = previous.get(record.selection_id)
             if _verified_previous(record, prior, destination):
                 rows.append(dict(prior))
                 continue
-            manual_import = _verified_manual_import(record, prior, destination)
-            if manual_import is not None:
-                rows.append(manual_import)
+            settled = _verified_manual_import(record, prior, destination) or _adopted_delivery(
+                record, prior, destination
+            )
+            if settled is not None:
+                checkpoint(record.selection_id, settled)
+                rows.append(settled)
                 continue
+            if prior and prior.get("state") == IN_PROGRESS_STATE:
+                # Leftovers of this output's own interrupted attempt; keep them for inspection.
+                _quarantine_interrupted(record, destination)
             if any(
                 path.exists() for path in _expected_paths(record, destination).values()
             ):
-                raise ValueError(
-                    "acquisition output contains an unverified reserved artifact"
-                )
+                raise _unverified_reserved_error(record, destination)
             publisher_host = _normalized_record_host(record)
             if publisher_host in deferred:
                 outcome = {
@@ -498,6 +626,7 @@ class CorpusAcquisitionWorkflow:
                     "message": f"publisher host deferred for this run: {publisher_host}",
                 }
             else:
+                checkpoint(record.selection_id, _in_progress_row(record))
                 try:
                     outcome = self.acquirer(record, destination)
                 except Exception:
@@ -518,9 +647,8 @@ class CorpusAcquisitionWorkflow:
             if row["state"] != "delivered" and any(
                 path.exists() for path in _expected_paths(record, destination).values()
             ):
-                raise ValueError(
-                    "acquisition output contains an unverified reserved artifact"
-                )
+                raise _unverified_reserved_error(record, destination)
+            checkpoint(record.selection_id, row)
             rows.append(row)
 
         manual_rows = [row for row in rows if row["state"] == "manual_required"]

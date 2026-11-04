@@ -123,6 +123,7 @@ def atomic_write_bytes(
         if validator is not None:
             validator(partial)
         os.replace(partial, destination)
-    except Exception:
+    except BaseException:
+        # Includes KeyboardInterrupt so an interrupted write leaves no stray partial file.
         partial.unlink(missing_ok=True)
         raise
