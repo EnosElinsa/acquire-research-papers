@@ -129,23 +129,32 @@ def _chrome_installed() -> bool:
     return bool(shutil.which("google-chrome") or shutil.which("google-chrome-stable"))
 
 
+IEEE_UNSUPPORTED_PLATFORM_NOTE = (
+    "IEEE browser automation runs only on Windows, so on this machine IEEE papers are reported "
+    "as unsupported_adapter and join the manual-download queue. Download them from IEEE Xplore "
+    "and import them with manual-fetch, or acquire them on a Windows machine.")
+
+
 def _ieee_browser(paths: AppPaths) -> dict:
     """Local prerequisites of IEEE browser automation; no browser or network is started."""
-    from acquire_research_papers.acquisition.adapters.ieee import PLAYWRIGHT_VERSION
+    from acquire_research_papers.acquisition.adapters import ieee
     try:
         package = json.loads((paths.dependencies / "node_modules" / "playwright-core" /
                               "package.json").read_text(encoding="utf-8-sig"))
         installed = package.get("version") if isinstance(package, dict) else None
     except (OSError, ValueError):
         installed = None
-    checks = {"windows": os.name == "nt", "node": bool(shutil.which("node")),
-              "chrome": _chrome_installed(),
+    details = {"playwright_core": {"installed": installed, "pinned": ieee.PLAYWRIGHT_VERSION},
+               "dependency_root": str(paths.dependencies)}
+    if not ieee.browser_platform_supported():
+        # A platform limit is not something to install; the remaining checks would mislead.
+        return {"status": "unsupported_platform", "missing": [], **details}
+    checks = {"node": bool(shutil.which("node")), "chrome": _chrome_installed(),
               # npm is needed only to install the pinned Playwright package once.
-              "playwright_or_npm": installed == PLAYWRIGHT_VERSION or bool(shutil.which("npm"))}
+              "playwright_or_npm": installed == ieee.PLAYWRIGHT_VERSION or bool(shutil.which("npm"))}
     missing = [name for name, present in checks.items() if not present]
     return {"status": "ready" if not missing else "missing_prerequisites", "missing": missing,
-            "playwright_core": {"installed": installed, "pinned": PLAYWRIGHT_VERSION},
-            "dependency_root": str(paths.dependencies)}
+            **details}
 
 
 def _ieee_profile_configured(paths: AppPaths) -> bool:
@@ -211,11 +220,16 @@ def dispatch(args: argparse.Namespace) -> dict:
         actions.append("Reinstall the runtime with its bundled public schemas.")
     if report["configuration"]["status"] == "invalid":
         actions.append("Inspect configuration locally; do not paste its contents into chat.")
-    if report["ieee_browser"]["status"] != "ready" and _ieee_profile_configured(paths):
+    notes = []
+    if report["ieee_browser"]["status"] == "unsupported_platform":
+        # Informational: nothing on this machine can be fixed, so the status stays complete.
+        notes.append(IEEE_UNSUPPORTED_PLATFORM_NOTE)
+    elif report["ieee_browser"]["status"] != "ready" and _ieee_profile_configured(paths):
         # IEEE is optional; only a configured institution makes missing browser pieces actionable.
         actions.append("IEEE browser automation is missing: "
                        + ", ".join(report["ieee_browser"]["missing"])
                        + ". Install them or use manual-fetch for IEEE papers.")
     report["status"] = "attention_required" if actions else "local_checks_complete"
     report["next_actions"] = actions
+    report["notes"] = notes
     return report

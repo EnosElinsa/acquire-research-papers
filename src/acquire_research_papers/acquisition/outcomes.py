@@ -47,6 +47,8 @@ IEEE_LOGIN_PHASES = (IEEE_ACCESS_PHASES - {"download-after-auth", "access-requir
 # Unexpected browser failures (crash, closed context, busy profile) are worth one more run.
 IEEE_AUTOMATION_PHASES = frozenset({"automation", "profile-in-use"})
 IEEE_CONFIGURATION_PHASES = frozenset({"dependency-install"})
+# Outside Windows the browser adapter is unavailable, so the paper joins the manual queue.
+IEEE_UNSUPPORTED_PHASES = frozenset({"unsupported-platform"})
 
 # error_code -> CLI exit status (sysexits: 69 unavailable, 75 temporary, 78 configuration).
 EXIT_CODES = {
@@ -90,6 +92,8 @@ def failure_outcome(error: BaseException) -> dict[str, str]:
             code = "automation_error"
         elif error.phase in IEEE_CONFIGURATION_PHASES:
             code = "configuration_required"
+        elif error.phase in IEEE_UNSUPPORTED_PHASES:
+            code = "unsupported_adapter"
         else:
             code = "contract_error"
         outcome = {"error_code": code, "message": f"{error} (IEEE phase: {error.phase})"}

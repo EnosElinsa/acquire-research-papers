@@ -42,4 +42,4 @@ arp config setup openalex
 arp config status
 ```
 
-Prompts are interactive and non-echoing; `config edit` also supports local file editing. File credentials and core commands are portable; IEEE browser access and legacy DPAPI currently require Windows. Provider setup preserves other fields. See [credentials and cache](credentials-and-cache.md) for host boundaries, legacy compatibility helpers, and MinerU transport limits, and [host support](hosts.md) for diagnostic scope.
+Prompts are interactive and non-echoing; `config edit` also supports local file editing. File credentials and core commands are portable; IEEE browser access and legacy DPAPI currently require Windows, and elsewhere IEEE papers become manual-queue items. Provider setup preserves other fields. See [credentials and cache](credentials-and-cache.md) for host boundaries, legacy compatibility helpers, and MinerU transport limits, and [host support](hosts.md) for diagnostic scope.

@@ -39,6 +39,11 @@ def reuse_browser_enabled() -> bool:
     return os.environ.get("ARP_IEEE_REUSE_BROWSER", "1").strip() != "0"
 
 
+def browser_platform_supported() -> bool:
+    """The pinned Playwright installer and the tested browser flow are Windows-only."""
+    return os.name == "nt"
+
+
 class IeeeBridgeError(RuntimeError):
     def __init__(self, phase: str, message: str) -> None:
         super().__init__(message)
@@ -312,8 +317,13 @@ class IeeeBridge:
     def _ensure_dependency(self) -> None:
         if self._dependency_ready():
             return
-        if os.name != "nt":
-            raise IeeeBridgeError("dependency-install", "IEEE browser installation is currently verified on Windows only")
+        if not browser_platform_supported():
+            # On other systems the paper is a manual download, not a local configuration problem.
+            raise IeeeBridgeError(
+                "unsupported-platform",
+                "IEEE browser automation runs only on Windows; download this paper from its "
+                "IEEE Xplore page and import it with manual-fetch",
+            )
         process = subprocess.run(
             [
                 "powershell",

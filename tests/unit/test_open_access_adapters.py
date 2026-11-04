@@ -229,6 +229,9 @@ def test_known_archive_aliases_are_canonicalized_without_a_request() -> None:
     assert canonical_landing_url("http://proceedings.mlr.press/v97/abbati19a.html") == (
         "https://proceedings.mlr.press/v97/abbati19a.html")
     assert canonical_landing_url("http://example.org/paper") == "http://example.org/paper"
+    # doi.org sends older IEEE DOIs to plain HTTP; the IEEE adapter accepts only HTTPS.
+    assert canonical_landing_url("http://ieeexplore.ieee.org/document/7780459/") == (
+        "https://ieeexplore.ieee.org/document/7780459/")
 
 
 def test_source_catalog_lists_open_access_acquisition() -> None:

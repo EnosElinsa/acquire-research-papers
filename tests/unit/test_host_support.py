@@ -6,6 +6,8 @@ import subprocess
 
 import pytest
 
+from acquire_research_papers.acquisition.adapters import ieee
+
 
 def subject():
     from acquire_research_papers import host_support
@@ -69,11 +71,12 @@ def test_doctor_reports_ieee_browser_prerequisites_without_starting_them(tmp_pat
     monkeypatch.setattr(module.subprocess, "run", lambda *a, **k: pytest.fail("unexpected process"))
     monkeypatch.setattr(module.shutil, "which", lambda name: None)
     monkeypatch.setattr(module, "_chrome_installed", lambda: False)
+    monkeypatch.setattr(ieee, "browser_platform_supported", lambda: True)
     report = module.dispatch(arguments("doctor", "--host", "kiro-cli", "--skill-directory",
                                        str(skill(tmp_path))))
     browser = report["ieee_browser"]
     assert browser["status"] == "missing_prerequisites"
-    assert {"node", "chrome", "playwright_or_npm"} <= set(browser["missing"])
+    assert set(browser["missing"]) == {"node", "chrome", "playwright_or_npm"}
     assert browser["playwright_core"]["installed"] is None
     # IEEE is optional: without a configured institution this is not an attention item.
     assert not any("IEEE" in action for action in report["next_actions"])
@@ -85,6 +88,50 @@ def test_doctor_reports_ieee_browser_prerequisites_without_starting_them(tmp_pat
     report = module.dispatch(arguments("doctor", "--host", "kiro-cli", "--skill-directory",
                                        str(tmp_path / "skill")))
     assert any("IEEE browser automation is missing" in action for action in report["next_actions"])
+
+
+def test_doctor_reports_a_platform_limit_as_a_note_not_an_install_action(tmp_path, monkeypatch):
+    module = subject()
+    monkeypatch.setenv("ARP_CONFIG_ROOT", str(tmp_path / "config"))
+    monkeypatch.setenv("ARP_DATA_ROOT", str(tmp_path / "data"))
+    monkeypatch.setattr(module.subprocess, "run", lambda *a, **k: pytest.fail("unexpected process"))
+    monkeypatch.setattr(module, "_chrome_installed", lambda: False)
+    monkeypatch.setattr(ieee, "browser_platform_supported", lambda: False)
+    from acquire_research_papers.institution_profiles import InstitutionStore
+    InstitutionStore(tmp_path / "config" / "institutions").save(
+        {"schema_version": 2, "id": "campus", "organization": "Example", "mode": "assisted",
+         "entry_url": "https://library.example.edu/"})
+    from acquire_research_papers import __version__
+    installed = skill(tmp_path)
+    manifest = json.loads((installed / "runtime.json").read_text())
+    (installed / "runtime.json").write_text(json.dumps({**manifest, "version": __version__}))
+
+    report = module.dispatch(arguments("doctor", "--host", "codex", "--skill-directory",
+                                       str(installed)))
+
+    assert report["ieee_browser"]["status"] == "unsupported_platform"
+    assert report["ieee_browser"]["missing"] == []
+    assert report["status"] == "local_checks_complete"
+    assert not any("IEEE" in action for action in report["next_actions"])
+    assert any("runs only on Windows" in note and "manual-fetch" in note
+               for note in report["notes"])
+
+
+def test_ieee_outside_windows_is_a_manual_download_not_a_configuration_error(tmp_path, monkeypatch):
+    from acquire_research_papers.acquisition.adapters.ieee import IeeeBridge, IeeeBridgeError
+    from acquire_research_papers.acquisition.outcomes import failure_outcome
+    monkeypatch.setattr(ieee, "browser_platform_supported", lambda: False)
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: pytest.fail("unexpected installer"))
+    bridge = IeeeBridge(script=tmp_path / "ieee-playwright.mjs", profile_root=tmp_path / "profiles",
+                        dependency_root=tmp_path / "deps", work_root=tmp_path / "runs",
+                        secret_path=tmp_path / "secrets")
+
+    with pytest.raises(IeeeBridgeError) as raised:
+        bridge.retrieve("https://ieeexplore.ieee.org/document/1")
+
+    outcome = failure_outcome(raised.value)
+    assert outcome["error_code"] == "unsupported_adapter"
+    assert "manual-fetch" in outcome["message"]
 
 
 def test_doctor_reports_config_presence_without_secret_values(tmp_path, monkeypatch):

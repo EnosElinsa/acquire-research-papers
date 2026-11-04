@@ -35,8 +35,9 @@ _LINKINGHUB_PII = re.compile(r"/retrieve/pii/([A-Za-z0-9]+)/?")
 # the same abstract page as the canonical /paper_files/paper/<year>/hash/ path.
 _NEURIPS_HOSTS = frozenset({"papers.nips.cc", "proceedings.neurips.cc"})
 _NEURIPS_LEGACY_PATH = re.compile(r"/paper/((?:19|20)\d{2})/hash/([0-9a-f]{32}-Abstract[^/]*\.html)")
+# doi.org still registers plain-HTTP targets for many older IEEE DOIs (e.g. 10.1109/CVPR.2016.90).
 _HTTPS_ONLY_HOSTS = frozenset({"ojs.aaai.org", "proceedings.mlr.press", "openaccess.thecvf.com",
-                               *_NEURIPS_HOSTS})
+                               "ieeexplore.ieee.org", *_NEURIPS_HOSTS})
 
 
 def canonical_landing_url(url: str) -> str:
