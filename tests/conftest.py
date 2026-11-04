@@ -32,6 +32,35 @@ class FixtureServer:
         self.server.expect_request(path).respond_with_data(value, content_type=content_type)
 
 
+_REAL_ENVIRONMENT_VARIABLES = (
+    "ARP_CONFIG_ROOT",
+    "ARP_DATA_ROOT",
+    "ARP_RUNTIME_ROOT",
+    "ARP_ENV_FILE",
+    "ARP_LOCAL_WHEEL",
+    "SEMANTIC_SCHOLAR_API_KEY",
+    "OPENALEX_API_KEY",
+    "ELSEVIER_API_KEY",
+    "MINERU_TOKEN",
+)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_user_state(tmp_path_factory: pytest.TempPathFactory, monkeypatch) -> None:
+    """Keep every test away from the developer's real configuration, data, and keys."""
+    from acquire_research_papers import paths
+
+    home = tmp_path_factory.mktemp("arp-home")
+    for name in _REAL_ENVIRONMENT_VARIABLES:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("ARP_DATA_ROOT", str(home / "data"))
+    monkeypatch.setenv("ARP_RUNTIME_ROOT", str(home / "runtime"))
+    monkeypatch.setattr(paths, "user_config_dir",
+                        lambda name, appauthor=False: str(home / "platform-config" / name))
+    monkeypatch.setattr(paths, "user_data_dir",
+                        lambda name, appauthor=False: str(home / "platform-data" / name))
+
+
 @pytest.fixture
 def fixture_server(httpserver: HTTPServer) -> FixtureServer:
     return FixtureServer(httpserver)

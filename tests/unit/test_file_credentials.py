@@ -136,6 +136,14 @@ def test_config_and_data_roots_are_isolated_and_legacy_layout_retained(tmp_path,
     from acquire_research_papers.paths import ConfigPaths
     assert ConfigPaths.for_root(tmp_path).env_file == tmp_path / '.env'
 
+
+def test_explicit_root_is_never_redirected_by_the_environment(tmp_path, monkeypatch):
+    # A developer's ARP_CONFIG_ROOT must not redirect test or tool roots to real credentials.
+    monkeypatch.setenv('ARP_CONFIG_ROOT', str(tmp_path / 'real-user-config'))
+    assert AppPaths.for_root(tmp_path / 'isolated').config == tmp_path / 'isolated' / 'config'
+    chosen = tmp_path / 'chosen-config'
+    assert AppPaths.for_root(tmp_path / 'isolated', config_root=chosen).config == chosen
+
 def test_profile_file_reference_rejects_cross_profile_or_arbitrary_path(tmp_path):
     credentials = manager(tmp_path)
     profile = {'id':'campus', 'credential_ref':'ieee_profiles:campus',
