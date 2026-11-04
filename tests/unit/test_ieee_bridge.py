@@ -411,6 +411,7 @@ def test_session_timeout_kills_the_browser_and_is_retryable(tmp_path, monkeypatc
     assert bridge._session is None
 
 
+@pytest.mark.skipif(os.name != "nt", reason="the pinned Playwright installer runs only on Windows")
 def test_installer_receives_the_selected_data_root(tmp_path, monkeypatch):
     calls = []
 
@@ -425,7 +426,6 @@ def test_installer_receives_the_selected_data_root(tmp_path, monkeypatch):
         data_root=tmp_path / "data",
     )
     monkeypatch.setattr(subprocess, "run", run)
-    monkeypatch.setattr(os, "name", "nt")
     with pytest.raises(IeeeBridgeError):
         bridge._ensure_dependency()
     assert calls[0][-2:] == ["-DataRoot", str((tmp_path / "data").resolve())]
