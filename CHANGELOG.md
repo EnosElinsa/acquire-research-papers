@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.13.0 — 2026-11-04
 
 - `manual-fetch --queue --open-all` opens the official pages of the first 30 waiting papers at once, with a short pause between pages, so the user can work through the tabs in any order while the session imports each verified pair; later papers open in turn. `manual-download.html` shows this command. Browsers block a local page from opening many tabs with one click, so the page offers the command instead of a button.
 - Maintainers: `scripts/release.py` runs the release steps (`bump`, `build`, `publish`). It rewrites every version string all or nothing, proves the build reproducible and writes `SHA256SUMS`, checks that the release commit, tag, and CI are in place, uploads each asset with retries, publishes the draft, and compares the downloaded assets with the local build. See CONTRIBUTING.md.
