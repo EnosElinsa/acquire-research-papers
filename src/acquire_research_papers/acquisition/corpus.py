@@ -509,6 +509,117 @@ class AcquisitionRunResult:
     complete: bool
 
 
+def _write_acquisition_outputs(
+    destination: Path,
+    selection: SelectionStore,
+    rows: list[dict[str, Any]],
+    *,
+    selection_sha256: str,
+    selected_snapshot: bytes,
+) -> AcquisitionRunResult:
+    """Write the final ledger, queues, inventory, and delivery manifest of one run."""
+    acquisition_path = destination / "acquisition-manifest.jsonl"
+    manifest_path = destination / "delivery-manifest.json"
+    binding_path = destination / "selection-binding.json"
+    manual_rows = [row for row in rows if row["state"] == "manual_required"]
+    retryable_rows = [row for row in rows if row["state"] == "retryable"]
+    atomic_write_bytes(acquisition_path, _jsonl(rows))
+
+    identity_fields = [
+        "selection_id",
+        "ordinal",
+        "title",
+        "doi",
+        "official_url",
+        "publisher",
+    ]
+    manual_path = destination / "manual-download.csv"
+    _write_csv(
+        manual_path,
+        [*identity_fields, "reason", "message", "target_pdf", "target_bibtex"],
+        [
+            {
+                **row,
+                "reason": row["error_code"],
+            }
+            for row in manual_rows
+        ],
+    )
+    retryable_path = destination / "retryable-downloads.csv"
+    _write_csv(
+        retryable_path,
+        [*identity_fields, "reason", "message"],
+        [{**row, "reason": row["error_code"]} for row in retryable_rows],
+    )
+    if not manual_rows:
+        manual_path.unlink(missing_ok=True)
+        manual_path = None
+    if not retryable_rows:
+        retryable_path.unlink(missing_ok=True)
+        retryable_path = None
+    paper_manifest_path = destination / "paper-manifest.csv"
+    _write_csv(
+        paper_manifest_path,
+        [
+            "folder",
+            "number",
+            "title",
+            "year",
+            "venue",
+            "doi",
+            "official_landing_url",
+            "official_pdf_url",
+            "official_bibtex_url",
+            "keywords",
+            "state",
+            "pdf",
+            "bibtex",
+        ],
+        [
+            _paper_manifest_row(record, row)
+            for record, row in zip(selection.records, rows, strict=True)
+        ],
+    )
+
+    counts = {
+        state: sum(row["state"] == state for row in rows)
+        for state in ("delivered", "manual_required", "retryable", "contract_error")
+    }
+    complete = counts["delivered"] == len(rows)
+    status = "delivered" if complete else "partial"
+    manifest = {
+        "schema_version": 1,
+        "phase": "acquisition",
+        "status": status,
+        "selection_sha256": selection_sha256,
+        "total": len(rows),
+        **counts,
+        "complete": complete,
+        "acquisition_manifest": acquisition_path.name,
+        "manual_download": manual_path.name if manual_path else None,
+        "retryable_downloads": retryable_path.name if retryable_path else None,
+        "paper_manifest": paper_manifest_path.name,
+        "selection_binding": binding_path.name,
+    }
+    _write_json_object(manifest_path, manifest)
+    if selection.selected_path.read_bytes() != selected_snapshot:
+        raise ValueError("frozen selection changed during acquisition")
+    return AcquisitionRunResult(
+        status=status,
+        acquisition_path=acquisition_path,
+        manual_download_path=manual_path,
+        retryable_path=retryable_path,
+        paper_manifest_path=paper_manifest_path,
+        manifest_path=manifest_path,
+        total=len(rows),
+        delivered=counts["delivered"],
+        manual_required=counts["manual_required"],
+        retryable=counts["retryable"],
+        contract_error=counts["contract_error"],
+        complete=complete,
+    )
+
+
 class _HostGuard:
     """Space requests per publisher host and stop contacting a host that keeps failing."""
 
@@ -734,100 +845,95 @@ class CorpusAcquisitionWorkflow:
             checkpoint(record.selection_id, row)
             rows.append(row)
 
-        manual_rows = [row for row in rows if row["state"] == "manual_required"]
-        retryable_rows = [row for row in rows if row["state"] == "retryable"]
-        atomic_write_bytes(acquisition_path, _jsonl(rows))
-
-        identity_fields = [
-            "selection_id",
-            "ordinal",
-            "title",
-            "doi",
-            "official_url",
-            "publisher",
-        ]
-        manual_path = destination / "manual-download.csv"
-        _write_csv(
-            manual_path,
-            [*identity_fields, "reason", "message", "target_pdf", "target_bibtex"],
-            [
-                {
-                    **row,
-                    "reason": row["error_code"],
-                }
-                for row in manual_rows
-            ],
-        )
-        retryable_path = destination / "retryable-downloads.csv"
-        _write_csv(
-            retryable_path,
-            [*identity_fields, "reason", "message"],
-            [{**row, "reason": row["error_code"]} for row in retryable_rows],
-        )
-        if not manual_rows:
-            manual_path.unlink(missing_ok=True)
-            manual_path = None
-        if not retryable_rows:
-            retryable_path.unlink(missing_ok=True)
-            retryable_path = None
-        paper_manifest_path = destination / "paper-manifest.csv"
-        _write_csv(
-            paper_manifest_path,
-            [
-                "folder",
-                "number",
-                "title",
-                "year",
-                "venue",
-                "doi",
-                "official_landing_url",
-                "official_pdf_url",
-                "official_bibtex_url",
-                "keywords",
-                "state",
-                "pdf",
-                "bibtex",
-            ],
-            [
-                _paper_manifest_row(record, row)
-                for record, row in zip(selection.records, rows, strict=True)
-            ],
+        return _write_acquisition_outputs(
+            destination,
+            selection,
+            rows,
+            selection_sha256=selection_sha256,
+            selected_snapshot=selected_snapshot,
         )
 
-        counts = {
-            state: sum(row["state"] == state for row in rows)
-            for state in ("delivered", "manual_required", "retryable", "contract_error")
-        }
-        complete = counts["delivered"] == len(rows)
-        status = "delivered" if complete else "partial"
-        manifest = {
-            "schema_version": 1,
-            "phase": "acquisition",
-            "status": status,
-            "selection_sha256": selection_sha256,
-            "total": len(rows),
-            **counts,
-            "complete": complete,
-            "acquisition_manifest": acquisition_path.name,
-            "manual_download": manual_path.name if manual_path else None,
-            "retryable_downloads": retryable_path.name if retryable_path else None,
-            "paper_manifest": paper_manifest_path.name,
-            "selection_binding": binding_path.name,
-        }
-        _write_json_object(manifest_path, manifest)
-        if selection.selected_path.read_bytes() != selected_snapshot:
-            raise ValueError("frozen selection changed during acquisition")
-        return AcquisitionRunResult(
-            status=status,
-            acquisition_path=acquisition_path,
-            manual_download_path=manual_path,
-            retryable_path=retryable_path,
-            paper_manifest_path=paper_manifest_path,
-            manifest_path=manifest_path,
-            total=len(rows),
-            delivered=counts["delivered"],
-            manual_required=counts["manual_required"],
-            retryable=counts["retryable"],
-            contract_error=counts["contract_error"],
-            complete=complete,
+
+@dataclass(frozen=True)
+class ManualQueue:
+    """Manual-download items of one finished acquisition output, in selection order."""
+
+    destination: Path
+    waiting: tuple[SelectionRecord, ...]
+    already_imported: tuple[SelectionRecord, ...]
+
+
+def _finished_ledger(selection: SelectionStore, destination: Path) -> dict[str, dict[str, Any]]:
+    manifest_path = destination / "delivery-manifest.json"
+    binding_path = destination / "selection-binding.json"
+    if not manifest_path.is_file() or not binding_path.is_file():
+        raise ValueError(
+            "no acquisition output for this selection; run acquire with this selection and "
+            "output first"
         )
+    selection_sha256 = str(selection.manifest["selected_sha256"])
+    manifest = _read_json_object(manifest_path, "delivery manifest")
+    binding = _read_json_object(binding_path, "selection binding")
+    if (
+        manifest.get("schema_version") != 1
+        or manifest.get("phase") != "acquisition"
+        or binding.get("schema_version") != 1
+        or binding.get("phase") != "acquisition_binding"
+    ):
+        raise ValueError("existing acquisition output has an unreadable delivery manifest")
+    if (
+        manifest.get("selection_sha256") != selection_sha256
+        or binding.get("selection_sha256") != selection_sha256
+    ):
+        raise ValueError("acquisition output belongs to a different frozen selection")
+    if manifest.get("status") == IN_PROGRESS_STATE:
+        raise ValueError(
+            "acquisition was interrupted; rerun acquire with the same output before "
+            "importing its manual-download queue"
+        )
+    previous = _read_previous(destination / "acquisition-manifest.jsonl")
+    if set(previous) != {record.selection_id for record in selection.records}:
+        raise ValueError("existing acquisition output has an unreadable acquisition manifest")
+    return previous
+
+
+def load_manual_queue(selection_manifest: Path, output: Path) -> ManualQueue:
+    """Read the manual-download items of a finished acquisition without changing it."""
+    selection = SelectionStore.load(selection_manifest)
+    destination = output.resolve()
+    ledger = _finished_ledger(selection, destination)
+    waiting: list[SelectionRecord] = []
+    imported: list[SelectionRecord] = []
+    for record in selection.records:
+        row = ledger[record.selection_id]
+        if row.get("state") != "manual_required":
+            continue
+        present = [path for path in _expected_paths(record, destination).values() if path.exists()]
+        if not present:
+            waiting.append(record)
+        elif _verified_manual_import(record, row, destination) is not None:
+            imported.append(record)
+        else:
+            raise _unverified_reserved_error(record, destination)
+    return ManualQueue(destination, tuple(waiting), tuple(imported))
+
+
+def reconcile_manual_imports(selection_manifest: Path, output: Path) -> AcquisitionRunResult:
+    """Record verified manual imports in the ledger and queues; contact no publisher."""
+    selection = SelectionStore.load(selection_manifest)
+    selected_snapshot = selection.selected_path.read_bytes()
+    destination = output.resolve()
+    ledger = _finished_ledger(selection, destination)
+    rows: list[dict[str, Any]] = []
+    for record in selection.records:
+        row = dict(ledger[record.selection_id])
+        if row.get("state") == "manual_required":
+            row = _verified_manual_import(record, row, destination) or row
+        rows.append(row)
+    return _write_acquisition_outputs(
+        destination,
+        selection,
+        rows,
+        selection_sha256=str(selection.manifest["selected_sha256"]),
+        selected_snapshot=selected_snapshot,
+    )

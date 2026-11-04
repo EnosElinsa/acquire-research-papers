@@ -12,6 +12,6 @@ Between discovery and review, the executing agent must inspect `evidence-packets
 
 Expected output: coverage records, immutable evidence packets, reviewed candidates, a frozen selection, verified official pairs, and manual/retry queues. Discovery performs no acquisition.
 
-Recovery: rerun discovery with the same spec and directory to retry partial slices, then import decisions and acquire from the same manifest. For a manual item, run `arp manual-fetch --selection <work>/discovery/selection-manifest.json --key <selection-id> --output <delivery> --watch <downloads>`, then rerun acquisition. Use a new run for changed scope or hashes; do not edit the frozen list.
+Recovery: rerun discovery with the same spec and directory to retry partial slices, then import decisions and acquire from the same manifest. For the manual items, run `arp manual-fetch --selection <work>/discovery/selection-manifest.json --queue --output <delivery> --watch <downloads>` once; it opens each page in turn, imports pairs as they arrive, and updates the queue. Use `--key <selection-id>` for a single item. Use a new run for changed scope or hashes; do not edit the frozen list.
 
 Limits: metadata-provider coverage is bounded and failures remain visible. Do not lower relevance thresholds or remove inaccessible records to fill a quota. See [corpus mode](../references/corpus-mode.md).

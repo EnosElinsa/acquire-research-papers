@@ -102,13 +102,22 @@ It also writes `manual-download.csv`, `retryable-downloads.csv`, and `delivery-m
 
 `candidates.jsonl` is an auditable candidate ledger, not a citation library. `pending-metadata.csv` contains discovery evidence gaps. `pending-review.csv` contains unresolved semantic decisions after import; acquisition failures never enter it. `manual-download.csv` contains only frozen selections that the user can retrieve from the official page after automated acquisition finishes.
 
-Import a manual pair with the immutable selection identity:
+Import the whole manual queue in one session after acquisition finishes:
+
+```text
+arp manual-fetch --selection <discovery-run>/selection-manifest.json --queue --output <delivery-root> --watch <download-directory>
+arp manual-fetch --selection <discovery-run>/selection-manifest.json --queue --output <delivery-root> --from <folder-with-downloads>
+```
+
+With `--watch` (default: the user's Downloads folder), the session opens each queued paper's official page in turn and prints which paper to download. Files that exist before the session starts are ignored. The user may download in any order: every new stable file is checked against every waiting paper, and a paper is imported once exactly one verified PDF and one verified raw BibTeX identify it. After `--timeout` seconds (default 900) without a pair, the session moves to the next paper; files for a skipped paper that arrive later in the session still count. Ctrl+C ends the session. With `--from`, the session imports pairs already in that folder and does not wait or open pages. A file that identifies more than one queued paper is never assigned, and two distinct valid files for one paper leave it `ambiguous`; import such a paper with `--key`. The session then updates `acquisition-manifest.jsonl`, `manual-download.csv`, `paper-manifest.csv`, and `delivery-manifest.json` without contacting any publisher, and reports per paper `imported`, `already_imported`, `waiting`, or `ambiguous` with the reason. The command can take as long as the user needs; run it where it is not cut off by a short command timeout. Rerunning it continues with the papers still waiting.
+
+Import one manual pair with the immutable selection identity:
 
 ```text
 arp manual-fetch --selection <discovery-run>/selection-manifest.json --key <selection-id> --output <delivery-root> --watch <download-directory>
 ```
 
-This mode trusts neither editable CSV values nor filenames. It verifies the frozen list, official identity, PDF, and raw publisher BibTeX before filling the reserved paths. Do not add a source-specific shortcut.
+Both modes trust neither editable CSV values nor filenames. They verify the frozen list, official identity, PDF, and raw publisher BibTeX before filling the reserved paths. Do not add a source-specific shortcut.
 
 ## Output lifecycle
 

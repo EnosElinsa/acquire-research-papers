@@ -69,7 +69,7 @@ python "$skill/scripts/arp.py" --help
 python "$skill/scripts/arp.py" config status
 ```
 
-The standard-library launcher reads `runtime.json`, downloads the fixed release wheel, verifies SHA-256, and installs it with uv into a separate cache. It never needs a developer checkout or installs development tools into the skill. File configuration and core commands support Windows/macOS/Linux. Current IEEE browser access and legacy DPAPI require Windows, PowerShell, and Node.js; live institutional access needs a separate check.
+The standard-library launcher reads `runtime.json`, downloads the fixed release wheel, verifies SHA-256, and installs it with uv into a separate cache. It never needs a developer checkout or installs development tools into the skill. File configuration and core commands support Windows/macOS/Linux. Current IEEE browser access and legacy DPAPI require Windows, PowerShell, and Node.js; on macOS and Linux, IEEE papers join the manual-download queue. Live institutional access needs a separate check.
 
 Update by rerunning the same Skills install command. Registries, credentials, caches, named institution profiles, and browser sessions live outside the installed skill. Use a separate delivery directory. Development builds can use the digest-verified local-wheel procedure in [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -412,6 +412,14 @@ python "$skill/scripts/arp.py" manual-fetch `
   --watch "$HOME\Downloads"
 ```
 
+To work through the whole `manual-download.csv` of an acquisition in one session, use `--queue`. It opens each paper's official page in turn, imports pairs in whatever order they are downloaded, and updates the queue. Add `--from <folder>` instead of `--watch` when the files are already downloaded:
+
+```powershell
+python "$skill/scripts/arp.py" manual-fetch `
+  --selection C:\Research\corpus-run\selection-manifest.json `
+  --queue --output C:\Research\corpus-delivery --watch "$HOME\Downloads"
+```
+
 ## Understand the outputs
 
 Read the CLI result for current status, counts, next actions and available paths. An absent optional path is JSON `null`. Keep machine state for recovery; normally read only the report and nonempty action queues.
@@ -476,7 +484,7 @@ These are improvement priorities, not claims about current support.
 
 6. **Measure discovery quality.** Build labeled venue/topic fixtures and report coverage, precision, recall, pending-abstract rate, and reviewer disagreement by source and discipline.
 7. **Expand official enumeration.** Add exact, auditable venue adapters where an official index or API exists, especially for IEEE and ACM collections, without weakening identifier requirements.
-8. **Improve batch operations.** Add safe publisher-aware concurrency, progress snapshots, retry scheduling, and manual-queue batch handoff while preserving rate limits and shared-session safety.
+8. **Improve batch operations.** Add safe publisher-aware concurrency, progress snapshots, and retry scheduling while preserving rate limits and shared-session safety.
 9. **Expand checked portability.** Validate host integrations and IEEE browser workflows per operating system while retaining explicit file-credential setup and Windows DPAPI migration compatibility.
 10. **Open a publisher plug-in contract.** Let users register exact approved hosts and tested page contracts for the generic adapter without accepting arbitrary redirects or generated citations.
 

@@ -69,7 +69,7 @@ python "$skill/scripts/arp.py" --help
 python "$skill/scripts/arp.py" config status
 ```
 
-启动器只使用 Python 标准库，根据 `runtime.json` 获取固定版本 wheel、校验 SHA-256，再通过 uv 安装到独立缓存。不会依赖开发 checkout 或把开发工具装进 skill。文件配置与核心命令支持 Windows/macOS/Linux；当前 IEEE 浏览器和旧 DPAPI 仍需要 Windows、PowerShell、Node.js，机构实时权限需单独验证。
+启动器只使用 Python 标准库，根据 `runtime.json` 获取固定版本 wheel、校验 SHA-256，再通过 uv 安装到独立缓存。不会依赖开发 checkout 或把开发工具装进 skill。文件配置与核心命令支持 Windows/macOS/Linux；当前 IEEE 浏览器和旧 DPAPI 仍需要 Windows、PowerShell、Node.js，在 macOS 和 Linux 上 IEEE 论文进入人工下载队列；机构实时权限需单独验证。
 
 更新时重新运行同一条 Skills 安装命令。注册表、凭据、缓存、院校 profile 和浏览器会话保存在 skill 目录之外；交付文件也应使用独立目录。开发构建可按[开发指南](CONTRIBUTING.md)使用经过摘要校验的本地 wheel 验证。
 
@@ -412,6 +412,14 @@ python "$skill/scripts/arp.py" manual-fetch `
   --watch "$HOME\Downloads"
 ```
 
+要在一次会话里处理完整个 `manual-download.csv`，使用 `--queue`：它依次打开每篇论文的正式页面，按下载到达的任意顺序导入，并更新队列。文件已经下载好时，用 `--from <文件夹>` 代替 `--watch`：
+
+```powershell
+python "$skill/scripts/arp.py" manual-fetch `
+  --selection C:\Research\corpus-run\selection-manifest.json `
+  --queue --output C:\Research\corpus-delivery --watch "$HOME\Downloads"
+```
+
 ## 如何理解输出文件
 
 先读 CLI 返回的状态、数量、下一步动作和可用路径。可选文件不存在时路径返回 JSON `null`。机器状态用于恢复，日常通常只需读报告和非空待办队列。
@@ -476,7 +484,7 @@ python "$skill/scripts/arp.py" manual-fetch `
 
 6. **量化发现质量。**建立标注过的 venue/topic fixture，按来源和领域统计覆盖率、precision、recall、摘要缺失率和评审分歧。
 7. **扩展官方枚举。**在存在官方索引或 API 时增加准确、可审计的 venue adapter，优先考虑 IEEE 和 ACM collection，同时保留严格标识符要求。
-8. **改善批量操作。**增加遵守出版社限制的安全并发、进度快照、重试调度和人工队列批量接管，同时保护限流和共享会话。
+8. **改善批量操作。**增加遵守出版社限制的安全并发、进度快照和重试调度，同时保护限流和共享会话。
 9. **扩展实测平台。**分别验证各宿主与各系统的 IEEE 浏览器能力，保留显式本地文件配置和 Windows DPAPI 迁移兼容。
 10. **开放出版社插件契约。**允许用户为通用 adapter 注册准确批准域名和经过测试的页面契约，同时继续拒绝任意跳转和模型生成引用。
 

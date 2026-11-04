@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- `manual-fetch --queue` works through the whole manual-download queue of a finished corpus or research acquisition in one session. With `--watch` it opens each queued paper's official page in turn and imports pairs in whatever order the user downloads them; a paper whose pair does not arrive within `--timeout` is skipped, and its files still count if they arrive later in the session. With `--from <folder>` it imports pairs that are already downloaded, without waiting. Every file is checked against every waiting paper; a file that identifies more than one paper is never assigned, and distinct valid duplicates leave the paper `ambiguous`. The session then updates the acquisition ledger, `manual-download.csv`, and the paper and delivery manifests without contacting a publisher. Ctrl+C ends it with the same update.
+- Outside Windows, IEEE papers are `unsupported_adapter` items in the manual-download queue instead of `configuration_required` errors, and `arp doctor` reports `ieee_browser: unsupported_platform` with an explanatory `notes` entry instead of asking to install Windows and Chrome. The overall doctor status is no longer `attention_required` for this platform limit alone.
+- Older IEEE DOIs that doi.org still sends to plain-HTTP `ieeexplore.ieee.org` addresses (for example `10.1109/CVPR.2016.90`) are upgraded to HTTPS without a request instead of failing as `contract_error`.
+
 ## 0.8.0 — 2026-11-04
 
 - Corpus discovery enumerates three more official archives: the NeurIPS yearly listing (main track and, from 2022, Datasets and Benchmarks), PMLR volumes of ICML, AISTATS, COLT, UAI, CoRL, ALT, ACML, L4DC, and CLeaR (one official BibTeX file per volume, abstracts included), and CVF Open Access listings of CVPR, ICCV, and WACV, including pre-2021 per-day pages. Candidates carry the landing URL the acquisition adapters accept, so these venues now run end to end in batch mode, and Crossref skips any slice these indexes complete.

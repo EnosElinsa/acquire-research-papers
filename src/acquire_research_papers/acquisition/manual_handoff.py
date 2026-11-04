@@ -18,6 +18,7 @@ from acquire_research_papers.acquisition.base import AcquiredPair, SourceDocumen
 from acquire_research_papers.acquisition.adapters.elsevier_api import ElsevierSearchRecord
 from acquire_research_papers.artifacts import sha256_file, validate_pdf
 from acquire_research_papers.bibliography import (
+    ParsedBibliography,
     decode_bibtex_bytes,
     parse_bibtex,
     verify_bibliography,
@@ -97,7 +98,15 @@ def _file_state(path: Path) -> FileState:
     return FileState(stat.st_size, stat.st_mtime_ns)
 
 
-def validate_pdf_identity(path: Path, document: SourceDocument) -> None:
+@dataclass(frozen=True)
+class PdfIdentityText:
+    """Text that identifies a PDF: the title area and the first pages."""
+
+    title_text: str
+    identity_text: str
+
+
+def read_pdf_identity_text(path: Path) -> PdfIdentityText:
     candidate = path.resolve()
     validate_pdf(candidate)
     try:
@@ -114,23 +123,47 @@ def validate_pdf_identity(path: Path, document: SourceDocument) -> None:
         raise
     except (OSError, PdfReadError, ValueError, TypeError) as exc:
         raise PdfIdentityMismatch("manual PDF could not be parsed") from exc
+    return PdfIdentityText(
+        title_text="\n".join((embedded_title, page_texts[0])),
+        identity_text="\n".join((embedded_title, *page_texts)),
+    )
 
-    title_text = "\n".join((embedded_title, page_texts[0]))
-    identity_text = "\n".join((embedded_title, *page_texts))
+
+def pdf_identity_matches(text: PdfIdentityText, document: SourceDocument) -> bool:
     doi = document.metadata.doi
     expected_title = _normalized_words(document.metadata.title)
-    normalized_title_text = _normalized_words(title_text)
     title_matches = bool(
         expected_title
         and (
-            expected_title in normalized_title_text
-            or _compact_words(document.metadata.title) in _compact_words(title_text)
+            expected_title in _normalized_words(text.title_text)
+            or _compact_words(document.metadata.title) in _compact_words(text.title_text)
         )
     )
-    doi_matches = bool(doi and _compact_doi(doi) in _compact_doi(identity_text))
-    if title_matches and (not doi or doi_matches):
-        return
-    raise PdfIdentityMismatch("manual PDF does not match both the expected title and DOI")
+    doi_matches = bool(doi and _compact_doi(doi) in _compact_doi(text.identity_text))
+    return title_matches and (not doi or doi_matches)
+
+
+def validate_pdf_identity(path: Path, document: SourceDocument) -> None:
+    if not pdf_identity_matches(read_pdf_identity_text(path), document):
+        raise PdfIdentityMismatch("manual PDF does not match both the expected title and DOI")
+
+
+def bibtex_matches(
+    parsed: ParsedBibliography,
+    document: SourceDocument,
+    *,
+    allow_next_issue_year: bool = False,
+) -> None:
+    """Raise unless the parsed raw citation identifies the document."""
+    metadata = document.metadata
+    actual_year_text = parsed.fields.get("year", "").strip()
+    if (
+        allow_next_issue_year
+        and actual_year_text.isdigit()
+        and int(actual_year_text) == metadata.year + 1
+    ):
+        metadata = replace(metadata, year=int(actual_year_text))
+    verify_bibliography(metadata, parsed)
 
 
 def validate_manual_pair(
@@ -286,17 +319,10 @@ class ManualDownloadWatcher:
                     if kind == "pdf":
                         validate_pdf_identity(path, document)
                     else:
-                        raw = path.read_text(encoding="utf-8")
-                        parsed = parse_bibtex(raw)
-                        actual_year_text = parsed.fields.get("year", "").strip()
-                        metadata = document.metadata
-                        if (
-                            allow_next_issue_year
-                            and actual_year_text.isdigit()
-                            and int(actual_year_text) == metadata.year + 1
-                        ):
-                            metadata = replace(metadata, year=int(actual_year_text))
-                        verify_bibliography(metadata, parsed)
+                        parsed = parse_bibtex(path.read_text(encoding="utf-8"))
+                        bibtex_matches(
+                            parsed, document, allow_next_issue_year=allow_next_issue_year
+                        )
                     digest = sha256_file(path)
                     validation_cache[path] = (state, digest)
                     (valid_pdfs if kind == "pdf" else valid_bibtex).setdefault(digest, path)

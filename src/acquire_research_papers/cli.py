@@ -7,7 +7,7 @@ import os
 import sys
 import webbrowser
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -31,7 +31,11 @@ from acquire_research_papers.acquisition.adapters.elsevier_api import (
 )
 from acquire_research_papers.acquisition.adapters.sciencedirect import ScienceDirectAdapter
 from acquire_research_papers.acquisition.base import AccessRequired, PageContractChanged, SourceAdapter
-from acquire_research_papers.acquisition.corpus import CorpusAcquisitionWorkflow
+from acquire_research_papers.acquisition.corpus import (
+    CorpusAcquisitionWorkflow,
+    load_manual_queue,
+    reconcile_manual_imports,
+)
 from acquire_research_papers.acquisition.outcomes import (
     EXIT_CODES,
     IEEE_ACCESS_PHASES,
@@ -43,11 +47,13 @@ from acquire_research_papers.acquisition.manual_handoff import (
     ManualBrowserOpenError,
     ManualDownloadAmbiguous,
     ManualDownloadTimeout,
+    ManualHandoffSelection,
     ManualHandoffWorkflow,
     ManualSelectionWorkflow,
     ManualSourceChanged,
     PdfIdentityMismatch,
 )
+from acquire_research_papers.acquisition.manual_queue import ManualQueueSession
 from acquire_research_papers.acquisition.router import AdapterRouter
 from acquire_research_papers.artifacts import InvalidPdfError, sha256_file
 from acquire_research_papers.bibliography import BibMissing, MetadataMismatch
@@ -681,6 +687,14 @@ class Application:
             bibtex=bibtex,
             notifier=notifier,
         )
+        return self._deliver_manual_selection(record, selection, destination)
+
+    def _deliver_manual_selection(
+        self,
+        record: SelectionRecord,
+        selection: ManualHandoffSelection,
+        destination: Path,
+    ) -> DeliveryResult:
         provenance = {
             "selection_id": record.selection_id,
             "acquisition_method": "manual_publisher_download",
@@ -707,6 +721,76 @@ class Application:
                 Path(record.relative_provenance),
             ),
         )
+
+    def manual_fetch_queue(
+        self,
+        selection_manifest: Path,
+        output: Path,
+        *,
+        watch: Path | None,
+        from_folder: Path | None,
+        timeout_seconds: float,
+        open_browser: bool,
+        progress: Callable[[str], None],
+    ) -> dict[str, Any]:
+        """Import every manual-download item of a finished acquisition in one session."""
+        if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+            raise AmbiguousInput("--timeout must be positive")
+        folder = (from_folder or watch or (Path.home() / "Downloads")).resolve()
+        if not folder.is_dir():
+            raise AmbiguousInput(
+                ("--from" if from_folder else "--watch") + " must name an existing directory"
+            )
+        if self.manual_selection is None:
+            raise AccessRequired("selected-paper manual handoff is not configured")
+        try:
+            destination = ensure_outside_repository(output, self.repository_root)
+            queue = load_manual_queue(selection_manifest, destination)
+            session = ManualQueueSession(
+                queue.waiting,
+                deliver=lambda record, selection: self._deliver_manual_selection(
+                    record, selection, destination
+                ),
+                opener=self.manual_selection.opener,
+                progress=progress,
+            )
+        except ValueError as exc:
+            raise AmbiguousInput(str(exc)) from exc
+        if not queue.waiting:
+            outcomes = []
+        elif from_folder is not None:
+            outcomes = session.import_folder(folder)
+        else:
+            outcomes = session.watch(
+                folder, timeout_seconds=timeout_seconds, open_browser=open_browser
+            )
+        try:
+            ledger = reconcile_manual_imports(selection_manifest, destination)
+        except ValueError as exc:
+            raise AmbiguousInput(str(exc)) from exc
+        items = [
+            {"selection_id": record.selection_id, "title": record.title,
+             "status": "already_imported", "message": ""}
+            for record in queue.already_imported
+        ] + [asdict(outcome) for outcome in outcomes]
+        return {
+            "status": "complete" if ledger.manual_required == 0 else "partial",
+            "interrupted": session.interrupted,
+            "imported": sum(item["status"] == "imported" for item in items),
+            "already_imported": len(queue.already_imported),
+            "remaining": ledger.manual_required,
+            "items": items,
+            "acquisition_manifest": str(ledger.acquisition_path),
+            "manual_download": (
+                str(ledger.manual_download_path) if ledger.manual_download_path else None
+            ),
+            "manifest": str(ledger.manifest_path),
+            "total": ledger.total,
+            "delivered": ledger.delivered,
+            "manual_required": ledger.manual_required,
+            "retryable": ledger.retryable,
+            "contract_error": ledger.contract_error,
+        }
 
     def acquire_candidate(self, candidate: CandidateMetadata, output: Path) -> dict[str, Any]:
         reference = candidate.official_url or candidate.doi
@@ -807,6 +891,17 @@ def build_parser() -> argparse.ArgumentParser:
     manual_fetch.add_argument("--no-open", action="store_true")
     manual_fetch.add_argument("--pdf", type=Path)
     manual_fetch.add_argument("--bibtex", type=Path)
+    manual_fetch.add_argument(
+        "--queue",
+        action="store_true",
+        help="import every manual-download item of the acquisition in --output in one session",
+    )
+    manual_fetch.add_argument(
+        "--from",
+        dest="from_folder",
+        type=Path,
+        help="with --queue, import pairs already in this folder instead of watching for downloads",
+    )
 
     export_md = subparsers.add_parser(
         "export-md", help="explicitly parse a PDF with MinerU and export Markdown"
@@ -1050,7 +1145,35 @@ def run_cli(
                 }
             )
             return 0
+        if args.command == "manual-fetch" and args.queue:
+            if args.selection is None or any(
+                value is not None for value in (args.key, args.input, args.pdf, args.bibtex)
+            ):
+                raise AmbiguousInput(
+                    "manual-fetch --queue requires --selection and accepts no --key, --input, "
+                    "--pdf, or --bibtex"
+                )
+            if args.from_folder is not None and args.watch is not None:
+                raise AmbiguousInput("--from and --watch cannot be combined")
+
+            def progress(line: str) -> None:
+                print(line, file=sys.stderr, flush=True)
+
+            _emit(
+                app.manual_fetch_queue(
+                    args.selection,
+                    args.output,
+                    watch=args.watch,
+                    from_folder=args.from_folder,
+                    timeout_seconds=args.timeout,
+                    open_browser=not args.no_open,
+                    progress=progress,
+                )
+            )
+            return 0
         if args.command == "manual-fetch":
+            if args.from_folder is not None:
+                raise AmbiguousInput("--from requires --queue")
             if (args.selection is None) != (args.key is None):
                 raise AmbiguousInput(
                     "manual-fetch requires either --input or both --selection and --key"

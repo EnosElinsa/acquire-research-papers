@@ -33,9 +33,10 @@ arp acquire research --run <research-run>
 
 This command reuses the frozen-selection acquisition workflow, then parses each verified PDF through the seven-day MinerU cache. `full-text-manifest.jsonl` binds the selection ID, official PDF SHA-256, cached Markdown SHA-256, parser mode, and pending reason. Rerunning reuses verified publisher artifacts and content-addressed parses. A manual publisher item remains selected and pending rather than being silently dropped. The result reports separate `acquisition_pending` and `parsing_pending` counts; its top-level status points to the earliest unfinished gate: missing publisher files, then failed parsing, then evidence review.
 
-For a paper listed in `acquisition/manual-download.csv`, import the user-authorized official pair into the same acquisition root, then resume:
+For papers listed in `acquisition/manual-download.csv`, import the user-authorized official pairs into the same acquisition root, then resume. `--queue` handles every listed paper in one session (see [corpus mode](corpus-mode.md#review-output)); `--key` imports one:
 
 ```text
+arp manual-fetch --selection <research-run>/selection/selection-manifest.json --queue --output <research-run>/acquisition --from <folder-with-downloads>
 arp manual-fetch --selection <research-run>/selection/selection-manifest.json --key <selection-id> --output <research-run>/acquisition --pdf <official.pdf> --bibtex <official.bib> --no-open
 arp acquire research --run <research-run>
 ```

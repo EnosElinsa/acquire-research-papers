@@ -13,7 +13,7 @@ Between discovery and selection, the executing agent reads every immutable candi
 
 Expected output: four discovery state files, then a frozen closest-paper set, official PDF/raw BibTeX pairs, an internal parse cache, and one `reports/report.md` after evidence review. Add `--export-csv` to the evidence command for `papers.csv` and `claim-coverage.csv`. A research report is not automatically manuscript prose.
 
-Recovery: inspect separate `acquisition_pending` and `parsing_pending` counts. Import a queued user-downloaded pair with `manual-fetch --selection <work>/research/selection/selection-manifest.json --key <id> --output <work>/research/acquisition --pdf <pdf> --bibtex <bib> --no-open`, then rerun `acquire research`. Retry parser configuration/rate limits without dropping the paper. Preserve unchanged selection and artifact hashes.
+Recovery: inspect separate `acquisition_pending` and `parsing_pending` counts. Import the user-downloaded pairs of the manual queue with `manual-fetch --selection <work>/research/selection/selection-manifest.json --queue --output <work>/research/acquisition --from <downloads>`, or one pair with `--key <id> --pdf <pdf> --bibtex <bib> --no-open`, then rerun `acquire research`. Retry parser configuration/rate limits without dropping the paper. Preserve unchanged selection and artifact hashes.
 
 Independent alternative: `parse --pdf <local.pdf> --output <work>/parse.json --run <work>/parse-run` works without BibTeX, followed by `evidence validate` against that result. Its source trust remains user-supplied; it does not complete official acquisition. `export --format markdown` formats structured records and does not export cached full text.
 
