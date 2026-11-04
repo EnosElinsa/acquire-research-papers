@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Batch acquisition contacts up to four publisher hosts at the same time (`--parallel-hosts N` on `acquire corpus`, `acquire research`, and `acquire selection`; `1` restores one paper at a time). Each host still gets one paper at a time with the same spacing and pauses, one adapter never serves two papers at once, and the ledger keeps selection order. A live nine-paper batch across six publishers took 67 s instead of 166 s.
+- Acquisition writes `manual-download.html` beside `manual-download.csv`: a static, escaped checklist of every manual item with its official link, target filenames, and the `manual-fetch --queue` command. It is removed when the queue empties.
+- `arp job list` lists the background jobs started on this machine, newest first, with their status. `job status` retries briefly when `job.json` is momentarily unreadable.
+- A publisher answer of HTTP 401/403 now says to download the paper in a browser and import it with `manual-fetch`; a Cloudflare bot check (as ACM Digital Library returns for every non-browser request) is named as such.
+
 ## 0.9.0 — 2026-11-04
 
 - A Springer Link adapter acquires journal articles and book chapters such as LNCS papers, from a `10.1007` DOI or a `link.springer.com` URL: the official PDF and the BibTeX file from Springer's citation export service, which the page links. It delivers when the page states that this network has access (open access everywhere, subscription papers on an entitled network) and otherwise reports `access_required`; it never logs in. A chapter export's DOI is read from its entry key, which Springer uses instead of a `doi` field.

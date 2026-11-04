@@ -29,7 +29,7 @@ Acquire Research Papers 是一个多个 Agent 宿主共用的 skill 和确定性
 | 需要作者论文列表或本地查漏 | `discover author` | 正式发表、Early Access 和预印本分组，以及身份歧义和来源覆盖说明 |
 | 要从指定 venue、年份和主题中建立论文集 | `discover corpus` → Agent 评审 → `review corpus` → `acquire corpus` | 覆盖证据、冻结选集、正式文件以及人工/重试队列 |
 | 出版社要求用户在授权浏览器中操作 | `manual-fetch`（整个人工下载队列用 `--queue`） | 接管用户下载的正式文件，核验身份后放入预留交付位置 |
-| 命令运行时间超过 Agent 的命令超时 | `--background <任务目录>` → `job status` | 命令在独立进程中运行；status 报告进度和最终结果 |
+| 命令运行时间超过 Agent 的命令超时 | `--background <任务目录>` → `job status`（`job list` 查看全部任务） | 命令在独立进程中运行；status 报告进度和最终结果 |
 | 要找相近工作、观点引用、Related Work 或验证 gap | `discover research` → `review research` → `acquire research` → `evidence research` | 引用图、冻结的最相近论文、经过核验的全文和 claim 级证据报告 |
 | 明确需要把 PDF 转成 Markdown | `export-md` | 按要求导出成功的 MinerU 结果；普通论文获取不会产生 Markdown |
 

@@ -29,7 +29,7 @@ A completed acquisition is an identity-verified pair: the official publisher PDF
 | You want an author's publication list or missing local papers | `discover author` | Formal, early-access, and preprint groups with identity ambiguity and source-coverage limits |
 | You need papers from specified venues, years, and topics | `discover corpus` → agent review → `review corpus` → `acquire corpus` | Coverage evidence, a frozen selection, verified deliveries, and manual/retry queues |
 | A publisher requires authorized user interaction | `manual-fetch` (`--queue` for a whole manual-download queue) | The official files you download are taken over locally, identified, verified, and placed in the reserved delivery paths |
-| A command runs longer than your agent's command timeout | `--background <job-dir>` → `job status` | The command runs in its own process; status reports progress and its final result |
+| A command runs longer than your agent's command timeout | `--background <job-dir>` → `job status` (`job list` for all jobs) | The command runs in its own process; status reports progress and its final result |
 | You need nearest work, claim citations, Related Work, or a gap check | `discover research` → `review research` → `acquire research` → `evidence research` | A citation graph, frozen closest-paper set, verified full text, and claim-level evidence reports |
 | You explicitly need PDF-to-Markdown | `export-md` | A successful MinerU result exported on request; Markdown is never part of ordinary acquisition |
 

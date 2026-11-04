@@ -89,6 +89,8 @@ The ledger is checkpointed after every paper. An interrupted run (Ctrl+C, host t
 
 `--defer-host` is a repeatable, run-scoped control for temporarily disabling publisher contact without changing the selection. It accepts exact hostnames only and compares them case-insensitively; a DOI-only record of a supported publisher matches through its DOI registrant prefix. A matching item with no verified prior delivery becomes `manual_required` with `access_required`; a verified prior delivery is still reused. This is publisher-neutral and must not be implemented as a venue-specific selection filter. Host spacing and automatic host pauses are described in [acquisition workflows](workflows.md#ieee-xplore).
 
+Papers of different publisher hosts are acquired at the same time, up to four hosts (`--parallel-hosts N`; `1` acquires one paper at a time). Each host still gets one paper at a time in selection order, with the same spacing and pause rules, and one adapter (for example the single IEEE browser) never serves two papers at once. A waiting institution login therefore holds only its own host. The ledger keeps selection order. Ctrl+C or `job stop` takes effect once the papers being downloaded finish.
+
 Acquisition writes one durable state per selected paper to `acquisition-manifest.jsonl`:
 
 - `delivered`: the official PDF and raw publisher BibTeX are verified;
@@ -96,7 +98,7 @@ Acquisition writes one durable state per selected paper to `acquisition-manifest
 - `retryable`: a transient network, rate-limit, or browser failure, or a host paused for this run (`host_paused`);
 - `contract_error`: the official page or returned artifact violates its contract, or a local prerequisite is missing (`configuration_required`).
 
-It also writes `manual-download.csv`, `retryable-downloads.csv`, and `delivery-manifest.json`. No outcome removes a record from `selected-papers.jsonl`. The delivered count, not the discovered count, determines acquisition completion.
+It also writes `manual-download.csv`, `manual-download.html` (a static checklist of the same items with their official links, target filenames, and the `manual-fetch --queue` command to import them), `retryable-downloads.csv`, and `delivery-manifest.json`. No outcome removes a record from `selected-papers.jsonl`. The delivered count, not the discovered count, determines acquisition completion.
 
 A rerun requests every undelivered paper again except one whose last attempt was refused: the publisher or institution answered `access_required` for that paper itself (an entitlement gap, HTTP 401/403, a manual-only publisher, or a Springer page without access). Such a row carries `access_refused: true`, is kept as it is, and is counted in `not_retried`; this avoids reopening an institution login or repeating a refusal on every rerun. Deferred papers, papers of a paused host, and papers whose institution login failed are not refusals and are requested again. Add `--retry-manual` to request refused papers again after access has changed. `unsupported_adapter` papers are always requested again, so a newly added adapter picks them up.
 
@@ -123,4 +125,4 @@ Both modes trust neither editable CSV values nor filenames. They verify the froz
 
 ## Output lifecycle
 
-`pending-metadata.csv`, acquisition `manual-download.csv`, and `retryable-downloads.csv` exist only when nonempty; absent paths are null. Resolving their items removes the known generated queue on rerun. Corpus review `pending-review.csv` remains part of the hash-bound review contract, including its empty completed form. Keep request, candidates, evidence packets, coverage, discovery errors, review/selection manifests and acquisition ledgers for recovery. `paper-manifest.csv` remains the delivered inventory. Use `arp sources --spec <corpus.yaml>` before discovery to inspect offline source capability; actual coverage comes from `coverage.jsonl`.
+`pending-metadata.csv`, acquisition `manual-download.csv` and `manual-download.html`, and `retryable-downloads.csv` exist only when nonempty; absent paths are null. Resolving their items removes the known generated queue on rerun. Corpus review `pending-review.csv` remains part of the hash-bound review contract, including its empty completed form. Keep request, candidates, evidence packets, coverage, discovery errors, review/selection manifests and acquisition ledgers for recovery. `paper-manifest.csv` remains the delivered inventory. Use `arp sources --spec <corpus.yaml>` before discovery to inspect offline source capability; actual coverage comes from `coverage.jsonl`.
