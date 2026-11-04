@@ -74,10 +74,12 @@ class SafeHttpClient:
         sleeper: Callable[[float], None] = time.sleep,
         user_agent: str | None = None,
         trust_env: bool = True,
+        backoff_seconds: float = 0.25,
     ) -> None:
         self.allowed_hosts = frozenset(host.casefold().rstrip(".") for host in allowed_hosts)
         self.max_redirects = max_redirects
         self.retries = retries
+        self.backoff_seconds = backoff_seconds
         self._sleeper = sleeper
         self._client = httpx.Client(
             follow_redirects=False,
@@ -114,7 +116,7 @@ class SafeHttpClient:
                 last_error = exc
                 if attempt == retries:
                     raise NetworkTransient(f"network retries exhausted for {url}") from exc
-                self._sleeper(0.25 * (2**attempt))
+                self._sleeper(self.backoff_seconds * (2**attempt))
                 continue
             if response.status_code == 429:
                 raise RateLimited(
@@ -127,7 +129,7 @@ class SafeHttpClient:
             if 500 <= response.status_code <= 599:
                 if attempt == retries:
                     raise HttpStatusError(response.status_code, url)
-                self._sleeper(0.25 * (2**attempt))
+                self._sleeper(self.backoff_seconds * (2**attempt))
                 continue
             if response.status_code >= 400:
                 raise HttpStatusError(response.status_code, url)

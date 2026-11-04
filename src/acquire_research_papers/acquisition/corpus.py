@@ -17,6 +17,8 @@ from acquire_research_papers.acquisition.manual_handoff import (
     document_from_selection,
     validate_manual_pair,
 )
+from acquire_research_papers.acquisition.outcomes import failure_outcome
+from acquire_research_papers.acquisition.router import canonical_landing_url, doi_publisher_host
 from acquire_research_papers.models import normalize_doi
 from acquire_research_papers.selection import SelectionRecord, SelectionStore
 
@@ -24,7 +26,7 @@ from acquire_research_papers.selection import SelectionRecord, SelectionStore
 _MANUAL_CODES = frozenset(
     {"access_required", "manual_publisher_download", "unsupported_adapter"}
 )
-_RETRYABLE_CODES = frozenset({"network_transient", "rate_limited"})
+_RETRYABLE_CODES = frozenset({"network_transient", "rate_limited", "automation_error"})
 _HOST_LABEL = re.compile(r"(?!-)[a-z0-9-]{1,63}(?<!-)\Z", re.IGNORECASE)
 _SELECTION_ID = re.compile(r"[0-9a-f]{8,64}\Z")
 IN_PROGRESS_STATE = "in_progress"
@@ -56,9 +58,13 @@ def _official_url(record: SelectionRecord) -> str:
 
 def _publisher_host(record: SelectionRecord) -> str:
     try:
-        return urlsplit(_official_url(record)).hostname or record.publisher
+        hostname = urlsplit(canonical_landing_url(_official_url(record))).hostname
     except ValueError:
         return record.publisher
+    if hostname and hostname.casefold().rstrip(".") in {"doi.org", "dx.doi.org", "www.doi.org"}:
+        # Name the publisher of a DOI-only record offline so --defer-host can match it.
+        hostname = doi_publisher_host(record.doi) or hostname
+    return hostname or record.publisher
 
 
 def _normalize_exact_hosts(values: Iterable[str]) -> frozenset[str]:
@@ -304,7 +310,8 @@ def _adopted_delivery(
     ):
         return None
     expected_doi = normalize_doi(record.doi)
-    delivered_doi = normalize_doi(metadata.get("doi"))
+    delivered_value = metadata.get("doi")
+    delivered_doi = normalize_doi(delivered_value) if isinstance(delivered_value, str) else None
     if expected_doi and delivered_doi and expected_doi != delivered_doi:
         return None
     return {
@@ -629,11 +636,8 @@ class CorpusAcquisitionWorkflow:
                 checkpoint(record.selection_id, _in_progress_row(record))
                 try:
                     outcome = self.acquirer(record, destination)
-                except Exception:
-                    outcome = {
-                        "error_code": "contract_error",
-                        "message": "acquirer failed for the selected paper",
-                    }
+                except Exception as exc:
+                    outcome = failure_outcome(exc)
             if normalized_state(outcome) == "delivered":
                 row = _delivered_row(record, outcome, destination)
                 if row is None:

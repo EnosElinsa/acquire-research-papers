@@ -244,14 +244,20 @@ class IeeeBridge:
                 payload = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            if not isinstance(payload, dict):
+                continue
             phase = str(payload.get("phase") or "automation")
             message = str(payload.get("message") or "IEEE browser automation failed")
+            details = payload.get("details") if isinstance(payload.get("details"), dict) else {}
+            error_name = str(details.get("errorName") or "")
+            if error_name.isidentifier() and len(error_name) <= 40:
+                message = f"{message} ({error_name})"
             if phase in {
                 "pdf-request-timeout",
                 "citation-request-timeout",
                 "paper-http-418",
-            }:
-                return NetworkTransient(message)
+            } or details.get("retryable") is True:
+                return NetworkTransient(f"{message} (IEEE phase: {phase})")
             return IeeeBridgeError(phase, message)
         return IeeeBridgeError("automation", "IEEE browser automation failed")
 

@@ -779,3 +779,85 @@ def test_acquire_corpus_names_the_blocking_reserved_artifact(tmp_path: Path) -> 
 
     with pytest.raises(ValueError, match=r"Invented Society IV/1\.pdf"):
         CorpusAcquisitionWorkflow(acquirer=lambda *_: {}).run(selection.manifest_path, output)
+
+
+def _single_outcome(tmp_path: Path, publisher_host: str, resolver=None) -> dict:
+    selection = make_selection(tmp_path / "selection", publisher_host=publisher_host)
+    application = Application.for_test(app_root=tmp_path / "app", repository_root=tmp_path / "repo")
+    if resolver is not None:
+        application.resolver = resolver
+    result = CorpusAcquisitionWorkflow(acquirer=application.acquire_selected).run(
+        selection.manifest_path, tmp_path / "delivery"
+    )
+    first = json.loads(result.acquisition_path.read_text(encoding="utf-8").splitlines()[0])
+    return {"state": first["state"], "error_code": first["error_code"],
+            "message": first["message"], "manual": result.manual_download_path is not None,
+            "retryable": result.retryable_path is not None}
+
+
+def test_unsupported_publisher_enters_the_manual_queue(tmp_path: Path) -> None:
+    outcome = _single_outcome(tmp_path, "link.springer.com")
+    assert outcome["state"] == "manual_required"
+    assert outcome["error_code"] == "unsupported_adapter"
+    assert "link.springer.com" in outcome["message"]
+    assert outcome["manual"] is True
+
+
+def test_publisher_server_error_is_retryable_and_keeps_its_status(tmp_path: Path) -> None:
+    from acquire_research_papers.acquisition.router import AdapterRouter
+    from acquire_research_papers.http import HttpStatusError
+    from acquire_research_papers.resolver import Resolver
+
+    class Unavailable(SourceAdapter):
+        name = "unavailable"
+
+        def resolve(self, value: str) -> SourceDocument:
+            raise HttpStatusError(503, value + "?token=secret")
+
+        def acquire(self, document: SourceDocument) -> AcquiredPair:
+            raise AssertionError("unreachable")
+
+    resolver = Resolver(AdapterRouter({"publisher.example": "unavailable"}, [Unavailable()]))
+    outcome = _single_outcome(tmp_path, "publisher.example", resolver)
+    assert outcome["state"] == "retryable"
+    assert outcome["message"] == "HTTP 503 from publisher.example"
+    assert outcome["retryable"] is True
+
+
+def test_doi_resolver_timeout_is_retryable(tmp_path: Path) -> None:
+    import httpx
+
+    from acquire_research_papers.acquisition.router import AdapterRouter
+    from acquire_research_papers.resolver import Resolver
+
+    class TimedOutDoi:
+        def resolve(self, doi: str) -> str:
+            raise httpx.ConnectTimeout("doi.org timed out")
+
+    resolver = Resolver(AdapterRouter(), doi_resolver=TimedOutDoi())
+    outcome = _single_outcome(tmp_path, "doi.org", resolver)
+    assert outcome["state"] == "retryable"
+    assert outcome["error_code"] == "network_transient"
+
+
+def test_defer_host_matches_doi_only_records_by_registrant_prefix(tmp_path: Path) -> None:
+    candidate = CandidateMetadata(
+        "ieee", "An IEEE Paper", 2026, "Invented Venue", 0.9, True, ("title", "abstract"),
+        doi="10.1109/example.2026.1", official_url=None, abstract="Relevant abstract",
+    )
+    records = build_selection_records(
+        (candidate,),
+        venues=(VenueScope("Invented Venue", short_name="IV", publisher="IEEE"),),
+        delivery={"profile": "numbered", "naming_template": "IEEE IV/{number}.{ext}"},
+    )
+    selection = SelectionStore.write(
+        tmp_path / "selection",
+        {"mode": "corpus", "name": "doi only", "target": {"minimum": 1, "preferred": 1, "maximum": 1}},
+        records,
+    )
+    calls: list[str] = []
+    result = CorpusAcquisitionWorkflow(
+        acquirer=lambda record, _: calls.append(record.key) or {}
+    ).run(selection.manifest_path, tmp_path / "delivery", deferred_hosts=["ieeexplore.ieee.org"])
+    assert calls == []
+    assert result.manual_required == 1

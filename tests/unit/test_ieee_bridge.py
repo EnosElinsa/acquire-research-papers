@@ -9,6 +9,7 @@ import pytest
 
 from acquire_research_papers.acquisition.adapters.ieee import (
     IeeeBridge,
+    IeeeBridgeError,
     IeeeBridgeResult,
     IeeeXploreAdapter,
 )
@@ -123,6 +124,30 @@ def test_ieee_bridge_classifies_publisher_request_timeout_as_network_transient()
     )
 
     assert isinstance(error, NetworkTransient)
+
+
+def test_ieee_bridge_treats_marked_navigation_failure_as_network_transient() -> None:
+    error = IeeeBridge._failure(
+        '{"status":"error","phase":"paper-navigation","message":"Browser navigation did not '
+        'reach the requested page after 2 attempt(s).","details":{"attempts":2,"retryable":true}}'
+    )
+
+    assert isinstance(error, NetworkTransient)
+    assert "paper-navigation" in str(error)
+
+
+def test_ieee_bridge_reports_unexpected_automation_class_name() -> None:
+    from acquire_research_papers.acquisition.outcomes import failure_outcome
+
+    error = IeeeBridge._failure(
+        '{"status":"error","phase":"automation","message":"IEEE browser automation failed.",'
+        '"details":{"errorName":"TargetClosedError"}}'
+    )
+
+    assert isinstance(error, IeeeBridgeError)
+    outcome = failure_outcome(error)
+    assert outcome["error_code"] == "automation_error"
+    assert "TargetClosedError" in outcome["message"]
 
 
 def test_ieee_bridge_classifies_unable_to_load_418_as_network_transient() -> None:

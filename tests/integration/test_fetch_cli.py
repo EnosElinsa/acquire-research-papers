@@ -302,3 +302,47 @@ def test_fetch_reuses_verified_delivery_across_application_restarts(tmp_path, ca
     assert second_payload == first_payload
     assert second_adapter.resolve_calls == 0
     assert second_adapter.acquire_calls == 0
+
+
+def test_fetch_cli_routes_unsupported_publishers_to_manual_download(tmp_path, capsys) -> None:
+    application = Application.for_test(
+        app_root=tmp_path / "app",
+        repository_root=tmp_path / "repository",
+    )
+    exit_code = run_cli(
+        ["fetch", "--input", "https://link.springer.com/article/10.1007/x",
+         "--output", str(tmp_path / "out")],
+        application=application,
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 69
+    assert payload["error_code"] == "unsupported_adapter"
+    assert "link.springer.com" in payload["message"]
+
+
+def test_fetch_cli_reports_publisher_http_status_without_a_traceback(tmp_path, capsys) -> None:
+    from acquire_research_papers.http import HttpStatusError
+
+    class MissingPage(SourceAdapter):
+        name = "missing"
+        production_hosts = frozenset({"publisher.example"})
+
+        def resolve(self, value):
+            raise HttpStatusError(404, value + "?signature=secret")
+
+        def acquire(self, document):
+            raise AssertionError("unreachable")
+
+    application = Application.for_test(
+        app_root=tmp_path / "app",
+        repository_root=tmp_path / "repository",
+        adapter=MissingPage(),
+    )
+    exit_code = run_cli(
+        ["fetch", "--input", "https://publisher.example/paper", "--output", str(tmp_path / "out")],
+        application=application,
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 78
+    assert payload == {"status": "error", "error_code": "contract_error",
+                       "message": "HTTP 404 from publisher.example"}

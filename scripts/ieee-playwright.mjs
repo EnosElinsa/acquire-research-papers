@@ -379,6 +379,10 @@ export function toErrorPayload(error) {
   };
   if (error instanceof IeeeFlowError && Object.keys(error.details).length) {
     payload.details = sanitizeErrorValue(error.details);
+  } else if (!(error instanceof IeeeFlowError)) {
+    // Only the class name (for example TimeoutError or TargetClosedError) leaves the process.
+    const name = String(error?.name ?? "");
+    payload.details = { errorName: /^[A-Za-z][A-Za-z0-9_]{0,40}$/u.test(name) ? name : "Error" };
   }
   return payload;
 }
@@ -417,10 +421,11 @@ async function navigateWithTransientRetry(page, targetUrl, timeoutMs, phase) {
       return;
     } catch (error) {
       if (attempt === 1 && isTransientChromeNavigation(error, page)) continue;
+      // A page that never loaded says nothing about the publisher contract; retry later.
       throw new IeeeFlowError(
         phase,
         `Browser navigation did not reach the requested page after ${attempt} attempt(s).`,
-        { targetUrl: sanitizeTransitionUrl(targetUrl), attempts: attempt },
+        { targetUrl: sanitizeTransitionUrl(targetUrl), attempts: attempt, retryable: true },
       );
     }
   }
@@ -466,6 +471,7 @@ async function visitResourceGateway({
         {
           targetUrl: sanitizeTransitionUrl(institutionProfile.resourceAccessUrl),
           resourceVisits: gatewayState.visits,
+          retryable: true,
         },
       );
     }

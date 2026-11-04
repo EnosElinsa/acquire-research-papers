@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import httpx
+
 from acquire_research_papers import __version__
 from acquire_research_papers.acquisition.adapters.acm import AcmDigitalLibraryAdapter
 from acquire_research_papers.acquisition.adapters.acl import AclAnthologyAdapter
@@ -28,6 +30,12 @@ from acquire_research_papers.acquisition.adapters.elsevier_api import (
 from acquire_research_papers.acquisition.adapters.sciencedirect import ScienceDirectAdapter
 from acquire_research_papers.acquisition.base import AccessRequired, PageContractChanged, SourceAdapter
 from acquire_research_papers.acquisition.corpus import CorpusAcquisitionWorkflow
+from acquire_research_papers.acquisition.outcomes import (
+    EXIT_CODES,
+    IEEE_ACCESS_PHASES,
+    failure_outcome,
+    is_ieee_access_phase,
+)
 from acquire_research_papers.acquisition.manual_handoff import (
     ManualBrowserOpenError,
     ManualDownloadAmbiguous,
@@ -70,7 +78,7 @@ from acquire_research_papers.credentials import (
     CredentialStatusError,
     DpapiApiKeyProvider,
 )
-from acquire_research_papers.http import NetworkTransient, RateLimited, SafeHttpClient
+from acquire_research_papers.http import HttpStatusError, NetworkTransient, RateLimited, SafeHttpClient
 from acquire_research_papers.file_credentials import API_KEYS
 from acquire_research_papers.mineru import (
     MineruCache,
@@ -86,7 +94,7 @@ from acquire_research_papers.research.evidence_workflow import ResearchEvidenceW
 from acquire_research_papers.research.fulltext import ResearchFullTextWorkflow
 from acquire_research_papers.research.review import ResearchReviewWorkflow
 from acquire_research_papers.research.workflow import ResearchDiscoverer, ResearchWorkflow
-from acquire_research_papers.resolver import AmbiguousInput, Resolver
+from acquire_research_papers.resolver import AmbiguousInput, Resolver, UnsupportedPublisher
 from acquire_research_papers.selection import SelectionRecord, SelectionStore
 from acquire_research_papers.specs import (
     SpecValidationError,
@@ -109,31 +117,12 @@ _RUNTIME_SCRIPT_NAMES = frozenset(
     }
 )
 
-_IEEE_ACCESS_PHASES = frozenset(
-    {
-        "authentication-not-complete",
-        "authentication-result",
-        "credential-read",
-        "unexpected-auth-host",
-        "carsi-school",
-        "carsi-institution",
-        "carsi-login",
-        "institution-username",
-        "institution-password",
-        "institution-login",
-        "attribute-release-controls",
-        "attribute-release-required",
-        "institutional-return",
-        "download-after-auth",
-        "access-required",
-        "manual-login-timeout",
-        "assisted-login-timeout",
-    }
-)
+_IEEE_ACCESS_PHASES = IEEE_ACCESS_PHASES
+_PUBLISHER_RETRY = {"retries": 3, "backoff_seconds": 1.0}
 
 
 def _is_ieee_access_phase(phase: str) -> bool:
-    return phase in _IEEE_ACCESS_PHASES
+    return is_ieee_access_phase(phase)
 
 
 def _resolve_script_root(repository_root: Path, package_root: Path) -> Path:
@@ -341,9 +330,14 @@ class Application:
         paths.create_directories()
         repository_root = Path(__file__).resolve().parents[2]
         script_root = _resolve_script_root(repository_root, Path(__file__).resolve().parent)
-        acl = AclAnthologyAdapter(SafeHttpClient(allowed_hosts={"aclanthology.org"}))
-        ijcai = IjcaiProceedingsAdapter(SafeHttpClient(allowed_hosts={"www.ijcai.org"}))
-        acm = AcmDigitalLibraryAdapter.for_production()
+        # Publisher hosts get 1 s, 2 s, 4 s backoff so a brief outage does not fail a paper.
+        acl = AclAnthologyAdapter(SafeHttpClient(allowed_hosts={"aclanthology.org"},
+                                                 **_PUBLISHER_RETRY))
+        ijcai = IjcaiProceedingsAdapter(SafeHttpClient(allowed_hosts={"www.ijcai.org"},
+                                                       **_PUBLISHER_RETRY))
+        acm = AcmDigitalLibraryAdapter(
+            client=SafeHttpClient(allowed_hosts={"dl.acm.org"}, **_PUBLISHER_RETRY)
+        )
         sciencedirect = ScienceDirectAdapter.for_production()
         from acquire_research_papers import configuration_commands
         manager = configuration_commands.credential_manager(paths, env_file=env_file)
@@ -708,25 +702,8 @@ class Application:
             }
         try:
             result = self.fetch(reference, output)
-        except AccessRequired as exc:
-            return {"status": "deferred", "error_code": "access_required", "message": str(exc)}
-        except IeeeBridgeError as exc:
-            code = (
-                "access_required"
-                if _is_ieee_access_phase(exc.phase)
-                else "contract_error"
-            )
-            return {"status": "deferred", "error_code": code, "message": str(exc)}
-        except RateLimited as exc:
-            return {"status": "deferred", "error_code": "rate_limited", "message": str(exc)}
-        except NetworkTransient as exc:
-            return {
-                "status": "deferred",
-                "error_code": "network_transient",
-                "message": str(exc),
-            }
-        except (AmbiguousInput, PageContractChanged, MetadataMismatch, BibMissing, InvalidPdfError) as exc:
-            return {"status": "deferred", "error_code": "contract_error", "message": str(exc)}
+        except Exception as exc:  # one shared classification; see acquisition.outcomes
+            return {"status": "deferred", **failure_outcome(exc)}
         return {
             "status": "delivered",
             "pdf": str(result.pdf),
@@ -756,20 +733,8 @@ class Application:
                 provenance_extra={"selection_id": record.selection_id},
                 registry_payload={"selection_id": record.selection_id},
             )
-        except AccessRequired as exc:
-            return {
-                "error_code": "access_required",
-                "message": str(exc),
-            }
-        except IeeeBridgeError as exc:
-            code = "access_required" if _is_ieee_access_phase(exc.phase) else "contract_error"
-            return {"error_code": code, "message": str(exc)}
-        except RateLimited as exc:
-            return {"error_code": "rate_limited", "message": str(exc)}
-        except NetworkTransient as exc:
-            return {"error_code": "network_transient", "message": str(exc)}
-        except (AmbiguousInput, PageContractChanged, MetadataMismatch, BibMissing, InvalidPdfError) as exc:
-            return {"error_code": "contract_error", "message": str(exc)}
+        except Exception as exc:  # one shared classification; see acquisition.outcomes
+            return failure_outcome(exc)
         return {
             "status": "delivered",
             "pdf": str(result.pdf),
@@ -1316,6 +1281,9 @@ def run_cli(
             raise AmbiguousInput(f"{args.command} requires a task produced by discover")
         parser.print_help()
         return 0
+    except UnsupportedPublisher as exc:
+        _emit({"status": "error", **failure_outcome(exc)})
+        return EXIT_CODES["unsupported_adapter"]
     except (AmbiguousInput, SpecValidationError) as exc:
         _emit({"status": "error", "error_code": "invalid_input", "message": str(exc)})
         return 64
@@ -1335,19 +1303,19 @@ def run_cli(
         _emit({"status": "error", "error_code": "manual_handoff_required", "message": str(exc)})
         return 69
     except IeeeBridgeError as exc:
-        error_code = (
-            "access_required"
-            if _is_ieee_access_phase(exc.phase)
-            else "contract_error"
-        )
-        _emit({"status": "error", "error_code": error_code, "message": str(exc)})
-        return 69 if error_code == "access_required" else 78
+        outcome = failure_outcome(exc)
+        _emit({"status": "error", **outcome})
+        return EXIT_CODES[outcome["error_code"]]
     except (RateLimited, MineruRateLimited) as exc:
         _emit({"status": "error", "error_code": "rate_limited", "message": str(exc)})
         return 75
     except NetworkTransient as exc:
         _emit({"status": "error", "error_code": "network_transient", "message": str(exc)})
         return 75
+    except (HttpStatusError, httpx.TransportError) as exc:
+        outcome = failure_outcome(exc)
+        _emit({"status": "error", **outcome})
+        return EXIT_CODES[outcome["error_code"]]
     except (
         PageContractChanged,
         MetadataMismatch,

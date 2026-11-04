@@ -1649,9 +1649,22 @@ test("redacts SAML query values from a real navigation failure payload", async (
     assert.equal(serialized.includes("SECRET2"), false);
     assert.equal(serialized.includes("RelayState=[redacted]"), true);
     assert.equal(serialized.includes("SAMLRequest=[redacted]"), true);
+    const payload = subject.toErrorPayload(caught);
+    assert.equal(payload.phase, "paper-navigation");
+    assert.equal(payload.details.retryable, true);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("reports only the class name of an unexpected automation error", () => {
+  const timeout = Object.assign(new Error("page.goto: Timeout 30000ms exceeded https://x/?token=SECRET"),
+    { name: "TimeoutError" });
+  assert.deepEqual(subject.toErrorPayload(timeout).details, { errorName: "TimeoutError" });
+  const odd = Object.assign(new Error("boom"), { name: "bad name https://x/?token=SECRET" });
+  const payload = subject.toErrorPayload(odd);
+  assert.deepEqual(payload.details, { errorName: "Error" });
+  assert.ok(!JSON.stringify(payload).includes("SECRET"));
 });
 
 test("classifies an IEEE PDF request timeout as retryable publisher transport", async () => {
