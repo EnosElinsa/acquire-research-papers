@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.0 — 2026-11-04
 
 - A Springer Link adapter acquires journal articles and book chapters such as LNCS papers, from a `10.1007` DOI or a `link.springer.com` URL: the official PDF and the BibTeX file from Springer's citation export service, which the page links. It delivers when the page states that this network has access (open access everywhere, subscription papers on an entitled network) and otherwise reports `access_required`; it never logs in. A chapter export's DOI is read from its entry key, which Springer uses instead of a `doi` field.
 - A rerun of `acquire corpus`, `acquire research`, or `acquire selection` no longer requests a paper whose last attempt was refused (`access_required` for the paper itself, recorded as `access_refused` in the ledger) and reports such papers as `not_retried`. This stops repeated institution logins and repeated refusals. `--retry-manual` requests them again. Deferred papers, papers of a paused host, papers whose institution login failed, and `unsupported_adapter` papers are still requested.
