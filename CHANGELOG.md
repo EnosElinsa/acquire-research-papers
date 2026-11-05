@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.15.0 — 2026-11-04
 
 - Fixed on Windows: a batch acquisition with parallel hosts (the default since 0.10.0) could stop with "acquisition output contains an unverified reserved artifact" right after delivering a paper. When one host's worker created a shared venue folder while another worker was resolving a path inside it, Python's `Path.resolve()` returned the `\\?\C:\…` spelling of the path, so the delivered file no longer matched its reserved path. Paths are now compared without that prefix. Reproduced in isolation (282 of 300 trials returned the prefixed path) and in the test suite under CPU load; 0 of 20 loaded runs fail now.
 - A server error (HTTP 5xx) from a publisher now says "the publisher's server failed, so rerun later". Since early November 2026 `ojs.aaai.org` has answered its citation exports (BibTeX, RIS, and ACM formats) with HTTP 520 for every client, while its article pages and PDFs work, so AAAI papers stay `network_transient` until AAAI fixes it. No other citation format is used in place of the official BibTeX.
