@@ -13,7 +13,7 @@ Harassment, insults, sexualized language or imagery, personal or political attac
 
 ## Reporting
 
-Report conduct problems privately to the maintainer through [GitHub's private reporting form](https://github.com/EnosElinsa/acquire-research-papers/security/advisories/new) with a title that starts with "Conduct report", or use GitHub's [report content](https://docs.github.com/en/communities/maintaining-your-safety-on-github/reporting-abuse-or-spam) feature for abusive content. Include links to the relevant comments. Reports are read only by the maintainer and kept confidential.
+Report conduct problems privately to the maintainer at [enoselinsa@gmail.com](mailto:enoselinsa@gmail.com), or use GitHub's [report content](https://docs.github.com/en/communities/maintaining-your-safety-on-github/reporting-abuse-or-spam) feature for abusive content. Include links to the relevant comments. Reports are read only by the maintainer and kept confidential.
 
 ## Enforcement
 
