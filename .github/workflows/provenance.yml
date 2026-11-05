@@ -58,7 +58,7 @@ jobs:
           ref: ${{ env.TAG }}
           path: source
           persist-credentials: false
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
       - name: Install uv
@@ -98,7 +98,7 @@ jobs:
           ref: ${{ env.TAG }}
           path: source
           persist-credentials: false
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
       - uses: actions/download-artifact@v8
