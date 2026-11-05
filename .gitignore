@@ -25,3 +25,9 @@ downloads/
 dist/
 build/
 *.egg-info/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.mypy_cache/
+/site/
