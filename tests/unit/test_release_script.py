@@ -397,4 +397,4 @@ def test_compare_names_the_archive_members_that_differ(tmp_path):
         release.compare_releases([first, second])
 
     assert "only in the second: c.py" in str(raised.value)
-    assert "a.py (CRC)" in str(raised.value)
+    assert "a.py (CRC, compress_size)" in str(raised.value)

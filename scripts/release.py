@@ -214,9 +214,11 @@ def _archive_differences(expected: Path, actual: Path, limit: int = 8) -> str:
             notes = [f"only in the first: {name}" for name in sorted(set(before) - set(after))]
             notes += [f"only in the second: {name}" for name in sorted(set(after) - set(before))]
             for name in sorted(set(before) & set(after)):
-                changed = [field for field in ("CRC", "date_time", "external_attr",
-                                               "compress_type", "create_system")
-                           if getattr(before[name], field) != getattr(after[name], field)]
+                changed = [field for field in (
+                    "CRC", "compress_size", "date_time", "external_attr", "internal_attr",
+                    "compress_type", "create_system", "create_version", "extract_version",
+                    "flag_bits", "extra")
+                    if getattr(before[name], field) != getattr(after[name], field)]
                 if changed:
                     notes.append(f"{name} ({', '.join(changed)})")
             if not notes and [item.filename for item in left.infolist()] != [

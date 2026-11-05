@@ -180,3 +180,32 @@ def test_builder_rejects_empty_git_directory_and_git_file_in_target(tmp_path):
     (worktree/'.git').write_text('gitdir: somewhere')
     with pytest.raises(ValueError,match='git'):
         builder.build(ROOT,worktree,wheel=local)
+
+
+def test_built_archives_are_marked_as_made_on_unix_whatever_the_build_os(tmp_path):
+    # Python's zipfile records 0 (Windows) or 3 (Unix) as the "made by" system of each
+    # entry; hatchling keeps that default, which alone made Windows and Linux wheels differ.
+    builder = module(ROOT/'scripts'/'build_distribution.py')
+    archive = tmp_path/'example.whl'
+    with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as handle:
+        for name, data in (('pkg/__init__.py', b'x = 1\n'), ('pkg-1.0.dist-info/RECORD', b'')):
+            item = zipfile.ZipInfo(name, date_time=(2020, 2, 2, 0, 0, 0))
+            item.create_system = 0
+            handle.writestr(item, data)
+    before = archive.read_bytes()
+
+    builder._mark_made_on_unix(archive)
+
+    after = archive.read_bytes()
+    with zipfile.ZipFile(archive) as handle:
+        assert {item.create_system for item in handle.infolist()} == {3}
+        assert handle.testzip() is None
+        assert handle.read('pkg/__init__.py') == b'x = 1\n'
+    assert len(after) == len(before)
+    assert sum(1 for left, right in zip(before, after) if left != right) == 2
+
+    with zipfile.ZipFile(result_zip := tmp_path/'skill.zip', 'w') as handle:
+        handle.writestr('a', b'a')
+        handle.comment = b'comment'
+    with pytest.raises(ValueError, match='end record'):
+        builder._mark_made_on_unix(result_zip)

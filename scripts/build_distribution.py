@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import shutil
+import struct
 import subprocess
 import tempfile
 import tomllib
@@ -54,6 +55,32 @@ def _manifest_bytes(manifest: dict) -> bytes:
     return (json.dumps(manifest, indent=2) + "\n").encode("utf-8")
 
 
+UNIX = 3  # the "made by" system of a ZIP entry; Python's zipfile writes 0 on Windows
+
+
+def _mark_made_on_unix(path: Path) -> None:
+    """Record every entry of a ZIP archive as made on Unix.
+
+    Python's zipfile stores the building OS in each central-directory entry, and hatchling
+    keeps that default, so a wheel built on Windows differed from a Linux build of the same
+    source only in those bytes. Only that byte changes; contents, CRCs, and timestamps stay.
+    """
+    data = bytearray(path.read_bytes())
+    if data[-22:-18] != b"PK\x05\x06":  # an end record without comment, and no ZIP64
+        raise ValueError(f"{path.name} does not end with a plain ZIP end record")
+    count, size, offset = struct.unpack_from("<HII", data, len(data) - 12)
+    position = offset
+    for _ in range(count):
+        if data[position:position + 4] != b"PK\x01\x02":
+            raise ValueError(f"{path.name} has an unexpected central directory")
+        data[position + 5] = UNIX
+        name, extra, comment = struct.unpack_from("<HHH", data, position + 28)
+        position += 46 + name + extra + comment
+    if position != offset + size:
+        raise ValueError(f"{path.name} has an unexpected central directory size")
+    path.write_bytes(bytes(data))
+
+
 def _safe_output(root: Path, output: Path, source: Path) -> None:
     if any(part.casefold() == ".git" for part in output.parts):
         raise ValueError("distribution output cannot be inside .git")
@@ -98,6 +125,7 @@ def build(root: Path, output: Path, *, wheel: Path | None = None,
             command += ["--build-constraint", str(constraints), "--require-hashes"]
         subprocess.run(command, cwd=root, env=environment, check=True)
         wheel = output / f"acquire_research_papers-{version}-py3-none-any.whl"
+        _mark_made_on_unix(wheel)
     wheel = wheel.resolve()
     _check_wheel(wheel, version)
     manifest = {"schema_version": 1, "package": NAME, "version": version,
@@ -139,6 +167,7 @@ def build(root: Path, output: Path, *, wheel: Path | None = None,
             for relative in sorted(SKILL_FILES):
                 item = zipfile.ZipInfo(f"{NAME}/{relative}", date_time=(2023, 11, 14, 22, 13, 20))
                 item.compress_type = zipfile.ZIP_DEFLATED
+                item.create_system = UNIX  # the Unix mode below means nothing otherwise
                 item.external_attr = 0o644 << 16
                 archive.writestr(item, (stage / relative).read_bytes())
     return {"version": version, "skill": str(destination), "zip": str(zip_path),
