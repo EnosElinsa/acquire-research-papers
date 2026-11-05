@@ -114,7 +114,7 @@ python "$skill/scripts/arp.py" config status
 
 | 能力 | 何时配置 | 配置方式 |
 | --- | --- | --- |
-| 无需配置 | 公开 Crossref 发现；从 ACL、IJCAI、AAAI、NeurIPS、PMLR 和 CVF 官方归档发现并获取；Springer 开放获取论文 | 不需要密钥 |
+| 无需配置 | 公开 Crossref 发现；从 ACL、IJCAI、AAAI、NeurIPS、ICLR（2024 年起）、PMLR、CVF 和 USENIX 官方归档发现并获取；Springer 开放获取论文 | 不需要密钥 |
 | Semantic Scholar | 需要带 key 的候选搜索、更高额度和第一轮 DOI 摘要补全 | `arp config setup semantic_scholar` |
 | OpenAlex | 需要通过 OpenAlex 系列枚举 IEEE 或 ACM 会议（INFOCOM、ICC、GLOBECOM、SIGCOMM 等）、额外候选搜索或第二轮 DOI 摘要补全 | `arp config setup openalex` |
 | IEEE | 需要本校 IEEE 访问；默认先人工登录，可另行启用支持的 CARSI 表单 | `arp config setup ieee` |
@@ -297,7 +297,7 @@ python "$skill/scripts/arp.py" evidence research `
 论文集模式适合“指定这些 venue、这些年份，查找这些主题”的有边界任务，实际经过以下步骤：
 
 1. **定义边界。** 当前 Agent 记录准确的期刊/会议、年份、论文类型、主题、排除项、总数和配额。
-2. **先枚举再筛选。** ACL、IJCAI、NeurIPS、PMLR 系列会议（ICML、AISTATS、COLT 等）和 CVF（CVPR、ICCV、WACV）读取各自的官方索引；期刊和已知会议集通过 ISSN、collection DOI、venue 和年份分页读取 Crossref；OpenAlex 和 Semantic Scholar 可以补充基于查询的候选。
+2. **先枚举再筛选。** ACL、IJCAI、NeurIPS、ICLR（2024 年起）、PMLR 系列会议（ICML、AISTATS、COLT 等）、CVF（CVPR、ICCV、WACV）和 USENIX（Security、OSDI、NSDI、ATC、FAST）读取各自的官方索引；期刊和已知会议集通过 ISSN、collection DOI、venue 和年份分页读取 Crossref；OpenAlex 和 Semantic Scholar 可以补充基于查询的候选。
 3. **记录覆盖状态。** 每个“venue × 年份”都会标记为 complete、partial 或 failed。缺少 proceedings 页面或准确标识符时，会生成诊断信息，不会把空结果伪装成完整覆盖。
 4. **合并并补全。** 优先按 DOI 去重。缺少摘要时，先按 DOI 查询 Semantic Scholar，配置 OpenAlex 后再进行第二轮补全；每个字段保留来源记录。
 5. **依据证据评审。** 确定性规则排除错误年份、venue、track、论文类型和明显的目录/封面信息。关键词只负责提出候选；正式接受必须由当前 Agent 同时判断标题和摘要，并记录理由。
@@ -360,8 +360,10 @@ Crossref、OpenAlex、Semantic Scholar、普通仓库和镜像都不能满足最
 | IJCAI proceedings | 官方 proceedings 和 track 解析 | 自动 | 成熟，已经用于真实批量任务 |
 | AAAI（ojs.aaai.org） | 用 AAAI ISSN 做 Crossref venue 枚举；记录自带摘要和官方归档 URL | 自动 | 官方 OJS PDF 和 BibTeX 导出。真实验证：AAAI-24 枚举出 2,867 条带摘要的记录，抽样论文已交付。2026 年 11 月初起 AAAI 的引用导出接口对所有客户端返回 HTTP 520，在 AAAI 修复前获取结果为 `network_transient` |
 | NeurIPS proceedings | 官方年度列表：主会，以及 2022 年起的 Datasets and Benchmarks | 由发现阶段或摘要页 URL 自动获取 | 官方 PDF 和逐篇 BibTeX 文件。NeurIPS DOI 解析到 Curran Associates，单凭 DOI 不能下载。真实验证：2019 年列出 1,428 篇带摘要的论文；2019、2022 D&B 和 2023 论文已交付 |
+| ICLR proceedings | proceedings.iclr.cc 上 2024 年起的官方年度列表 | 由发现阶段或摘要页 URL 自动获取 | 官方 PDF 和逐篇 BibTeX 文件。更早的年份只在 OpenReview 上，OpenReview 对非浏览器客户端返回验证页：发现阶段把这些年份记为 `source_unavailable`，论文转人工下载。真实验证：ICLR 2024 列出 2,260 篇带摘要的论文；抽样论文已交付 |
 | PMLR | ICML、AISTATS、COLT、UAI、CoRL、ALT、ACML、L4DC、CLeaR 各卷的官方 BibTeX 文件 | 由发现阶段或论文页 URL 自动获取 | BibTeX 取自官方页面上显示的条目（provenance 记为 `publisher_page_embedded`）。真实验证：ICML 2023 列出 1,828 篇带摘要的论文；ICML 2019 和 2023 论文已交付 |
 | CVF Open Access | CVPR、ICCV、WACV 主会官方列表 | 由发现阶段或论文页 URL 自动获取 | CVF 开放获取版本，除水印外与录用版本一致；最终出版版本在 IEEE Xplore（在 venue 上声明 `publisher: IEEE` 可改走 IEEE）。BibTeX 取自页面。真实验证：WACV 2024 列出 846 篇带摘要的论文；CVPR 2019、2023、一个 CVPR workshop 和 WACV 2024 论文已交付 |
+| USENIX | USENIX Security、OSDI、NSDI、USENIX ATC 和 FAST 的 technical-sessions 页面，含每篇论文的摘要 | 由发现阶段或报告页 URL 自动获取 | 官方开放获取 PDF 和报告页上显示的 BibTeX（`publisher_page_embedded`；单独的 BibTeX 下载链接需要通过浏览器验证）。按 robots.txt 要求，对 www.usenix.org 的请求间隔 10 秒。真实验证：OSDI 2024 列出 53 篇、USENIX Security 2023 列出 422 篇，全部带摘要；OSDI 和 NSDI 论文已交付 |
 | Springer Link | 由 Crossref/OpenAlex/Semantic Scholar 发现；`10.1007` DOI | 期刊论文和书籍章节（LNCS）在页面表明本网络有权限时自动获取 | 官方 PDF 和 Springer 引用导出服务提供的 BibTeX 文件。开放获取论文在任何网络下都可下载，订阅论文只在有权限的网络（如校园网）下载；否则为 `access_required`。不做登录。真实验证：两篇 Machine Learning 期刊论文和一篇 ECCV 章节已交付 |
 | IEEE Xplore | 期刊经 Crossref（ISSN）枚举；会议经 OpenAlex（`openalex_source`，如 INFOCOM、ICC、GLOBECOM）枚举；摘要来自 OpenAlex/Semantic Scholar | 配置 CARSI 院校档案后自动 | 使用通用 profile；已在一个 CARSI 院校完成端到端真实验证。每个新增院校都需要首次适配和一篇代表论文冒烟测试 |
 | ACM Digital Library | 通常由 Crossref collection 枚举和可选查询 API 发现 | 条件式 HTTP adapter | 只有正式页面和文件接口允许独立客户端访问时才能自动完成。2026 年 11 月实测，非浏览器请求和自动化 Chrome 都会遇到 Cloudflare 人机验证，因此 ACM 论文进入人工队列，提示信息会说明是人机验证 |

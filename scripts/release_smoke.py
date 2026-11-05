@@ -31,6 +31,9 @@ FETCHES = (
     ("CVF URL", "https://openaccess.thecvf.com/content/CVPR2023/html/Ci_GFPose_Learning_3D_"
      "Human_Pose_Prior_With_Gradient_Fields_CVPR_2023_paper.html", ("delivered",)),
     ("IJCAI DOI", "10.24963/ijcai.2023/1", ("delivered",)),
+    ("ICLR URL", "https://proceedings.iclr.cc/paper_files/paper/2024/hash/"
+     "00153f90d9177dd3a872133972bc8dea-Abstract-Conference.html", ("delivered",)),
+    ("USENIX URL", "https://www.usenix.org/conference/osdi24/presentation/xiang", ("delivered",)),
     ("Springer URL", "https://link.springer.com/article/10.1007/s10994-021-06119-y",
      ("delivered", "access_required")),
     ("Elsevier DOI", "10.1016/j.cell.2020.02.052", ("access_required",)),

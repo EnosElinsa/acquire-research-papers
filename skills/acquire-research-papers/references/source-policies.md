@@ -10,7 +10,7 @@ Start from a canonical DOI or confirmed publisher landing page. Follow only exac
 - the publisher's raw BibTeX export;
 - provenance with landing, PDF, and BibTeX URLs plus hashes.
 
-Crossref, OpenAlex, Semantic Scholar, search engines, repositories, and mirrors are discovery sources. They are not final PDF/BibTeX authorities. A public repository PDF may be used only when it is the official venue archive covered by an adapter: ACL Anthology, IJCAI proceedings, AAAI OJS, NeurIPS proceedings, PMLR, or CVF Open Access.
+Crossref, OpenAlex, Semantic Scholar, search engines, repositories, and mirrors are discovery sources. They are not final PDF/BibTeX authorities. A public repository PDF may be used only when it is the official venue archive covered by an adapter: ACL Anthology, IJCAI proceedings, AAAI OJS, NeurIPS proceedings, ICLR proceedings, PMLR, CVF Open Access, or USENIX.
 
 When an official archive publishes no BibTeX file, the entry it prints on the paper's landing page is its export. Deliver that entry exactly as displayed, record `bibtex_source: publisher_page_embedded`, and set the official BibTeX URL to the landing page. Never assemble or repair such an entry.
 
@@ -30,6 +30,8 @@ Each adapter derives the expected PDF and BibTeX locations from the landing path
 
 - **AAAI OJS** (`ojs.aaai.org`): require an `/index.php/<journal>/article/view/<id>` page with one `10.1609/` DOI, `citation_pdf_url` at `/article/download/<id>/<galley>`, and exactly one BibTeX export link for the same `submissionId`. The track comes from `DC.Type.articleType`.
 - **NeurIPS** (`proceedings.neurips.cc`): require a `/paper_files/paper/<year>/hash/<hash>-Abstract[-<track>].html` page whose PDF metadata and Paper link name the same hash and track. Download `<hash>-Bibtex.bib` from the same year; the page's own Bibtex link is either that file or the broken `/paper_files/paper/<n>-/bibtex` route. The track suffix sets the publication type.
+- **ICLR** (`proceedings.iclr.cc`): the same contract as NeurIPS on the ICLR host (ICLR from 2024). OpenReview is not an acquisition host: it answers non-browser clients with a challenge, and the project does not pass bot checks.
+- **USENIX** (`www.usenix.org`): require a `/conference/<series><yy>/presentation/<slug>` page whose `citation_pdf_url` is a `/system/files/<name>.pdf` file and whose publication year matches the `<yy>` of the path. Deliver the single printed `div.bibtex-text-entry` entry exactly as shown; its `url` field must name the same presentation path. The `/biblio/export/bibtex/<id>` download is behind a Cloudflare challenge and is never requested. Space requests at least 10 s apart, as robots.txt asks.
 - **PMLR** (`proceedings.mlr.press`): require a `/<volume>/<key>.html` page whose PDF metadata is `/<volume>/<key>/<key>.pdf` and whose single `code#bibtex` entry has key `pmlr-<volume>-<key>`.
 - **CVF Open Access** (`openaccess.thecvf.com`): require a `/content/<CONF><YEAR>[W/<workshop>]/html/<stem>_paper.html` or pre-2020 `/content_<CONF>_<YEAR>/html/<stem>_paper.html` page with exactly one same-host pdf link equal to the PDF metadata, a matching year, and one `div.bibref` entry. Record that this is CVF's open-access version; the final version is the IEEE Xplore artifact for the same paper.
 

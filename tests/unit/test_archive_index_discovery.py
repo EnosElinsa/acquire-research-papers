@@ -9,8 +9,10 @@ from acquire_research_papers.discovery.contracts import (
 from acquire_research_papers.discovery.coordinator import DiscoveryCoordinator
 from acquire_research_papers.discovery.official.archives import (
     CvfIndexProvider,
+    IclrIndexProvider,
     NeuripsIndexProvider,
     PmlrIndexProvider,
+    UsenixIndexProvider,
 )
 
 MAIN, BENCH, DRIFT = "a" * 32, "b" * 32, "c" * 32
@@ -334,3 +336,102 @@ def test_source_catalog_lists_archive_indexes_and_their_artifacts() -> None:
     assert slices["CVPR"]["acquisition"] == "open_access_version_page_embedded_bibtex"
     assert slices["CVPR IEEE"]["official_indexes"] == []
     assert {"neurips-proceedings", "pmlr", "cvf-open-access"} <= {s["id"] for s in result["sources"]}
+
+
+# ------------------------------------------------------------------ ICLR
+
+def test_iclr_reads_the_proceedings_listing_from_2024(fixture_server) -> None:
+    server = fixture_server.server
+    server.expect_request("/paper_files/paper/2024").respond_with_data(
+        f'<ul><li><div class="paper-content"><a href="/paper_files/paper/2024/hash/{MAIN}-Abstract-'
+        'Conference.html">Verified Representation Tests</a><span class="paper-authors">Ada '
+        'Lovelace, Alan Turing</span></div></li></ul>', content_type="text/html")
+    server.expect_request(f"/paper_files/paper/2024/hash/{MAIN}-Abstract-Conference.html").respond_with_data(
+        neurips_detail("Verified Representation Tests", ("Lovelace, Ada", "Turing, Alan"), "").replace(
+            '<meta name="citation_doi" content="">', "").replace("2023-12-15", "2024-05-31"),
+        content_type="text/html")
+    provider = IclrIndexProvider(fixture_server.client,
+                                 index_template=fixture_server.url("/paper_files/paper/{year}"),
+                                 production_hosts={fixture_server.host})
+
+    batch = provider.discover(request([{"name": "ICLR"}], [2024]))
+
+    (candidate,) = batch.candidates
+    assert (candidate.venue, candidate.authors, candidate.doi) == (
+        "ICLR", ("Ada Lovelace", "Alan Turing"), None)
+    assert candidate.abstract == "Repairs graphs & checks them."
+    assert candidate.provenance["source"] == "iclr-proceedings"
+    assert batch.coverage[0].state == "complete"
+
+
+def test_iclr_before_2024_is_openreview_only_and_sends_no_request(fixture_server) -> None:
+    provider = IclrIndexProvider(fixture_server.client,
+                                 index_template=fixture_server.url("/paper_files/paper/{year}"),
+                                 production_hosts={fixture_server.host})
+
+    batch = provider.discover(request([{"name": "ICLR"}], [2023]))
+
+    assert batch.coverage[0].state == "failed"
+    assert batch.diagnostics[0].error_code == "source_unavailable"
+    assert "OpenReview" in batch.diagnostics[0].message
+    assert requested_paths(fixture_server.server) == []
+
+
+# ------------------------------------------------------------------ USENIX
+
+def usenix_node(path: str, title: str, *, pdf: bool = True, people: str = "", abstract: str = "") -> str:
+    media = ('<span class="usenix-schedule-media pdf"><a href="' + path + '">pdf</a></span>'
+             if pdf else "")
+    return (f'<article class="node node-paper view-mode-schedule"><h2><a href="{path}">{title}</a></h2>'
+            '<div class="content"><div class="field field-name-field-paper-people-text"><p>'
+            f'{people}</p></div><div class="group-available-media">{media}</div>'
+            f'<div class="field field-name-field-paper-description-long"><p>{abstract}</p></div>'
+            '</div></article>')
+
+
+USENIX_LISTING = "<html><body>" + "".join((
+    usenix_node("/conference/atc24/presentation/wu-joint-keynote", "A Shared Keynote", pdf=False),
+    usenix_node("/conference/osdi24/presentation/lovelace", "Verified Storage Tiering",
+                people="Ada Lovelace and Alan Turing, <em>Analytical Engines;</em> Grace Hopper, "
+                       "<em>Navy</em>", abstract="Tiers storage &amp; verifies it."),
+    usenix_node("/conference/osdi24/presentation/hopper-panel", "A Panel", pdf=False),
+)) + "</body></html>"
+
+
+def usenix(fixture_server, **options) -> UsenixIndexProvider:
+    return UsenixIndexProvider(fixture_server.client, origin=fixture_server.url("/").rstrip("/"),
+                               production_hosts={fixture_server.host}, **options)
+
+
+def test_usenix_reads_papers_with_a_pdf_from_the_technical_sessions_page(fixture_server) -> None:
+    fixture_server.server.expect_request("/conference/osdi24/technical-sessions").respond_with_data(
+        USENIX_LISTING, content_type="text/html")
+
+    batch = usenix(fixture_server).discover(request([{"name": "OSDI"}], [2024]))
+
+    (candidate,) = batch.candidates
+    assert candidate.title == "Verified Storage Tiering"
+    assert candidate.authors == ("Ada Lovelace", "Alan Turing", "Grace Hopper")
+    assert candidate.abstract == "Tiers storage & verifies it."
+    assert candidate.official_url == fixture_server.url("/conference/osdi24/presentation/lovelace")
+    (coverage,) = batch.coverage
+    assert (coverage.state, coverage.records_recognized, coverage.pages_fetched) == ("complete", 1, 1)
+    # Paper pages are read only at acquisition, so the index costs one request per edition.
+    assert requested_paths(fixture_server.server) == ["/conference/osdi24/technical-sessions"]
+
+
+def test_usenix_waits_out_the_crawl_delay_between_editions(fixture_server) -> None:
+    for edition in ("osdi23", "osdi24"):
+        fixture_server.server.expect_request(f"/conference/{edition}/technical-sessions").respond_with_data(
+            USENIX_LISTING.replace("osdi24", edition), content_type="text/html")
+    now, pauses = [50.0], []
+
+    def sleep(seconds: float) -> None:
+        pauses.append(seconds)
+        now[0] += seconds
+
+    batch = usenix(fixture_server, sleeper=sleep, monotonic=lambda: now[0]).discover(
+        request([{"name": "OSDI"}], [2023, 2024]))
+
+    assert len(batch.candidates) == 2
+    assert pauses == [10.0]

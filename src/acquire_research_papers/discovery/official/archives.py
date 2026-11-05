@@ -1,4 +1,4 @@
-"""Official paper indexes of the NeurIPS proceedings, PMLR, and CVF Open Access archives.
+"""Official paper indexes of the NeurIPS and ICLR proceedings, PMLR, CVF Open Access, and USENIX.
 
 Each candidate's ``official_url`` is the landing page that the matching acquisition adapter
 accepts, so a frozen selection downloads from the same archive it was discovered in.
@@ -7,7 +7,8 @@ from __future__ import annotations
 
 import re
 import threading
-from collections.abc import Mapping
+import time
+from collections.abc import Callable, Mapping
 from urllib.parse import urljoin, urlsplit
 
 from bs4 import BeautifulSoup
@@ -345,4 +346,147 @@ class CvfIndexProvider(OfficialIndexProvider):
         return index_url
 
 
-ARCHIVE_INDEX_PROVIDERS = (NeuripsIndexProvider, PmlrIndexProvider, CvfIndexProvider)
+# --------------------------------------------------------------------------- ICLR
+
+class IclrIndexProvider(NeuripsIndexProvider):
+    """ICLR from 2024 on proceedings.iclr.cc, which runs the NeurIPS proceedings software.
+
+    Earlier editions exist only on OpenReview, whose API and pages answer non-browser
+    clients with a challenge; those years report ``source_unavailable``.
+    """
+
+    provider_id = "iclr-proceedings"
+    label = "ICLR"
+    scope_description = "ICLR main conference from 2024 (proceedings.iclr.cc)"
+    venue_aliases = _aliases({"iclr": ("ICLR", "International Conference on Learning Representations")})
+    publication_types = frozenset({"proceedings article"})
+    publishers = frozenset({"iclr", "openreview", "international conference on learning representations"})
+
+    def __init__(
+        self,
+        client: SafeHttpClient | None,
+        *,
+        index_template: str = "https://proceedings.iclr.cc/paper_files/paper/{year}",
+        production_hosts: set[str] | frozenset[str] = frozenset({"proceedings.iclr.cc"}),
+        workers: int = 4,
+    ) -> None:
+        super().__init__(client, index_template=index_template,
+                         production_hosts=production_hosts, workers=workers)
+
+    def collect(self, archive: str, year: int, venue: VenueScope, request: DiscoveryRequest,
+                seeds: Mapping[str, CandidateMetadata], result: SliceResult) -> str:
+        if year < ICLR_FIRST_PROCEEDINGS_YEAR:
+            raise SliceUnavailable(
+                f"ICLR {year} is published only on OpenReview, which blocks non-browser "
+                "clients; enumerate it through Crossref, OpenAlex, or Semantic Scholar and "
+                "download its papers manually")
+        return super().collect(archive, year, venue, request, seeds, result)
+
+
+ICLR_FIRST_PROCEEDINGS_YEAR = 2024
+
+
+# --------------------------------------------------------------------------- USENIX
+
+_USENIX_SERIES = {
+    "usenixsecurity": ("USENIX Security", "USENIX Security Symposium"),
+    "osdi": ("OSDI", "USENIX Symposium on Operating Systems Design and Implementation",
+             "Operating Systems Design and Implementation"),
+    "nsdi": ("NSDI", "USENIX Symposium on Networked Systems Design and Implementation",
+             "Networked Systems Design and Implementation"),
+    "atc": ("USENIX ATC", "ATC", "USENIX Annual Technical Conference"),
+    "fast": ("FAST", "USENIX Conference on File and Storage Technologies",
+             "File and Storage Technologies"),
+}
+
+
+# www.usenix.org/robots.txt asks every crawler for a 10 s delay between requests.
+USENIX_CRAWL_DELAY_SECONDS = 10.0
+
+
+def _usenix_authors(people: str) -> tuple[str, ...]:
+    """Names from "A, B, and C, <em>Org;</em> D and E, <em>Org</em>" with affiliations removed."""
+    names = re.split(r",|\band\b", people)
+    return tuple(name.strip(" ;") for name in names if name.strip(" ;"))
+
+
+class UsenixIndexProvider(OfficialIndexProvider):
+    """The technical-sessions page of a USENIX conference, which lists every paper's abstract.
+
+    One request per conference and year: www.usenix.org asks crawlers for a 10 s crawl delay,
+    so paper pages are read only at acquisition.
+    """
+
+    provider_id = "usenix"
+    label = "USENIX"
+    scope_description = "USENIX Security, OSDI, NSDI, USENIX ATC, and FAST papers with a PDF"
+    venue_aliases = _aliases(_USENIX_SERIES)
+    publication_types = frozenset({"proceedings article"})
+    publishers = frozenset({"usenix", "usenix association"})
+
+    def __init__(
+        self,
+        client: SafeHttpClient | None,
+        *,
+        origin: str = "https://www.usenix.org",
+        production_hosts: set[str] | frozenset[str] = frozenset({"www.usenix.org"}),
+        workers: int = 1,
+        crawl_delay_seconds: float = USENIX_CRAWL_DELAY_SECONDS,
+        sleeper: Callable[[float], None] = time.sleep,
+        monotonic: Callable[[], float] = time.monotonic,
+    ) -> None:
+        super().__init__(client, production_hosts=production_hosts, workers=workers)
+        self.origin = origin.rstrip("/")
+        self.crawl_delay_seconds = crawl_delay_seconds
+        self._sleeper = sleeper
+        self._monotonic = monotonic
+        self._last_request: float | None = None
+
+    def get_text(self, url: str, result: SliceResult) -> str:
+        if self._last_request is not None:
+            remaining = self.crawl_delay_seconds - (self._monotonic() - self._last_request)
+            if remaining > 0:
+                self._sleeper(remaining)
+        try:
+            return super().get_text(url, result)
+        finally:
+            self._last_request = self._monotonic()
+
+    def collect(self, archive: str, year: int, venue: VenueScope, request: DiscoveryRequest,
+                seeds: Mapping[str, CandidateMetadata], result: SliceResult) -> str:
+        edition = f"{archive}{year % 100:02d}"
+        index_url = f"{self.origin}/conference/{edition}/technical-sessions"
+        soup = BeautifulSoup(self.get_text(index_url, result), "html.parser")
+        paper = re.compile(rf"/conference/{edition}/presentation/[A-Za-z0-9_-]+")
+        seen: set[str] = set()
+        for node in soup.select("article.node-paper"):
+            anchor = node.select_one("h2 a[href]")
+            path = urlsplit(urljoin(index_url, str(anchor["href"]))).path if anchor else ""
+            # Keynotes, panels, and sessions shared with a co-located event carry no paper PDF.
+            if anchor is None or not paper.fullmatch(path) or not node.select_one(
+                    ".usenix-schedule-media.pdf"):
+                continue
+            result.recognized += 1
+            url = f"{self.origin}{path}"
+            if url in seen:
+                result.issue("proceedings-index", "page_contract_changed")
+                continue
+            seen.add(url)
+            people = node.select_one(".field-name-field-paper-people-text")
+            if people is not None:
+                for affiliation in people.select("em"):
+                    affiliation.decompose()
+            abstract = node.select_one(".field-name-field-paper-description-long")
+            try:
+                result.candidates.append(self.candidate(
+                    title=clean_text(anchor.get_text(" ")), year=year, venue=venue, url=url,
+                    index_url=index_url,
+                    authors=_usenix_authors(people.get_text(" ")) if people else (),
+                    abstract=clean_text(abstract.get_text(" ")) if abstract else ""))
+            except PageContractChanged:
+                result.issue("proceedings-index", "page_contract_changed")
+        return index_url
+
+
+ARCHIVE_INDEX_PROVIDERS = (NeuripsIndexProvider, IclrIndexProvider, PmlrIndexProvider,
+                           CvfIndexProvider, UsenixIndexProvider)

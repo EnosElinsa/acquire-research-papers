@@ -1,9 +1,9 @@
-"""Official open-access conference archives: AAAI (OJS), NeurIPS, PMLR, and CVF.
+"""Official open-access conference archives: AAAI (OJS), NeurIPS, ICLR, PMLR, CVF, and USENIX.
 
 Each adapter derives the expected PDF and BibTeX locations from the landing path and accepts
-the page only when its citation metadata agrees. PMLR and CVF publish no BibTeX file; their
-official BibTeX is the entry printed on the landing page, recorded as
-``publisher_page_embedded`` provenance.
+the page only when its citation metadata agrees. PMLR and CVF publish no BibTeX file, and
+USENIX serves its file only behind a browser bot check; for these the official BibTeX is the
+entry printed on the landing page, recorded as ``publisher_page_embedded`` provenance.
 """
 from __future__ import annotations
 
@@ -157,24 +157,26 @@ class NeuripsProceedingsAdapter(_OpenAccessAdapter):
     name = "neurips-proceedings"
     label = "NeurIPS"
     default_hosts = frozenset({"proceedings.neurips.cc"})
+    publisher = "Neural Information Processing Systems Foundation"
 
     def parse(self, path: str, page: LandingPage) -> PageContract:
+        label = self.label
         match = _NEURIPS_PATH.fullmatch(path)
         if not match:
-            raise PageContractChanged("NeurIPS landing path is not a proceedings abstract page")
+            raise PageContractChanged(f"{label} landing path is not a proceedings abstract page")
         year, digest, track = match.group(1), match.group(2), match.group(3) or ""
         pdf_path = f"/paper_files/paper/{year}/file/{digest}-Paper{track}.pdf"
         if page.meta_path("citation_pdf_url", "PDF metadata") != pdf_path:
-            raise PageContractChanged("NeurIPS PDF URL does not match the paper hash")
+            raise PageContractChanged(f"{label} PDF URL does not match the paper hash")
         if any(target != pdf_path for target, _ in page.link_targets("Paper")):
-            raise PageContractChanged("NeurIPS paper link disagrees with the PDF metadata")
+            raise PageContractChanged(f"{label} paper link disagrees with the PDF metadata")
         bibtex_path = f"/paper_files/paper/{year}/file/{digest}-Bibtex.bib"
         links = page.link_targets("Bibtex")
         if len(links) != 1 or not (links[0][0] == bibtex_path
                                    or _NEURIPS_BROKEN_BIBTEX.fullmatch(links[0][0])):
-            raise PageContractChanged("NeurIPS page must expose one BibTeX link for the paper")
+            raise PageContractChanged(f"{label} page must expose one BibTeX link for the paper")
         if page.year("citation_publication_date", "publication date") != int(year):
-            raise PageContractChanged("NeurIPS publication year disagrees with the landing path")
+            raise PageContractChanged(f"{label} publication year disagrees with the landing path")
         normalized_track = track.lstrip("-").casefold()
         return PageContract(
             metadata=PaperMetadata(
@@ -183,7 +185,7 @@ class NeuripsProceedingsAdapter(_OpenAccessAdapter):
                 year=int(year),
                 venue=page.first(("citation_journal_title", "citation_conference_title"), "venue"),
                 doi=normalize_doi(page.one("citation_doi", "DOI", required=False)),
-                publisher="Neural Information Processing Systems Foundation",
+                publisher=self.publisher,
                 landing_url=page.landing_url,
                 publication_type="main" if normalized_track in {"", "conference"}
                 else normalized_track.replace("_", "-"),
@@ -191,6 +193,19 @@ class NeuripsProceedingsAdapter(_OpenAccessAdapter):
             pdf_path=pdf_path,
             bibtex_path=bibtex_path,
         )
+
+
+class IclrProceedingsAdapter(NeuripsProceedingsAdapter):
+    """ICLR papers from 2024 on proceedings.iclr.cc, which runs the NeurIPS proceedings software.
+
+    Earlier ICLR papers exist only on OpenReview, which answers non-browser clients with a
+    challenge page, so they stay manual downloads.
+    """
+
+    name = "iclr-proceedings"
+    label = "ICLR"
+    default_hosts = frozenset({"proceedings.iclr.cc"})
+    publisher = "International Conference on Learning Representations"
 
 
 _PMLR_PATH = re.compile(r"/(v\d+)/([A-Za-z0-9_-]+)\.html")
@@ -282,4 +297,53 @@ class CvfOpenAccessAdapter(_OpenAccessAdapter):
         )
 
 
-OPEN_ACCESS_ADAPTERS = (AaaiOjsAdapter, NeuripsProceedingsAdapter, PmlrAdapter, CvfOpenAccessAdapter)
+_USENIX_PATH = re.compile(r"/conference/([a-z]+)(\d{2})/presentation/[A-Za-z0-9_-]+")
+_USENIX_PDF = re.compile(r"/system/files/[A-Za-z0-9_.-]+\.pdf")
+_BIBTEX_URL = re.compile(r"\burl\s*=\s*\{([^{}]*)\}", re.IGNORECASE)
+
+
+class UsenixAdapter(_OpenAccessAdapter):
+    """Open-access papers of USENIX conferences (Security, OSDI, NSDI, ATC, FAST, and others).
+
+    The page's BibTeX download link answers non-browser clients with a Cloudflare challenge;
+    the same entry is printed on the page, and its ``url`` field must name this page.
+    """
+
+    name = "usenix"
+    label = "USENIX"
+    default_hosts = frozenset({"www.usenix.org"})
+
+    def parse(self, path: str, page: LandingPage) -> PageContract:
+        match = _USENIX_PATH.fullmatch(path.rstrip("/"))
+        if not match:
+            raise PageContractChanged("USENIX landing path is not a presentation page")
+        pdf_path = page.meta_path("citation_pdf_url", "PDF metadata")
+        if not _USENIX_PDF.fullmatch(pdf_path):
+            raise PageContractChanged("USENIX PDF URL is not a proceedings file")
+        bibtex = page.embedded_bibtex("div.bibtex-text-entry")
+        named = _BIBTEX_URL.search(bibtex)
+        if not named or urlsplit(named.group(1).strip()).path.rstrip("/") != path.rstrip("/"):
+            raise PageContractChanged("USENIX BibTeX entry names a different presentation")
+        year = page.year("citation_publication_date", "publication date")
+        if year % 100 != int(match.group(2)):
+            raise PageContractChanged("USENIX publication year disagrees with the conference")
+        # USENIX titles carry BibTeX case-protection braces, e.g. "{SAIN}: Improving {ICS} ...".
+        title = (page.one("citation_title", "title") or "").replace("{", "").replace("}", "")
+        return PageContract(
+            metadata=PaperMetadata(
+                title=title,
+                authors=page.authors(),
+                year=year,
+                venue=page.one("citation_conference_title", "venue") or "",
+                doi=None,
+                publisher="USENIX Association",
+                landing_url=page.landing_url,
+                publication_type="main",
+            ),
+            pdf_path=pdf_path,
+            embedded_bibtex=bibtex,
+        )
+
+
+OPEN_ACCESS_ADAPTERS = (AaaiOjsAdapter, NeuripsProceedingsAdapter, IclrProceedingsAdapter,
+                        PmlrAdapter, CvfOpenAccessAdapter, UsenixAdapter)

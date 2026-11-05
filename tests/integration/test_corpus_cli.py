@@ -216,8 +216,10 @@ def test_production_provider_registry_fails_closed_without_optional_keys() -> No
         "ijcai-proceedings",
         "openalex-venue",
         "neurips-proceedings",
+        "iclr-proceedings",
         "pmlr",
         "cvf-open-access",
+        "usenix",
     ]
     assert isinstance(providers[0], CrossrefVenueDiscoveryProvider)
     # Without a key the OpenAlex venue enumerator only reports configuration_required.

@@ -703,8 +703,12 @@ class _HostGuard:
         transient_failure_limit: int,
         sleeper: Callable[[float], None],
         monotonic: Callable[[], float],
+        host_intervals: Mapping[str, float] | None = None,
     ) -> None:
         self.min_interval_seconds = max(0.0, min_interval_seconds)
+        # Hosts that ask for a longer crawl delay (for example in robots.txt) get their own.
+        self.host_intervals = {host.casefold(): max(0.0, seconds)
+                               for host, seconds in (host_intervals or {}).items()}
         self.transient_failure_limit = max(1, transient_failure_limit)
         self._sleeper = sleeper
         self._monotonic = monotonic
@@ -718,8 +722,9 @@ class _HostGuard:
 
     def wait(self, host: str) -> None:
         previous = self._last_call.get(host)
-        if previous is not None and self.min_interval_seconds:
-            remaining = self.min_interval_seconds - (self._monotonic() - previous)
+        interval = max(self.min_interval_seconds, self.host_intervals.get(host.casefold(), 0.0))
+        if previous is not None and interval:
+            remaining = interval - (self._monotonic() - previous)
             if remaining > 0:
                 self._sleeper(remaining)
 
@@ -798,9 +803,11 @@ class CorpusAcquisitionWorkflow:
         sleeper: Callable[[float], None] = time.sleep,
         monotonic: Callable[[], float] = time.monotonic,
         max_parallel_hosts: int = 1,
+        host_intervals: Mapping[str, float] | None = None,
     ) -> None:
         self.acquirer = acquirer
         self.max_parallel_hosts = max(1, max_parallel_hosts)
+        self.host_intervals = dict(host_intervals or {})
         self.min_host_interval_seconds = min_host_interval_seconds
         self.transient_failure_limit = transient_failure_limit
         self._sleeper = sleeper
@@ -897,6 +904,7 @@ class CorpusAcquisitionWorkflow:
             transient_failure_limit=self.transient_failure_limit,
             sleeper=self._sleeper,
             monotonic=self._monotonic,
+            host_intervals=self.host_intervals,
         )
 
         ledger_lock = threading.Lock()

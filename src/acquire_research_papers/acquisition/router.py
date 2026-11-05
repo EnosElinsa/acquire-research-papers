@@ -16,8 +16,10 @@ _DEFAULT_HOST_NAMES = {
     "www.sciencedirect.com": "sciencedirect",
     "ojs.aaai.org": "aaai-ojs",
     "proceedings.neurips.cc": "neurips-proceedings",
+    "proceedings.iclr.cc": "iclr-proceedings",
     "proceedings.mlr.press": "pmlr",
     "openaccess.thecvf.com": "cvf-open-access",
+    "www.usenix.org": "usenix",
     "link.springer.com": "springer-link",
 }
 
@@ -40,7 +42,8 @@ _NEURIPS_HOSTS = frozenset({"papers.nips.cc", "proceedings.neurips.cc"})
 _NEURIPS_LEGACY_PATH = re.compile(r"/paper/((?:19|20)\d{2})/hash/([0-9a-f]{32}-Abstract[^/]*\.html)")
 # doi.org still registers plain-HTTP targets for many older IEEE DOIs (e.g. 10.1109/CVPR.2016.90).
 _HTTPS_ONLY_HOSTS = frozenset({"ojs.aaai.org", "proceedings.mlr.press", "openaccess.thecvf.com",
-                               "ieeexplore.ieee.org", "link.springer.com", *_NEURIPS_HOSTS})
+                               "ieeexplore.ieee.org", "link.springer.com", "proceedings.iclr.cc",
+                               "www.usenix.org", *_NEURIPS_HOSTS})
 
 
 def canonical_landing_url(url: str) -> str:
@@ -64,6 +67,9 @@ def canonical_landing_url(url: str) -> str:
         path = (f"/paper_files/paper/{legacy.group(1)}/hash/{legacy.group(2)}"
                 if legacy else parsed.path)
         return f"https://proceedings.neurips.cc{path}"
+    if host == "usenix.org" and parsed.port is None:
+        # usenix.org redirects to www.usenix.org; DBLP and old programs link the bare host.
+        return "https://www.usenix.org" + parsed.path + (f"?{parsed.query}" if parsed.query else "")
     if host in _HTTPS_ONLY_HOSTS and parsed.scheme == "http" and parsed.port is None:
         return f"https://{host}{parsed.path}" + (f"?{parsed.query}" if parsed.query else "")
     return url

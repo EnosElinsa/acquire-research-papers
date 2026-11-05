@@ -7,8 +7,10 @@ from acquire_research_papers.acquisition.adapters.open_access import (
     EMBEDDED_BIBTEX_SOURCE,
     AaaiOjsAdapter,
     CvfOpenAccessAdapter,
+    IclrProceedingsAdapter,
     NeuripsProceedingsAdapter,
     PmlrAdapter,
+    UsenixAdapter,
 )
 from acquire_research_papers.acquisition.base import PageContractChanged
 from acquire_research_papers.acquisition.router import AdapterRouter, canonical_landing_url
@@ -45,6 +47,19 @@ PMLR_PDF = "/v202/lovelace23a/lovelace23a.pdf"
 
 CVF_PAGE = "/content/CVPR2023/html/Lovelace_A_Verified_CVF_Paper_CVPR_2023_paper.html"
 CVF_PDF = "/content/CVPR2023/papers/Lovelace_A_Verified_CVF_Paper_CVPR_2023_paper.pdf"
+
+ICLR_HASH = "00153f90d9177dd3a872133972bc8dea"
+ICLR_PAGE = f"/paper_files/paper/2024/hash/{ICLR_HASH}-Abstract-Conference.html"
+ICLR_PDF = f"/paper_files/paper/2024/file/{ICLR_HASH}-Paper-Conference.pdf"
+ICLR_BIBTEX = f"/paper_files/paper/2024/file/{ICLR_HASH}-Bibtex.bib"
+ICLR_EXPORT = (
+    "@inproceedings{ICLR2024_00153f90,\n author = {Lovelace, Ada and Turing, Alan},\n"
+    " booktitle = {International Conference on Learning Representations},\n"
+    " pages = {1--25},\n title = {A Verified ICLR Paper},\n volume = {2024},\n year = {2024}\n}\n"
+).encode("utf-8")
+
+USENIX_PAGE = "/conference/osdi24/presentation/lovelace"
+USENIX_PDF = "/system/files/osdi24-lovelace.pdf"
 
 
 def page(name: str, server) -> str:
@@ -211,13 +226,85 @@ def test_cvf_rejects_ambiguous_or_inconsistent_pages(fixture_server, old, new, m
         adapter.resolve(fixture_server.url(CVF_PAGE))
 
 
+def test_iclr_delivers_the_proceedings_bibtex_file(fixture_server, tmp_path, capsys) -> None:
+    fixture_server.serve_text(ICLR_PAGE, page("iclr", fixture_server))
+    fixture_server.serve_bytes(ICLR_PDF, PDF, "application/pdf")
+    fixture_server.serve_bytes(ICLR_BIBTEX, ICLR_EXPORT, "application/x-bibtex")
+    adapter = IclrProceedingsAdapter(fixture_server.client, production_hosts={fixture_server.host})
+
+    code, payload = fetch(tmp_path, adapter, fixture_server.url(ICLR_PAGE), capsys)
+
+    assert code == 0, payload
+    assert Path(payload["bibtex"]).read_bytes() == ICLR_EXPORT
+    record = provenance(payload)
+    assert record["bibtex_source"] == "publisher_download"
+    assert record["metadata"]["publisher"] == "International Conference on Learning Representations"
+    assert record["metadata"]["authors"] == ["Ada Lovelace", "Alan Turing"]
+    assert record["metadata"]["publication_type"] == "main"
+
+
+def test_iclr_rejects_a_pdf_for_another_paper(fixture_server) -> None:
+    fixture_server.serve_text(ICLR_PAGE, page("iclr", fixture_server).replace(
+        f"{ICLR_HASH}-Paper-Conference.pdf\">\n  <meta", "ffff-Paper-Conference.pdf\">\n  <meta"))
+    adapter = IclrProceedingsAdapter(fixture_server.client, production_hosts={fixture_server.host})
+    with pytest.raises(PageContractChanged, match="ICLR PDF URL"):
+        adapter.resolve(fixture_server.url(ICLR_PAGE))
+
+
+def test_usenix_delivers_the_bibtex_printed_on_the_presentation_page(
+    fixture_server, tmp_path, capsys
+) -> None:
+    fixture_server.serve_text(USENIX_PAGE, page("usenix", fixture_server))
+    fixture_server.serve_bytes(USENIX_PDF, PDF, "application/pdf")
+    adapter = UsenixAdapter(fixture_server.client, production_hosts={fixture_server.host})
+
+    code, payload = fetch(tmp_path, adapter, fixture_server.url(USENIX_PAGE), capsys)
+
+    assert code == 0, payload
+    bibtex = Path(payload["bibtex"]).read_text(encoding="utf-8")
+    assert bibtex.startswith("@inproceedings {298669,\n\tauthor = {Ada Lovelace and Alan Turing},")
+    assert bibtex.endswith("}\n")
+    record = provenance(payload)
+    assert record["bibtex_source"] == EMBEDDED_BIBTEX_SOURCE
+    assert record["official_pdf_url"] == fixture_server.url(USENIX_PDF)
+    # The case-protection braces of the citation title do not reach the metadata title.
+    assert record["metadata"]["title"] == "Verified Storage Tiering via Synthetic Tests"
+    assert record["metadata"]["publisher"] == "USENIX Association"
+    assert record["metadata"]["doi"] is None
+
+
+@pytest.mark.parametrize(("old", "new", "message"), [
+    ("presentation/lovelace},", "presentation/turing},", "different presentation"),
+    ('content="2024">', 'content="2023">', "year"),
+    ('content="{origin}/system/files/osdi24-lovelace.pdf">',
+     'content="{origin}/sites/default/files/osdi24-lovelace.pdf">', "PDF URL"),
+])
+def test_usenix_rejects_a_page_that_disagrees_with_the_presentation(
+    fixture_server, old, new, message
+) -> None:
+    html = page("usenix", fixture_server)
+    origin = fixture_server.url("/").rstrip("/")
+    old, new = old.replace("{origin}", origin), new.replace("{origin}", origin)
+    assert old in html
+    fixture_server.serve_text(USENIX_PAGE, html.replace(old, new))
+    adapter = UsenixAdapter(fixture_server.client, production_hosts={fixture_server.host})
+    with pytest.raises(PageContractChanged, match=message):
+        adapter.resolve(fixture_server.url(USENIX_PAGE))
+
+
 def test_open_access_archives_are_routed_by_exact_host() -> None:
     router = AdapterRouter.with_defaults()
     assert router.name_for("https://ojs.aaai.org/index.php/AAAI/article/view/1") == "aaai-ojs"
     assert router.name_for("https://proceedings.neurips.cc" + NEURIPS_PAGE) == "neurips-proceedings"
+    assert router.name_for("https://proceedings.iclr.cc" + ICLR_PAGE) == "iclr-proceedings"
     assert router.name_for("https://proceedings.mlr.press/v202/x23a.html") == "pmlr"
     assert router.name_for("https://openaccess.thecvf.com" + CVF_PAGE) == "cvf-open-access"
+    assert router.name_for("https://www.usenix.org" + USENIX_PAGE) == "usenix"
     assert router.name_for("https://proceedings.mlr.press.evil.example/v202/x23a.html") is None
+    assert canonical_landing_url("https://usenix.org" + USENIX_PAGE) == (
+        "https://www.usenix.org" + USENIX_PAGE)
+    assert canonical_landing_url("http://www.usenix.org" + USENIX_PAGE) == (
+        "https://www.usenix.org" + USENIX_PAGE)
 
 
 def test_known_archive_aliases_are_canonicalized_without_a_request() -> None:

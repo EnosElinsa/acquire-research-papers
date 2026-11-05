@@ -138,6 +138,8 @@ class _RetryOptions(TypedDict):
 _PUBLISHER_RETRY: _RetryOptions = {"retries": 3, "backoff_seconds": 1.0}
 # Minimum spacing between two papers from the same publisher host in a batch.
 _PUBLISHER_INTERVAL_SECONDS = 2.0
+# Hosts whose robots.txt asks for a longer crawl delay.
+_HOST_INTERVAL_SECONDS = {"www.usenix.org": 10.0}
 # Publisher hosts contacted at the same time in a batch; each host still gets one paper at a time.
 _PARALLEL_HOSTS = 4
 _RETRY_MANUAL_HELP = (
@@ -513,6 +515,7 @@ class Application:
         application.corpus_acquisition = CorpusAcquisitionWorkflow(
             acquirer=application.acquire_selected,
             min_host_interval_seconds=_PUBLISHER_INTERVAL_SECONDS,
+            host_intervals=_HOST_INTERVAL_SECONDS,
             max_parallel_hosts=_PARALLEL_HOSTS,
         )
         research_searchers = [crossref.corpus_searcher]

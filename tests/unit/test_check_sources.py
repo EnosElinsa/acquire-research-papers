@@ -115,4 +115,5 @@ def test_fetch_checks_use_a_fresh_directory_per_attempt(tmp_path):
 
 def test_the_weekly_fetches_are_the_smoke_fetches_that_need_no_subscription():
     labels = [label for label, _ in check_sources.open_access_fetches()]
-    assert labels == ["ACL DOI", "AAAI DOI", "NeurIPS URL", "PMLR URL", "CVF URL", "IJCAI DOI"]
+    assert labels == ["ACL DOI", "AAAI DOI", "NeurIPS URL", "PMLR URL", "CVF URL", "IJCAI DOI",
+                      "ICLR URL", "USENIX URL"]

@@ -68,7 +68,7 @@ def test_every_check_passes_when_the_cli_answers_as_expected(tmp_path):
     checks, calls, lines = run(tmp_path)
 
     assert all(item["passed"] for item in checks), [i for i in checks if not i["passed"]]
-    assert len(checks) == 18 and len(lines) == 18
+    assert len(checks) == 20 and len(lines) == 20
     assert sum(call[0] == "discover" for call in calls) == 2
     springer = next(item for item in checks if item["check"] == "fetch Springer URL")
     assert springer["expected"] == ["delivered", "access_required"]

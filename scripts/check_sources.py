@@ -55,8 +55,10 @@ from acquire_research_papers.discovery.contracts import DiscoveryRequest  # noqa
 from acquire_research_papers.discovery.official.acl import AclAnthologyDiscoveryProvider  # noqa: E402
 from acquire_research_papers.discovery.official.archives import (  # noqa: E402
     CvfIndexProvider,
+    IclrIndexProvider,
     NeuripsIndexProvider,
     PmlrIndexProvider,
+    UsenixIndexProvider,
 )
 from acquire_research_papers.discovery.official.ijcai import IjcaiDiscoveryProvider  # noqa: E402
 from acquire_research_papers.discovery.openalex import OpenAlexClient  # noqa: E402
@@ -100,6 +102,10 @@ INDEX_CASES = (
         exact=True),
     IndexCase("CVPR", 2023, 2000, lambda: CvfIndexProvider(
         SafeHttpClient(allowed_hosts={"openaccess.thecvf.com"}, timeout=120.0, **RETRY))),
+    IndexCase("ICLR", 2024, 2200, lambda: IclrIndexProvider(
+        SafeHttpClient(allowed_hosts={"proceedings.iclr.cc"}, timeout=120.0, **RETRY))),
+    IndexCase("OSDI", 2024, 50, lambda: UsenixIndexProvider(
+        SafeHttpClient(allowed_hosts={"www.usenix.org"}, timeout=120.0, **RETRY))),
 )
 
 
