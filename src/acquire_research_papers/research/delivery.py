@@ -11,6 +11,7 @@ from acquire_research_papers.artifacts import atomic_write_bytes, sha256_bytes
 from acquire_research_papers.discovery.corpus import CandidateMetadata
 from acquire_research_papers.research.evidence import EvidenceRecord
 from acquire_research_papers.research.planner import ResearchPlan
+from acquire_research_papers.research.saturation import summary_lines
 from acquire_research_papers.research.state import (
     canonical_json,
     claim_ids,
@@ -31,6 +32,10 @@ class ResearchDeliveryResult:
     run_manifest: Path | None = None
     claim_coverage: Path | None = None
     report: Path | None = None
+    search_saturation: Path | None = None
+
+
+SATURATION_FILE = "search-saturation.json"
 
 
 def _write(path: Path, value: str, *, bom: bool = False) -> None:
@@ -52,6 +57,7 @@ class ResearchDelivery:
         graph_edges: list[Any] | tuple[Any, ...] = (),
         graph_diagnostics: list[Any] | tuple[Any, ...] = (),
         graph_bounds: Any | None = None,
+        saturation: Mapping[str, Any] | None = None,
         pending_paper_ids: list[str] | tuple[str, ...] = (),
         review_status_by_paper: Mapping[str, str] | None = None,
         run_status: str = "review_required",
@@ -86,6 +92,10 @@ class ResearchDelivery:
                 "edges": [encode(edge) for edge in graph_edges],
                 "diagnostics": [encode(item) for item in graph_diagnostics],
             }, ensure_ascii=False, indent=2) + "\n")
+            saturation_path = self.output / SATURATION_FILE if saturation else None
+            if saturation and saturation_path is not None:
+                _write(saturation_path, json.dumps(dict(saturation), ensure_ascii=False,
+                                                   indent=2) + "\n")
             _write(run_manifest, json.dumps({
                 "schema_version": 1, "output_version": 2, "phase": "discovery",
                 "status": run_status, "brief": brief,
@@ -93,9 +103,11 @@ class ResearchDelivery:
                 "candidate_count": len(candidates), "candidates_file": candidates_snapshot.name,
                 "candidates_sha256": sha256_bytes(candidate_bytes),
                 "citation_graph": citation_graph.name, "research_plan": research_plan.name,
+                **({"search_saturation": SATURATION_FILE} if saturation_path else {}),
             }, ensure_ascii=False, indent=2) + "\n")
             return ResearchDeliveryResult(research_plan=research_plan, candidates_snapshot=candidates_snapshot,
-                                          citation_graph=citation_graph, run_manifest=run_manifest)
+                                          citation_graph=citation_graph, run_manifest=run_manifest,
+                                          search_saturation=saturation_path)
 
         manifest = self.output / "research-manifest.csv"
         manifest_buffer = io.StringIO(newline="")
@@ -369,7 +381,17 @@ class ResearchDelivery:
                  f"Status: `{status}`", "", "Search scope and provenance: `../research-plan.json`.",
                  "", "## Search scope", "", "```json",
                  json.dumps(brief.get("scope", {}), ensure_ascii=False, indent=2, sort_keys=True),
-                 "```", "", "## Papers", ""]
+                 "```", ""]
+        # The report is written to <run>/reports; discovery left the record in the run root.
+        saturation_path = self.output.parent / SATURATION_FILE
+        if saturation_path.is_file():
+            try:
+                record = json.loads(saturation_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                record = None
+            if isinstance(record, dict):
+                lines.extend(["## Search saturation", "", *summary_lines(record), ""])
+        lines.extend(["## Papers", ""])
         paper_rows = []
         for candidate in candidates:
             records = [r for r in evidence if r.paper_id == candidate.key]

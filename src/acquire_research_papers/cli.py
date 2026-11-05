@@ -1474,6 +1474,10 @@ def run_cli(
                     "research_plan": str(result.delivery.research_plan),
                     "candidates": str(result.delivery.candidates_snapshot),
                     "citation_graph": str(result.delivery.citation_graph),
+                    "search_saturation": str(result.delivery.search_saturation)
+                    if result.delivery.search_saturation else None,
+                    "saturation_signals": result.saturation_signals,
+                    "next_actions": result.next_actions,
                     "run_manifest": str(result.delivery.run_manifest),
                     "claim_coverage": str(result.delivery.claim_coverage) if result.delivery.claim_coverage else None,
                 }

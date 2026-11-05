@@ -324,6 +324,7 @@ Title and abstract are enough to nominate and triage candidates. A claim that a 
 Research mode is an explicit, resumable pipeline rather than an unattended one-command systematic review:
 
 - `discover research` searches Crossref plus configured Semantic Scholar/OpenAlex sources, deduplicates by DOI, and executes bounded backward, forward, and related-paper expansion. Each optional provider can fail independently, leaving a sanitized diagnostic rather than erasing other results.
+- `search-saturation.json` records how many new papers each query pass and each citation-graph step still added, how candidates spread over recent and earlier years, and which candidates rest on a single search route or lack an abstract. Its `signals` (for example `search_still_growing`, `citation_frontier_growing`, `seeds_not_expanded`, or `stable_within_bounds`) and `next_actions` say whether to broaden the brief or widen the graph before review; the evidence report repeats them. These numbers describe this run's queries and bounds, never recall of the literature.
 - `review research` requires one explicit agent include/exclude decision for every hash-bound candidate, then freezes only the closest papers selected for full-text checking. Its normalized decisions and review manifest are hash-bound into the selection.
 - `acquire research` reuses the official publisher workflow, preserves manual and retry queues, and parses verified PDFs through the content-addressed MinerU cache. Separate acquisition/parsing pending counts keep mixed failures visible; the top-level status identifies the earliest unfinished gate.
 - `evidence research` verifies paper IDs, PDF and Markdown hashes, claim IDs, read scope, locations, and excerpts before filling the evidence map, closest-work matrix, claim coverage, and bounded gap report.
@@ -444,7 +445,7 @@ Read the CLI result for current status, counts, next actions and available paths
 | Corpus discovery | Request, `coverage.jsonl`, candidates, evidence packets, discovery errors and manifest | `pending-metadata.csv` only when blocked metadata exists |
 | Corpus review | Reviewed candidates, `selected-papers.jsonl`, selection and review manifests | `pending-review.csv` stays hash-bound, including an empty completed queue |
 | Corpus acquisition | Acquisition ledger, selection binding, delivery manifest and official pairs | `paper-manifest.csv`; manual/retry queues only when nonempty |
-| Research discovery | `research-plan.json`, `research-candidates.jsonl`, `citation-graph.json`, `research-run.json` | No evidence/gap reports at this stage |
+| Research discovery | `research-plan.json`, `research-candidates.jsonl`, `citation-graph.json`, `search-saturation.json`, `research-run.json` | No evidence/gap reports at this stage |
 | Research review / full text | Reviewed decisions, frozen selection, phase manifests, `full-text-manifest.jsonl` and internal parse cache | Nonempty review/download queues; status separates acquisition from parsing |
 | Research evidence | `validated-evidence-reviews.jsonl` and `research-evidence.json` | One `reports/report.md`; `--export-csv` adds `papers.csv` and `claim-coverage.csv` |
 | Author bibliography | `author-discovery.json` with source/identity/date evidence | `report.md`; `--export-csv` adds `author-discovery.csv` |
@@ -488,7 +489,7 @@ These are improvement priorities, not claims about current support.
 
 ### Near term
 
-1. **Measure research-search saturation.** Add repeatable stopping diagnostics for new mechanisms, citation-frontier growth, classic/recent coverage, and unresolved boundary papers without turning them into false universal-recall claims.
+1. **Act on research-search saturation.** Build on the saturation record with follow-up discovery that reuses a finished run, so broadening a brief or widening the graph adds to the same candidate set instead of starting a new directory.
 2. **Improve IEEE institution diagnostics.** Extend the current named-profile doctor with clearer first-use adaptation and live access diagnostics while keeping secrets private.
 3. **Productize ACM authorized access.** Design a dedicated visible, isolated, exact-host browser contract with the same fail-closed standards as IEEE; retain manual fallback when access or page shape is unknown.
 4. **Extend safe delta acquisition.** Build on the existing library import/update plans to bind new frozen selections while preserving verified files.

@@ -324,6 +324,7 @@ python "$skill/scripts/arp.py" evidence research `
 Research mode 是明确分阶段、可恢复的流程，不是无人参与的一键系统综述：
 
 - `discover research` 使用 Crossref 以及已配置的 Semantic Scholar/OpenAlex 搜索，按 DOI 去重，并执行有边界的后向参考文献、前向引用和 related-paper 扩展。可选来源可以独立失败，只留下脱敏诊断，不会抹掉其他来源的结果。
+- `search-saturation.json` 记录每轮查询和每个引用图扩展步骤还新增了多少论文、候选在近期和较早年份的分布，以及哪些候选只来自单一检索路径或缺少摘要。其中的 `signals`（如 `search_still_growing`、`citation_frontier_growing`、`seeds_not_expanded` 或 `stable_within_bounds`）和 `next_actions` 说明评审前是否需要扩大检索词或扩大引用图；证据报告会重复这些内容。这些数字只描述本次运行的查询和边界，不代表文献召回率。
 - `review research` 要求当前 Agent 对每个哈希绑定候选明确给出 include/exclude 决定，然后只冻结需要全文核验的最相近论文。规范化决定和审核清单也会通过哈希绑定到选集。
 - `acquire research` 复用正式出版社获取流程，保留人工和重试队列，并通过内容寻址的 MinerU 缓存解析已核验 PDF。获取待办和解析待办分别计数；顶层状态指向最早尚未完成的关口，混合失败也不会互相遮蔽。
 - `evidence research` 校验论文 ID、PDF 和 Markdown 哈希、claim ID、阅读范围、位置和摘录，之后填充证据图、最相近工作矩阵、claim 覆盖表和有边界的 gap 报告。
@@ -444,7 +445,7 @@ python "$skill/scripts/arp.py" manual-fetch `
 | Corpus 发现 | 请求、`coverage.jsonl`、候选、证据包、来源错误和 manifest | 仅有缺失元数据时写 `pending-metadata.csv` |
 | Corpus 复核 | 复核决定、`selected-papers.jsonl`、选集和复核 manifest | `pending-review.csv` 受哈希绑定，完成后仍保留空队列 |
 | Corpus 获取 | 获取账本、选集绑定、交付 manifest 和正式文件对 | `paper-manifest.csv`；人工/重试队列仅在非空时生成 |
-| Research 发现 | `research-plan.json`、`research-candidates.jsonl`、`citation-graph.json`、`research-run.json` | 此阶段不生成证据或 gap 报告 |
+| Research 发现 | `research-plan.json`、`research-candidates.jsonl`、`citation-graph.json`、`search-saturation.json`、`research-run.json` | 此阶段不生成证据或 gap 报告 |
 | Research 复核 / 全文 | 复核决定、冻结选集、阶段 manifest、`full-text-manifest.jsonl` 和内部解析缓存 | 非空复核/下载队列；状态区分获取与解析阻塞 |
 | Research 证据 | `validated-evidence-reviews.jsonl`、`research-evidence.json` | 一份 `reports/report.md`；`--export-csv` 增加 `papers.csv`、`claim-coverage.csv` |
 | 作者文献 | 含来源、身份、日期证据的 `author-discovery.json` | `report.md`；`--export-csv` 增加 `author-discovery.csv` |
@@ -488,7 +489,7 @@ python "$skill/scripts/arp.py" manual-fetch `
 
 ### 近期
 
-1. **量化 research 检索饱和度。**增加可重复的停止诊断，报告新机制、引用前沿增长、经典/近期工作覆盖和未解决边界论文，同时避免把这些指标误写成普遍召回率证明。
+1. **根据检索饱和度继续检索。**在饱和度记录的基础上支持复用已完成运行的后续发现，使扩大检索词或引用图时把结果加入同一候选集，而不必新建目录。
 2. **改善 IEEE 院校诊断。**在现有命名 profile 和 doctor 基础上改进首次适配及实时访问诊断，继续保护凭据。
 3. **产品化 ACM 授权访问。**设计独立、可见、隔离并限制准确域名的浏览器契约，采用与 IEEE 相同的 fail-closed 原则；访问或页面形态未知时继续转人工。
 4. **扩展安全增量获取。**在现有论文库导入、更新计划基础上让新冻结选集复用已验证用户文件。

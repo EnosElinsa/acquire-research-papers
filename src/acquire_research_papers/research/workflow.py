@@ -12,6 +12,7 @@ from acquire_research_papers.mineru import MineruCache, MineruResult
 from acquire_research_papers.research.delivery import ResearchDelivery, ResearchDeliveryResult
 from acquire_research_papers.research.evidence import EvidenceRecord
 from acquire_research_papers.research.planner import ResearchPlan, ResearchPlanner
+from acquire_research_papers.research.saturation import StepYield, assess
 
 
 @dataclass(frozen=True)
@@ -19,6 +20,8 @@ class ResearchWorkflowResult:
     status: str
     query_passes: int
     delivery: ResearchDeliveryResult
+    saturation_signals: tuple[str, ...] = ()
+    next_actions: tuple[dict[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -55,6 +58,8 @@ class ResearchDiscovery(Sequence[CandidateMetadata]):
     graph_bounds: GraphBounds = field(
         default_factory=lambda: GraphBounds(0, 0)
     )
+    # Search saturation record (see research.saturation); empty for custom discoverers.
+    saturation: dict[str, Any] = field(default_factory=dict)
 
     def __iter__(self) -> Iterator[CandidateMetadata]:
         return iter(self.candidates)
@@ -153,11 +158,16 @@ class ResearchDiscoverer:
         discovered: dict[str, CandidateMetadata] = {}
         query_passes: dict[str, list[str]] = {}
         diagnostics: list[GraphDiagnostic] = []
+        pass_yields: list[StepYield] = []
         for query in plan.queries:
+            seen_before = set(discovered)
+            returned: set[str] = set()
+            failed = 0
             for searcher in self.searchers:
                 try:
                     searched = tuple(searcher(query.query, self.rows_per_query))
                 except Exception as exc:
+                    failed += 1
                     diagnostics.append(
                         GraphDiagnostic(
                             seed="",
@@ -171,10 +181,13 @@ class ResearchDiscoverer:
                     if not self._in_scope(candidate, research_scope):
                         continue
                     key = candidate_identity(candidate)
+                    returned.add(key)
                     discovered[key] = merge_candidates(discovered.get(key), candidate)
                     passes = query_passes.setdefault(key, [])
                     if query.kind not in passes:
                         passes.append(query.kind)
+            pass_yields.append(StepYield(query.kind, len(returned), len(returned - seen_before),
+                                         failed))
         initially_ranked = sorted(
             discovered.items(),
             key=lambda item: (
@@ -209,12 +222,17 @@ class ResearchDiscoverer:
         )
         graph_paths: dict[str, list[dict[str, str]]] = {}
         edges: list[CitationEdge] = []
+        frontier_yields: list[StepYield] = []
         for seed, directions in graph_requests:
             for direction in directions:
+                seen_before = set(discovered)
+                returned = set()
+                failed = 0
                 for expander in self.graph_expanders:
                     try:
                         expanded = tuple(expander(seed, direction, graph_limit))
                     except Exception as exc:
+                        failed += 1
                         diagnostics.append(
                             GraphDiagnostic(
                                 seed=seed,
@@ -228,6 +246,7 @@ class ResearchDiscoverer:
                         if not self._in_scope(candidate, research_scope):
                             continue
                         key = candidate_identity(candidate)
+                        returned.add(key)
                         provider = self._provider(expander, candidate)
                         path = {
                             "seed": seed,
@@ -246,6 +265,9 @@ class ResearchDiscoverer:
                         )
                         if edge not in edges:
                             edges.append(edge)
+                frontier_yields.append(StepYield(f"{seed} {direction}", len(returned),
+                                                 len(returned - seen_before), failed))
+        truncated = len(discovered) > self.maximum
         ranked = sorted(
             discovered.items(),
             key=lambda item: (
@@ -275,6 +297,19 @@ class ResearchDiscoverer:
             for key, candidate in ranked
         )
         included = {candidate_identity(candidate) for candidate in candidates}
+        scope_years = research_scope.get("years")
+        saturation = assess(
+            passes=pass_yields,
+            frontier=frontier_yields,
+            candidates=candidates,
+            routes={key: len(query_passes.get(key, ())) + len(graph_paths.get(key, ()))
+                    for key in discovered},
+            skipped_seeds=graph_bounds.skipped_seeds,
+            maximum=self.maximum,
+            truncated=truncated,
+            scope_years=[int(year) for year in scope_years]
+            if isinstance(scope_years, (list, tuple)) else (),
+        )
         return ResearchDiscovery(
             candidates=candidates,
             edges=tuple(
@@ -288,6 +323,7 @@ class ResearchDiscoverer:
             ),
             diagnostics=tuple(diagnostics),
             graph_bounds=graph_bounds,
+            saturation=saturation,
         )
 
 
@@ -330,9 +366,13 @@ class ResearchWorkflow:
             graph_edges=list(getattr(discovered, "edges", ())),
             graph_diagnostics=list(getattr(discovered, "diagnostics", ())),
             graph_bounds=getattr(discovered, "graph_bounds", None),
+            saturation=getattr(discovered, "saturation", None) or None,
         )
+        saturation = getattr(discovered, "saturation", None) or {}
         return ResearchWorkflowResult(
             status="review_required",
             query_passes=len(plan.queries),
             delivery=delivery,
+            saturation_signals=tuple(saturation.get("signals", ())),
+            next_actions=tuple(saturation.get("next_actions", ())),
         )

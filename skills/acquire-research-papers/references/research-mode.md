@@ -15,6 +15,8 @@ Repeat until new searches stop producing materially different mechanisms, recent
 
 Configured Semantic Scholar and OpenAlex clients join Crossref as research searchers. Semantic Scholar performs references, citations, and related-paper expansion; configured OpenAlex adds its citation relationships. `citation-graph.json` records the applied seed and neighbor limits, expanded seeds, and seeds skipped by the bound. Provider failures are recorded by phase and exception class without copying response bodies, keys, or signed query strings.
 
+`search-saturation.json` (named in `research-run.json` as `search_saturation`) says whether the search was still finding new papers when it stopped. `query_passes` and `citation_frontier` list each step's in-scope results and how many were new; `coverage` gives the year spread (recent = the last three scope years), papers cited at least 100 times, and abstracts; `boundary_papers` lists candidates found by a single route or without an abstract. Act on `signals` before review: `search_still_growing` (the last query pass still added at least three papers and 30% of its results) means broaden the brief with synonyms, older terms, or venues; `citation_frontier_growing` means raise `analysis.graph_seed_limit` or `analysis.graph_neighbors_per_direction`; `seeds_not_expanded`, `candidate_limit_reached`, `provider_failures`, `no_recent_work`, and `no_earlier_work` are self-describing. Rerun discovery into a new directory with the changed brief. `stable_within_bounds` means only that this run's own queries and bounds stopped adding papers; never report it as recall or as proof that no other work exists. `discover research` prints the signals and their `next_actions`, and the evidence report has a "Search saturation" section.
+
 Discovery writes an immutable `research-candidates.jsonl` snapshot, `citation-graph.json`, and `research-run.json`. Do not edit them. Review every candidate and write one JSONL decision per packet using `schemas/research-review-decision.schema.json`, preserving `candidate_id` and `candidate_sha256`. Run:
 
 ```text
@@ -69,7 +71,7 @@ The importer rejects stale PDF hashes, changed Markdown, unknown claims, mismatc
 
 ## Read the result
 
-New discovery runs write only four state files: `research-plan.json`, `research-candidates.jsonl`, `citation-graph.json`, and `research-run.json` (`output_version: 2`). Review and full-text phases append the audit and selection state required for recovery. Do not edit frozen artifacts.
+New discovery runs write five state files: `research-plan.json`, `research-candidates.jsonl`, `citation-graph.json`, `search-saturation.json`, and `research-run.json` (`output_version: 2`). Review and full-text phases append the audit and selection state required for recovery. Do not edit frozen artifacts.
 
 After evidence import, read `reports/report.md`: paper review status, per-claim coverage, exact located evidence, pending work, and a bounded conclusion only for `gap-analysis`. Status `complete` means the frozen papers were reviewed; individual claims can remain unresolved. Search provenance stays in the root plan, rather than being copied into reports.
 
