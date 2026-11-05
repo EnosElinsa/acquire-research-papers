@@ -5,6 +5,7 @@
   python scripts/release.py smoke            # live checks of the built ZIP and wheel
   python scripts/release.py publish --title "v0.13.0 — …" --notes-file notes.md
   python scripts/release.py smoke --public   # the same checks from the public release URL
+  python scripts/release.py remote --host user@host   # install on a remote host over SSH
 
 ``bump`` rewrites every version string in one pass and changes nothing if any file is not as
 expected. ``build`` builds the wheel and skill ZIP, rebuilds them in a temporary directory to
@@ -12,7 +13,9 @@ prove they are byte-reproducible, and writes ``SHA256SUMS``. ``publish`` checks 
 release commit and tag are pushed and that every test workflow run for that commit passed,
 creates a draft release, uploads each asset with retries
 (GitHub's upload host sometimes drops a connection), checks the uploaded sizes, publishes the
-draft, and downloads the assets again to compare hashes. Committing, tagging, and pushing stay
+draft, and downloads the assets again to compare hashes. ``remote`` installs the built skill
+ZIP into ``~/.kiro/skills`` and ``~/.codex/skills`` on a host given at run time, after backing
+up the installed skill (see ``release_remote.py``). Committing, tagging, and pushing stay
 manual. Every step prints one JSON object.
 """
 from __future__ import annotations
@@ -27,6 +30,7 @@ import subprocess
 import tempfile
 import time
 import tomllib
+import zipfile
 from collections.abc import Callable, Sequence
 from datetime import date
 from pathlib import Path
@@ -158,6 +162,27 @@ def _default_builder(root: Path, output: Path, *, update_source_manifest: bool) 
         root, output, update_source_manifest=update_source_manifest)
 
 
+def _check_bumped_text(root: Path, output: Path, version: str) -> None:
+    """The bump's README and CHANGELOG edits are on disk and in the built wheel's README.
+
+    At 0.14.0 those edits were gone seconds after bump wrote them, and the first build
+    embedded the old README.
+    """
+    link = f"releases/tag/v{version}"
+    redo = (f"; redo the bump's README and CHANGELOG edits by hand, delete {output}, "
+            "and build again")
+    for relative in _README_SECTIONS:
+        if link not in _read(root / relative):
+            raise ReleaseError(f"{relative} does not link {link}{redo}")
+    if not re.search(rf"(?m)^## {re.escape(version)} ", _read(root / "CHANGELOG.md")):
+        raise ReleaseError(f"CHANGELOG.md has no {version} section{redo}")
+    with zipfile.ZipFile(output / _asset_names(version)[0]) as wheel:
+        metadata = [name for name in wheel.namelist() if name.endswith(".dist-info/METADATA")]
+        text = wheel.read(metadata[0]).decode("utf-8") if len(metadata) == 1 else ""
+    if link not in text:
+        raise ReleaseError(f"the built wheel's README does not link {link}{redo}")
+
+
 def build_release(root: Path, output: Path | None = None, *,
                   builder: Callable[..., dict] = _default_builder) -> dict:
     """Build into a fresh directory, prove the build reproducible, and write SHA256SUMS."""
@@ -177,6 +202,7 @@ def build_release(root: Path, output: Path | None = None, *,
     runtime = json.loads((root / "skills" / NAME / "runtime.json").read_text(encoding="utf-8"))
     if runtime.get("version") != version or runtime["wheel"]["sha256"] != hashes[names[0]]:
         raise ReleaseError("skills/acquire-research-papers/runtime.json does not pin the built wheel")
+    _check_bumped_text(root, output, version)
     sums = "".join(f"{hashes[name]}  {name}\n" for name in names)
     (output / "SHA256SUMS").write_bytes(sums.encode("ascii"))  # LF lines, wheel first
     return {"status": "built", "version": version, "output": str(output),
@@ -353,6 +379,13 @@ def main(argv: list[str] | None = None) -> int:
     publish_parser.add_argument("--repo", default=REPOSITORY)
     publish_parser.add_argument("--skip-ci-check", action="store_true",
                                 help="publish without requiring passed test runs for the commit")
+    remote_parser = commands.add_parser(
+        "remote", help="install the built skill on a remote host over SSH, with backups")
+    remote_parser.add_argument("--host", required=True,
+                               help="user@host or an SSH config alias; never stored")
+    remote_parser.add_argument("--target", action="append", choices=["kiro", "codex"],
+                               help="skills folder to install into (repeatable; default both)")
+    remote_parser.add_argument("--dist", type=Path)
     args = parser.parse_args(argv)
     root = args.root.resolve()
     try:
@@ -367,13 +400,20 @@ def main(argv: list[str] | None = None) -> int:
                                                           public=args.public)
             print(json.dumps(result, indent=2, ensure_ascii=False))
             return 0 if result["status"] == "passed" else 1
+        elif args.command == "remote":
+            version = current_version(root)
+            dist = (args.dist or root / "dist" / f"release-{version}").resolve()
+            result = _load_sibling("release_remote").install_remote(
+                dist, version, host=args.host, targets=args.target or ("kiro", "codex"))
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+            return 0 if result["status"] == "installed" else 1
         else:
             if not shutil.which("gh"):
                 raise ReleaseError("the GitHub CLI (gh) is required to publish")
             result = publish(root, title=args.title, notes_file=args.notes_file.resolve(),
                              dist=args.dist, repository=args.repo,
                              check_ci=not args.skip_ci_check)
-    except (ReleaseError, OSError, ValueError, KeyError, subprocess.CalledProcessError) as exc:
+    except (RuntimeError, OSError, ValueError, KeyError, subprocess.SubprocessError) as exc:
         print(json.dumps({"status": "error", "step": args.command, "message": str(exc)},
                          ensure_ascii=False))
         return 1

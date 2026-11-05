@@ -1,8 +1,9 @@
 name: weekly source check
 
-# Live check that venue presets and official proceedings indexes still work; see
-# scripts/check_sources.py. OpenAlex presets need the OPENALEX_API_KEY repository secret and
-# are reported as skipped without it. A failed run means an upstream change to fix.
+# Live check that venue presets, official proceedings indexes, and open-access fetches still
+# work; see scripts/check_sources.py. OpenAlex presets need the OPENALEX_API_KEY repository
+# secret and are reported as skipped without it. A failed run means an upstream change to fix.
+# A remote server fault that outlasts one retry does not fail the run; it shows as a warning.
 on:
   schedule:
     - cron: "17 3 * * 1"
@@ -14,7 +15,7 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
@@ -24,10 +25,16 @@ jobs:
         run: python -m pip install uv
       - name: Install dependencies
         run: uv sync --locked
-      - name: Check presets and official indexes
+      - name: Check presets, official indexes, and open-access fetches
         env:
           OPENALEX_API_KEY: ${{ secrets.OPENALEX_API_KEY }}
         run: uv run python scripts/check_sources.py > source-check.json
+      - name: Flag remote server faults
+        if: always()
+        run: >-
+          jq -r '.upstream_errors[]? | "::warning title=Remote server fault::\(.) failed
+          twice with a temporary server or network error; nothing to fix here, rerun later"'
+          source-check.json || true
       - name: Keep the report
         if: always()
         uses: actions/upload-artifact@v7

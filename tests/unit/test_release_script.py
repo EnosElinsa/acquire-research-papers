@@ -5,6 +5,7 @@ import importlib.util
 import json
 import shutil
 import subprocess
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -92,7 +93,18 @@ def fake_build_root(tmp_path: Path, version: str = "1.2.3") -> Path:
     root = tmp_path / "repo"
     (root / "skills/acquire-research-papers").mkdir(parents=True)
     (root / "pyproject.toml").write_text(f'[project]\nversion = "{version}"\n', encoding="utf-8")
+    for readme in ("README.md", "README.zh-CN.md"):
+        (root / readme).write_text(f"See releases/tag/v{version}.\n", encoding="utf-8")
+    (root / "CHANGELOG.md").write_text(f"# Changelog\n\n## {version} \u2014 2026-12-01\n",
+                                       encoding="utf-8")
     return root
+
+
+def fake_wheel(path: Path, readme: str, extra: bytes = b"") -> None:
+    with zipfile.ZipFile(path, "w") as wheel:  # fixed dates, so equal input gives equal bytes
+        wheel.writestr(zipfile.ZipInfo("pkg-1.dist-info/METADATA", (1980, 1, 1, 0, 0, 0)),
+                       "Name: pkg\n\n" + readme)
+        wheel.writestr(zipfile.ZipInfo("pkg/data", (1980, 1, 1, 0, 0, 0)), b"wheel" + extra)
 
 
 def fake_builder(drift: bool = False):
@@ -103,7 +115,8 @@ def fake_builder(drift: bool = False):
         version = release.current_version(root)
         wheel, archive = release._asset_names(version)
         output.mkdir(parents=True)
-        (output / wheel).write_bytes(b"wheel" + (bytes([len(calls)]) if drift else b""))
+        fake_wheel(output / wheel, (root / "README.md").read_text(encoding="utf-8"),
+                   bytes([len(calls)]) if drift else b"")
         (output / archive).write_bytes(b"zip")
         if update_source_manifest:
             (root / "skills/acquire-research-papers/runtime.json").write_text(json.dumps({
@@ -121,14 +134,42 @@ def test_build_checks_a_second_build_and_writes_sha256sums(tmp_path):
     result = release.build_release(root, builder=builder)
 
     assert calls == [True, False]
-    sums = (root / "dist/release-1.2.3/SHA256SUMS").read_bytes()
-    assert sums == (f"{hashlib.sha256(b'wheel').hexdigest()}  "
-                    "acquire_research_papers-1.2.3-py3-none-any.whl\n"
-                    f"{hashlib.sha256(b'zip').hexdigest()}  "
-                    "acquire-research-papers-skill-1.2.3.zip\n").encode()
+    dist = root / "dist/release-1.2.3"
+    wheel = (dist / "acquire_research_papers-1.2.3-py3-none-any.whl").read_bytes()
+    assert (dist / "SHA256SUMS").read_bytes() == (
+        f"{hashlib.sha256(wheel).hexdigest()}  acquire_research_papers-1.2.3-py3-none-any.whl\n"
+        f"{hashlib.sha256(b'zip').hexdigest()}  acquire-research-papers-skill-1.2.3.zip\n"
+    ).encode()
     assert result["reproducible"] is True
     with pytest.raises(release.ReleaseError, match="already exists"):
         release.build_release(root, builder=builder)
+
+
+@pytest.mark.parametrize(("lost", "message"), [
+    ("README.zh-CN.md", "README.zh-CN.md does not link releases/tag/v1.2.3"),
+    ("CHANGELOG.md", "CHANGELOG.md has no 1.2.3 section"),
+    ("wheel", "built wheel's README does not link"),
+])
+def test_build_refuses_when_the_bump_text_is_missing(tmp_path, lost, message):
+    # At 0.14.0 the bump's README and CHANGELOG edits vanished before the first build.
+    root = fake_build_root(tmp_path)
+    builder, _ = fake_builder()
+    if lost == "wheel":
+        def builder(root, output, *, update_source_manifest, inner=builder):
+            result = inner(root, output, update_source_manifest=update_source_manifest)
+            wheel = output / release._asset_names("1.2.3")[0]
+            fake_wheel(wheel, "See releases/tag/v1.2.2.\n")
+            if update_source_manifest:
+                (root / "skills/acquire-research-papers/runtime.json").write_text(json.dumps({
+                    "version": "1.2.3",
+                    "wheel": {"sha256": hashlib.sha256(wheel.read_bytes()).hexdigest()}}))
+            return result
+    else:
+        (root / lost).write_text("# old text from before the bump\n", encoding="utf-8")
+
+    with pytest.raises(release.ReleaseError, match=message):
+        release.build_release(root, builder=builder)
+    assert not (root / "dist/release-1.2.3/SHA256SUMS").exists()
 
 
 def test_build_rejects_a_build_that_is_not_reproducible(tmp_path):

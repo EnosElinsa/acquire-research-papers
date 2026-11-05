@@ -1,8 +1,31 @@
+import os
 from pathlib import Path
 
 import pytest
 
-from acquire_research_papers.paths import AppPaths, ensure_outside_repository
+from acquire_research_papers.paths import AppPaths, ensure_outside_repository, resolve_path
+
+windows_only = pytest.mark.skipif(os.name != "nt", reason="extended-length paths are Windows-only")
+
+
+@windows_only
+def test_resolve_path_drops_the_extended_length_prefix(tmp_path: Path) -> None:
+    folder = tmp_path.resolve() / "Venue"
+    folder.mkdir()
+    assert resolve_path(Path("\\\\?\\" + str(folder))) == folder
+    assert resolve_path(Path("\\\\?\\" + str(folder / "missing.pdf"))) == folder / "missing.pdf"
+
+
+@windows_only
+@pytest.mark.parametrize(("raw", "expected"), [
+    ("\\\\?\\UNC\\server\\share\\a.pdf", "\\\\server\\share\\a.pdf"),
+    ("\\\\?\\Volume{0}\\a.pdf", "\\\\?\\Volume{0}\\a.pdf"),
+])
+def test_resolve_path_shortens_unc_names_and_keeps_volume_names(
+    monkeypatch: pytest.MonkeyPatch, raw: str, expected: str
+) -> None:
+    monkeypatch.setattr(Path, "resolve", lambda self, strict=False: self)
+    assert str(resolve_path(Path(raw))) == expected
 
 
 def test_app_paths_are_outside_skill_repository(tmp_path: Path) -> None:

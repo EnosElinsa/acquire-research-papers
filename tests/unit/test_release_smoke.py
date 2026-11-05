@@ -60,7 +60,7 @@ def run(tmp_path: Path, **outcomes):
     invoke, calls = fake_cli(tmp_path, **outcomes)
     lines: list[str] = []
     checks = release_smoke.Smoke(invoke, tmp_path, version="9.9.9", presets=3,
-                                 progress=lines.append).run()
+                                 progress=lines.append, sleeper=lambda seconds: None).run()
     return checks, calls, lines
 
 
@@ -68,7 +68,7 @@ def test_every_check_passes_when_the_cli_answers_as_expected(tmp_path):
     checks, calls, lines = run(tmp_path)
 
     assert all(item["passed"] for item in checks), [i for i in checks if not i["passed"]]
-    assert len(checks) == 17 and len(lines) == 17
+    assert len(checks) == 18 and len(lines) == 18
     assert sum(call[0] == "discover" for call in calls) == 2
     springer = next(item for item in checks if item["check"] == "fetch Springer URL")
     assert springer["expected"] == ["delivered", "access_required"]
@@ -84,3 +84,36 @@ def test_an_unexpected_outcome_fails_only_its_check(tmp_path):
     failed = [item["check"] for item in checks if not item["passed"]]
     assert failed == ["fetch Elsevier DOI"]
     assert any(line.startswith("FAIL fetch Elsevier DOI") for line in lines)
+
+
+def test_a_transient_fetch_is_retried_once_into_a_fresh_directory(tmp_path):
+    outputs, pauses = [], []
+    answers = iter([(75, {"error_code": "network_transient"}, ""), (0, {"status": "delivered"}, "")])
+
+    def fetch(output):
+        outputs.append(output)
+        return next(answers)
+
+    observed, retried = release_smoke.fetch_with_retry(fetch, tmp_path, ("delivered",),
+                                                      pause=7, sleeper=pauses.append)
+
+    assert (observed, retried, pauses) == ("delivered", True, [7])
+    assert outputs[0] != outputs[1]
+
+
+def test_a_lasting_or_non_transient_failure_is_not_retried_forever(tmp_path):
+    calls = []
+
+    def fetch(code):
+        def run(output):
+            calls.append(output)
+            return 1, {"error_code": code}, ""
+        return run
+
+    assert release_smoke.fetch_with_retry(fetch("network_transient"), tmp_path, ("delivered",),
+                                          sleeper=lambda s: None) == ("network_transient", True)
+    assert len(calls) == 2
+    calls.clear()
+    assert release_smoke.fetch_with_retry(fetch("contract_error"), tmp_path, ("delivered",),
+                                          sleeper=lambda s: None) == ("contract_error", False)
+    assert len(calls) == 1

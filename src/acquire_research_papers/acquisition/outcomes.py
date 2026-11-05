@@ -118,6 +118,10 @@ def failure_outcome(error: BaseException) -> dict[str, str]:
         else:
             code = "contract_error"
         message = f"HTTP {status} from {_host(error.url)}"
+        if code == "network_transient":
+            # E.g. AAAI's citation export answered 520 for every client in Nov 2026 while its
+            # pages and PDFs worked: a server fault on the publisher's side, not a refusal.
+            message += "; the publisher's server failed, so rerun later"
         if code == "access_required":
             message += (" (a bot check that only a normal browser passes)"
                         if getattr(error, "bot_challenge", False) else "")

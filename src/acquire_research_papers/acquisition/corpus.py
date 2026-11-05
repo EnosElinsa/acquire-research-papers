@@ -24,6 +24,7 @@ from acquire_research_papers.acquisition.manual_handoff import (
 from acquire_research_papers.acquisition.outcomes import PAUSE_HOST, failure_outcome
 from acquire_research_papers.acquisition.router import canonical_landing_url, doi_publisher_host
 from acquire_research_papers.models import normalize_doi
+from acquire_research_papers.paths import resolve_path
 from acquire_research_papers.selection import SelectionRecord, SelectionStore
 
 
@@ -151,11 +152,11 @@ def _normalized_record_host(record: SelectionRecord) -> str:
 
 
 def _expected_paths(record: SelectionRecord, root: Path) -> dict[str, Path]:
-    resolved_root = root.resolve()
+    resolved_root = resolve_path(root)
     paths = {
-        "pdf": (resolved_root / record.relative_pdf).resolve(),
-        "bibtex": (resolved_root / record.relative_bibtex).resolve(),
-        "provenance": (resolved_root / record.relative_provenance).resolve(),
+        "pdf": resolve_path(resolved_root / record.relative_pdf),
+        "bibtex": resolve_path(resolved_root / record.relative_bibtex),
+        "provenance": resolve_path(resolved_root / record.relative_provenance),
     }
     if any(path == resolved_root or resolved_root not in path.parents for path in paths.values()):
         raise ValueError("selection delivery path escapes the output root")
@@ -252,7 +253,7 @@ def _verified_previous(
     for kind, path in expected.items():
         recorded = row.get(kind)
         digest = row.get(f"{kind}_sha256")
-        if not recorded or not digest or Path(str(recorded)).resolve() != path:
+        if not recorded or not digest or resolve_path(Path(str(recorded))) != path:
             return False
         if not path.is_file() or sha256_file(path) != digest:
             return False
@@ -390,7 +391,7 @@ def _quarantine_interrupted(record: SelectionRecord, root: Path) -> list[str]:
         return []
     if not _SELECTION_ID.fullmatch(record.selection_id):
         raise ValueError("selection ID cannot name an interruption folder")
-    resolved_root = root.resolve()
+    resolved_root = resolve_path(root)
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
     target = resolved_root / INTERRUPTED_DIRECTORY / record.selection_id / stamp
     target.mkdir(parents=True, exist_ok=False)
@@ -418,7 +419,7 @@ def _in_progress_row(record: SelectionRecord) -> dict[str, Any]:
 
 
 def _unverified_reserved_error(record: SelectionRecord, root: Path) -> ValueError:
-    resolved_root = root.resolve()
+    resolved_root = resolve_path(root)
     present = [
         path.relative_to(resolved_root).as_posix()
         for path in _expected_paths(record, root).values()
@@ -441,7 +442,11 @@ def _delivered_row(
     for kind, path in expected.items():
         supplied_path = outcome.get(kind)
         supplied_digest = outcome.get(f"{kind}_sha256")
-        if not supplied_path or Path(str(supplied_path)).resolve() != path or not path.is_file():
+        if (
+            not supplied_path
+            or resolve_path(Path(str(supplied_path))) != path
+            or not path.is_file()
+        ):
             return None
         actual_digest = sha256_file(path)
         if not supplied_digest or supplied_digest != actual_digest:
@@ -814,7 +819,7 @@ class CorpusAcquisitionWorkflow:
         not_retried = 0
         selection = SelectionStore.load(selection_manifest)
         selected_snapshot = selection.selected_path.read_bytes()
-        destination = output.resolve()
+        destination = resolve_path(output)
         destination.mkdir(parents=True, exist_ok=True)
         selection_sha256 = str(selection.manifest["selected_sha256"])
         binding_path = destination / "selection-binding.json"
@@ -1048,7 +1053,7 @@ def _finished_ledger(selection: SelectionStore, destination: Path) -> dict[str, 
 def load_manual_queue(selection_manifest: Path, output: Path) -> ManualQueue:
     """Read the manual-download items of a finished acquisition without changing it."""
     selection = SelectionStore.load(selection_manifest)
-    destination = output.resolve()
+    destination = resolve_path(output)
     ledger = _finished_ledger(selection, destination)
     waiting: list[SelectionRecord] = []
     imported: list[SelectionRecord] = []
@@ -1070,7 +1075,7 @@ def reconcile_manual_imports(selection_manifest: Path, output: Path) -> Acquisit
     """Record verified manual imports in the ledger and queues; contact no publisher."""
     selection = SelectionStore.load(selection_manifest)
     selected_snapshot = selection.selected_path.read_bytes()
-    destination = output.resolve()
+    destination = resolve_path(output)
     ledger = _finished_ledger(selection, destination)
     rows: list[dict[str, Any]] = []
     for record in selection.records:

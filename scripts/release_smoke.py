@@ -30,10 +30,14 @@ FETCHES = (
     ("PMLR URL", "https://proceedings.mlr.press/v202/aamand23a.html", ("delivered",)),
     ("CVF URL", "https://openaccess.thecvf.com/content/CVPR2023/html/Ci_GFPose_Learning_3D_"
      "Human_Pose_Prior_With_Gradient_Fields_CVPR_2023_paper.html", ("delivered",)),
+    ("IJCAI DOI", "10.24963/ijcai.2023/1", ("delivered",)),
     ("Springer URL", "https://link.springer.com/article/10.1007/s10994-021-06119-y",
      ("delivered", "access_required")),
     ("Elsevier DOI", "10.1016/j.cell.2020.02.052", ("access_required",)),
 )
+# Outcomes that say "try again later"; such a check is retried once before it counts.
+TRANSIENT = frozenset({"network_transient", "rate_limited"})
+RETRY_PAUSE_SECONDS = 30.0
 ICML_2023_PAPERS = 1828  # PMLR volume 202; a different count means the official index changed
 PRESET_SPEC = """mode: corpus
 name: release smoke presets
@@ -70,12 +74,15 @@ def _preset_count(root: Path) -> int:
 
 class Smoke:
     def __init__(self, invoke: Invoke, workspace: Path, *, version: str, presets: int,
-                 progress: Callable[[str], None]) -> None:
+                 progress: Callable[[str], None], retry_pause: float = RETRY_PAUSE_SECONDS,
+                 sleeper: Callable[[float], None] = time.sleep) -> None:
         self.invoke = invoke
         self.workspace = workspace
         self.version = version
         self.presets = presets
         self.progress = progress
+        self.retry_pause = retry_pause
+        self.sleeper = sleeper
         self.checks: list[dict[str, Any]] = []
 
     def check(self, name: str, expected: Any, observed: Any, passed: bool) -> bool:
@@ -97,11 +104,12 @@ class Smoke:
                    "--open-all" in help_text)
         self._presets()
         for label, reference, expected in FETCHES:
-            output = self.workspace / "out" / label.replace(" ", "-")
-            code, payload, _ = self.invoke("fetch", "--input", reference, "--output", str(output))
-            observed = ("delivered" if payload.get("status") == "delivered"
-                        else payload.get("error_code") or f"exit {code}")
-            self.check(f"fetch {label}", list(expected), observed, observed in expected)
+            observed, retried = fetch_with_retry(
+                lambda output: self.invoke("fetch", "--input", reference, "--output", output),
+                self.workspace / "out" / label.replace(" ", "-"), expected,
+                pause=self.retry_pause, sleeper=self.sleeper)
+            self.check(f"fetch {label}", list(expected),
+                       f"{observed} (after a retry)" if retried else observed, observed in expected)
         self._discovery()
         self._background_job()
         return self.checks
@@ -162,6 +170,20 @@ class Smoke:
                     (payload.get("result") or {}).get("status"))
         self.check("background fetch finishes delivered", ("finished", 0, "delivered"),
                    observed, observed == ("finished", 0, "delivered"))
+
+
+def fetch_with_retry(fetch: Callable[[str], tuple[int, dict[str, Any], str]], output: Path,
+                     expected: tuple[str, ...], *, pause: float = RETRY_PAUSE_SECONDS,
+                     sleeper: Callable[[float], None] = time.sleep) -> tuple[str, bool]:
+    """One fetch outcome; a transient one is retried once, into a fresh output directory."""
+    for attempt in range(2):
+        code, payload, _ = fetch(str(output / f"attempt-{attempt + 1}"))
+        observed = ("delivered" if payload.get("status") == "delivered"
+                    else payload.get("error_code") or f"exit {code}")
+        if attempt or observed in expected or observed not in TRANSIENT:
+            return observed, bool(attempt)
+        sleeper(pause)
+    raise AssertionError("unreachable")
 
 
 def _invoker(skill: Path, environment: dict[str, str]) -> Invoke:

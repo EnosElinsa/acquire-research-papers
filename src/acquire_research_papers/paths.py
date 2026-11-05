@@ -3,8 +3,30 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 from pathlib import Path
+import re
 
 from platformdirs import user_config_dir, user_data_dir
+
+_EXTENDED_DRIVE = re.compile(r"\\\\\?\\(?=[A-Za-z]:\\)")
+_EXTENDED_UNC = "\\\\?\\UNC\\"
+
+
+def resolve_path(path: Path) -> Path:
+    """Resolve ``path`` and drop the Windows extended-length ``\\\\?\\`` prefix.
+
+    On Windows, ``Path.resolve()`` keeps that prefix when another thread creates a missing
+    folder on the path during the call, so one file can resolve to two spellings. Both
+    spellings name the same file; path comparisons need a single one.
+    """
+    resolved = Path(path).resolve()
+    if os.name != "nt":
+        return resolved
+    text = str(resolved)
+    if text.startswith(_EXTENDED_UNC):
+        return Path("\\\\" + text[len(_EXTENDED_UNC):])
+    if _EXTENDED_DRIVE.match(text):
+        return Path(text[4:])
+    return resolved
 
 
 @dataclass(frozen=True)

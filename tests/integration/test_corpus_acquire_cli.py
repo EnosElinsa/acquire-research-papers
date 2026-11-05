@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -830,7 +831,8 @@ def test_publisher_server_error_is_retryable_and_keeps_its_status(tmp_path: Path
     resolver = Resolver(AdapterRouter({"publisher.example": "unavailable"}, [Unavailable()]))
     outcome = _single_outcome(tmp_path, "publisher.example", resolver)
     assert outcome["state"] == "retryable"
-    assert outcome["message"] == "HTTP 503 from publisher.example"
+    assert outcome["message"] == (
+        "HTTP 503 from publisher.example; the publisher's server failed, so rerun later")
     assert outcome["retryable"] is True
 
 
@@ -1042,6 +1044,27 @@ def test_parallel_hosts_overlap_while_each_host_gets_one_paper_at_a_time(tmp_pat
     assert overlap == ["slow-1"]
     assert result.complete
     assert [row["key"] for row in _ledger(result)] == ["slow-1", "fast-1", "slow-2", "fast-2"]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="extended-length paths are Windows-only")
+def test_an_extended_length_spelling_of_the_reserved_path_is_accepted(tmp_path: Path) -> None:
+    # Path.resolve() can return \\?\C:\... when another host's worker creates the shared
+    # venue folder mid-call; the delivered paper must still verify.
+    selection = _mixed_hosts(tmp_path / "selection", [("one.example", "one-1")])
+
+    def acquirer(record, destination):
+        outcome = delivered_outcome(record, destination)
+        for kind in ("pdf", "bibtex", "provenance"):
+            outcome[kind] = "\\\\?\\" + outcome[kind]
+        return outcome
+
+    result = CorpusAcquisitionWorkflow(acquirer=acquirer).run(
+        selection.manifest_path, tmp_path / "delivery")
+
+    assert result.complete
+    row = _ledger(result)[0]
+    assert row["state"] == "delivered"
+    assert not row["pdf"].startswith("\\\\?\\")
 
 
 def test_the_manual_queue_has_an_escaped_checklist_page_until_it_is_empty(tmp_path: Path) -> None:

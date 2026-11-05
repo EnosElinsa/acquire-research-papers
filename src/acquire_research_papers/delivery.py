@@ -21,6 +21,7 @@ from acquire_research_papers.bibliography import (
     parse_bibtex,
     verify_bibliography,
 )
+from acquire_research_papers.paths import resolve_path
 
 
 @dataclass(frozen=True)
@@ -55,7 +56,7 @@ def _slug(value: str) -> str:
 
 class GenericDelivery:
     def __init__(self, root: Path) -> None:
-        self.root = root.resolve()
+        self.root = resolve_path(root)
 
     def _paths(self, pair: AcquiredPair, paper_id: str) -> DeliveryResult:
         bundle = self.root / f"{_slug(pair.document.metadata.title)}--{paper_id[:12]}"
@@ -66,7 +67,7 @@ class GenericDelivery:
         )
 
     def _reserved_paths(self, values: tuple[Path, Path, Path]) -> DeliveryResult:
-        resolved = tuple((self.root / value).resolve() for value in values)
+        resolved = tuple(resolve_path(self.root / value) for value in values)
         if any(path == self.root or self.root not in path.parents for path in resolved):
             raise ValueError("reserved delivery path escapes the delivery root")
         if len({path.as_posix().casefold() for path in resolved}) != 3:
