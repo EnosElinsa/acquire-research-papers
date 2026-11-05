@@ -80,6 +80,7 @@ def test_public_documentation_is_present_and_has_no_placeholders() -> None:
         ROOT / "SECURITY.md",
         ROOT / "skills/acquire-research-papers/SKILL.md",
         *(ROOT / "skills/acquire-research-papers/references").glob("*.md"),
+        *(ROOT / "docs-site").glob("*/*.md"),
     ]
     assert all(path.is_file() for path in public_files)
     placeholder = re.compile(r"\b(?:TODO|TBD|FIXME|XXX)\b|\[TODO", re.IGNORECASE)
@@ -149,14 +150,15 @@ def test_readmes_explain_the_user_journey_and_current_maturity() -> None:
     assert "precision/recall" in chinese
 
 
-def test_readme_yaml_examples_are_copyable_specs(tmp_path: Path) -> None:
-    for readme_name in ("README.md", "README.zh-CN.md"):
-        text = (ROOT / readme_name).read_text(encoding="utf-8")
+def test_quick_start_yaml_examples_are_copyable_specs(tmp_path: Path) -> None:
+    # The READMEs link these documentation-site pages for the complete examples.
+    for language in ("en", "zh"):
+        text = (ROOT / "docs-site" / language / "quick-start.md").read_text(encoding="utf-8")
         yaml_blocks = re.findall(r"```yaml\n(.*?)\n```", text, flags=re.DOTALL)
         assert len(yaml_blocks) == 2
 
-        corpus_path = tmp_path / f"{readme_name}-corpus.yaml"
-        research_path = tmp_path / f"{readme_name}-research.yaml"
+        corpus_path = tmp_path / f"{language}-corpus.yaml"
+        research_path = tmp_path / f"{language}-research.yaml"
         corpus_path.write_text(yaml_blocks[0], encoding="utf-8")
         research_path.write_text(yaml_blocks[1], encoding="utf-8")
 

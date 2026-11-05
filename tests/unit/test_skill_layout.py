@@ -56,7 +56,8 @@ def test_public_repository_metadata_is_complete() -> None:
         "acquire_research_papers/_scripts/setup-ieee-profile-credential.ps1"
     )
     assert force_include["schemas"] == "acquire_research_papers/_schemas"
-    assert configuration["tool"]["hatch"]["build"]["exclude"] == ["/docs"]
+    assert configuration["tool"]["hatch"]["build"]["exclude"] == [
+        "/docs", "/docs-site", "/mkdocs.yml", "/mkdocs.zh.yml"]
 
 
 def test_ci_covers_only_supported_browser_helper_with_minimal_permissions() -> None:
@@ -74,6 +75,9 @@ def test_sciencedirect_manual_handoff_contract_is_explicit() -> None:
             "skills/acquire-research-papers/references/source-policies.md",
             "README.md",
             "README.zh-CN.md",
+            # The READMEs summarize; the documentation site holds the handoff steps.
+            "docs-site/en/manual-downloads.md",
+            "docs-site/zh/manual-downloads.md",
         )
     )
     for required in (

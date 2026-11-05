@@ -1,0 +1,55 @@
+# Chinese documentation site, built after the English one: mkdocs build -f mkdocs.zh.yml
+INHERIT: mkdocs.yml
+site_name: 研究论文获取（Acquire Research Papers）
+site_description: >-
+  用于正式论文获取、可审计论文集检索、文献调研和本地 PDF/BibTeX 论文库管理的 Agent skill 与命令行工具。
+site_url: https://enoselinsa.github.io/acquire-research-papers/zh/
+edit_uri: edit/main/docs-site/zh/
+
+docs_dir: docs-site/zh
+site_dir: site/zh
+
+theme:
+  language: zh
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: 切换到深色模式
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: 切换到浅色模式
+
+plugins:
+  - search:
+      lang:
+        - zh
+        - en
+
+nav:
+  - 首页: index.md
+  - 开始使用:
+      - 安装: install.md
+      - 配置: configuration.md
+      - 快速开始: quick-start.md
+  - 工作流:
+      - 论文集检索: corpus.md
+      - 文献调研: research.md
+      - 自动获取: acquisition.md
+      - 人工下载: manual-downloads.md
+      - 论文库与作者: library-and-authors.md
+      - 输出文件: outputs.md
+  - 来源与访问:
+      - 来源支持: sources.md
+      - IEEE 机构访问: ieee.md
+  - 项目:
+      - 可信边界与限制: trust.md
+      - 路线图: roadmap.md
+      - 开发与引用: project.md

@@ -1,12 +1,13 @@
 # 研究论文获取（Acquire Research Papers）
 
-[English](README.md)
+[English](https://github.com/EnosElinsa/acquire-research-papers/blob/main/README.md)
 
 [![CI](https://github.com/EnosElinsa/acquire-research-papers/actions/workflows/test.yml/badge.svg)](https://github.com/EnosElinsa/acquire-research-papers/actions/workflows/test.yml)
 [![Weekly source check](https://github.com/EnosElinsa/acquire-research-papers/actions/workflows/source-check.yml/badge.svg)](https://github.com/EnosElinsa/acquire-research-papers/actions/workflows/source-check.yml)
+[![Docs](https://github.com/EnosElinsa/acquire-research-papers/actions/workflows/docs.yml/badge.svg)](https://enoselinsa.github.io/acquire-research-papers/zh/)
 [![Release](https://img.shields.io/github/v/release/EnosElinsa/acquire-research-papers)](https://github.com/EnosElinsa/acquire-research-papers/releases/latest)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB.svg)](https://www.python.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/EnosElinsa/acquire-research-papers/blob/main/LICENSE)
 
 Acquire Research Papers 是一个 Agent skill 和确定性命令行工具，用来获取论文和管理本地论文库。Codex、Claude Code、Kiro IDE 和 Kiro CLI 共用同一个 skill：
 
@@ -16,15 +17,16 @@ Acquire Research Papers 是一个 Agent skill 和确定性命令行工具，用�
 - 审计、更新、导入和整理本地 PDF/BibTeX，使用可审阅的变更计划和备份；
 - 按作者查漏论文，明确区分身份、出版日期和来源覆盖证据。
 
-[最新版本](https://github.com/EnosElinsa/acquire-research-papers/releases/latest) · [更新记录](CHANGELOG.md) · [开发指南](CONTRIBUTING.md) · [使用帮助与反馈](SUPPORT.md) · [安全说明](SECURITY.md)
+**[文档站点](https://enoselinsa.github.io/acquire-research-papers/zh/)** · [最新版本](https://github.com/EnosElinsa/acquire-research-papers/releases/latest) · [更新记录](https://github.com/EnosElinsa/acquire-research-papers/blob/main/CHANGELOG.md) · [开发指南](https://github.com/EnosElinsa/acquire-research-papers/blob/main/CONTRIBUTING.md) · [使用帮助与反馈](https://github.com/EnosElinsa/acquire-research-papers/blob/main/SUPPORT.md) · [安全说明](https://github.com/EnosElinsa/acquire-research-papers/blob/main/SECURITY.md)
 
 每项完成的获取都必须形成经过身份核验的一对文件：出版社托管的 PDF 和出版社导出的原始 BibTeX。Crossref、OpenAlex 和 Semantic Scholar 可以发现候选并补全元数据，但不能代替正式文件。本项目不使用论文镜像，不让模型生成引用，也不绕过出版社访问控制。
+
+本 README 只是概要。完整指南、规范示例和输出说明见[文档站点](https://enoselinsa.github.io/acquire-research-papers/zh/)（另有 [English](https://enoselinsa.github.io/acquire-research-papers/) 版本）。
 
 ## 目录
 
 - **开始使用：**[选择工作流](#选择适合的工作流) · [安装](#安装) · [首次使用](#首次使用只配置当前任务需要的能力) · [快速开始](#快速开始)
-- **工作原理：**[论文集检索](#论文集检索实际如何工作) · [文献调研](#文献调研实际如何工作) · [自动获取](#自动获取实际如何工作) · [输出文件](#如何理解输出文件)
-- **来源与访问：**[来源支持](#来源支持与成熟度) · [IEEE 机构访问](#ieee-机构访问) · [ScienceDirect](#sciencedirect-人工接管)
+- **工作原理：**[论文集检索](#论文集检索实际如何工作) · [文献调研](#文献调研实际如何工作) · [来源支持](#来源支持与成熟度)
 - **范围与项目：**[可信边界](#准确性与可信边界) · [当前限制](#当前限制) · [路线图](#后续路线图) · [开发](#开发与验证) · [引用](#引用)
 
 ## 选择适合的工作流
@@ -41,26 +43,7 @@ Acquire Research Papers 是一个 Agent skill 和确定性命令行工具，用�
 | 要找相近工作、观点引用、Related Work 或验证 gap | `discover research` → `review research` → `acquire research` → `evidence research` | 引用图、冻结的最相近论文、经过核验的全文和 claim 级证据报告 |
 | 明确需要把 PDF 转成 Markdown | `export-md` | 按要求导出成功的 MinerU 结果；普通论文获取不会产生 Markdown |
 
-论文集流程被明确分成四个阶段：
-
-```text
-检索范围与配额
-    → 枚举期刊/会议 × 年份
-    → 补全元数据并评审标题 + 摘要
-    → 冻结最终论文清单
-    → 获取正式 PDF/BibTeX
-        ├─ delivered
-        ├─ manual_required
-        └─ retryable
-```
-
 当前执行 Agent 是这条工作流的一部分。CLI 负责确定性校验、断点记录、冻结清单和正式文件获取；Agent 负责把用户要求转成显式输入，并作出可记录、可复查的语义评审决定。
-
-## 独立能力与组合
-
-身份解析、发现、元数据补全、精确集合合并/比较、Agent 评审、冻结选集、获取、本地核验、独立 PDF 解析、全文证据验证、论文库操作与结构化导出可独立运行。原 corpus/research/author 入口继续兼容。参见[能力契约](skills/acquire-research-papers/references/capabilities.md)及[组合示例](skills/acquire-research-papers/examples/README.md)：已知列表、主题论文集、作者查漏、本地库维护、Related Work、gap 分析、显式章节。每个示例附输入、预期结果、恢复与限制；不增加内核任务类型或 Agent 编排器。
-
-新评审使用 `schema_version: 2`，`reviewer` 与 `executor.host` 记录实际宿主，模型/版本仅在已知时记录。旧 Codex v1 记录仍可读取，原字节和哈希不变。能力命令可用 `--run`，`arp run status --run <目录>` 汇总状态；旧工作流继续使用原清单及恢复命令。独立 `parse` 无需 BibTeX，但保留用户文件的来源可信度；结构化 `export --format markdown` 与全文 `export-md` 区分。
 
 ## 安装
 
@@ -78,17 +61,7 @@ python "$skill/scripts/arp.py" --help
 python "$skill/scripts/arp.py" config status
 ```
 
-启动器只使用 Python 标准库，根据 `runtime.json` 获取固定版本 wheel、校验 SHA-256，再通过 uv 安装到独立缓存。不会依赖开发 checkout 或把开发工具装进 skill。文件配置与核心命令支持 Windows/macOS/Linux；当前 IEEE 浏览器和旧 DPAPI 仍需要 Windows、PowerShell、Node.js，在 macOS 和 Linux 上 IEEE 论文进入人工下载队列；机构实时权限需单独验证。
-
-更新时重新运行同一条 Skills 安装命令。注册表、凭据、缓存、院校 profile 和浏览器会话保存在 skill 目录之外；交付文件也应使用独立目录。开发构建可按[开发指南](CONTRIBUTING.md)使用经过摘要校验的本地 wheel 验证。
-
-如果现有 skill 目录本身是 Git 开发 checkout，请保留它，不要让第三方安装器覆盖此目录。先构建导出，再用仓库的安全复制安装器放入新目录；它拒绝含 `.git` 的目标，明确替换旧版纯 skill 时也保留备份。详见[安全迁移](CONTRIBUTING.md#safe-copy-and-checkout-migration)。
-
-### 宿主安装与验证范围
-
-Codex、Claude Code、Kiro IDE、Kiro CLI 共用同一 skill 和固定 wheel。用户目录分别为 `~/.agents/skills/`、`~/.claude/skills/`、`~/.kiro/skills/`；只复制导出的 `acquire-research-papers/` 文件夹。Kiro 自定义 agent 需要显式 `skill://` resources，附带[资源模板](skills/acquire-research-papers/templates/kiro-agent.example.json)。参见[宿主安装及官方依据](skills/acquire-research-papers/references/hosts.md)，于 **2026-10-20** 核对。
-
-执行 `arp doctor --host <codex|claude-code|kiro-ide|kiro-cli> --skill-directory <实际路径>`。默认仅检查本地 Python、运行时、schema、配置及依赖，宿主是否加载和机构权限仍未验证。`--check-host-version` 显式运行所选宿主版本命令；`--remote-check` 显式进行无凭据 Crossref 连通测试。官方格式兼容与模拟 CI 不等于实机认证；Claude Code 和 Kiro 交互执行仍需单独记录实测。
+启动器只使用 Python 标准库，根据 `runtime.json` 获取固定版本 wheel、校验 SHA-256，再通过 uv 安装到独立缓存。文件配置与核心命令支持 Windows/macOS/Linux；当前 IEEE 浏览器和旧 DPAPI 仍需要 Windows、PowerShell、Node.js，在 macOS 和 Linux 上 IEEE 论文进入人工下载队列。更新时重新运行同一条安装命令。其他宿主、`arp doctor` 和从开发 checkout 迁移的方法见[安装](https://enoselinsa.github.io/acquire-research-papers/zh/install/)。
 
 ### 发布文件与手动安装
 
@@ -100,7 +73,7 @@ Codex、Claude Code、Kiro IDE、Kiro CLI 共用同一 skill 和固定 wheel。�
 | `acquire_research_papers-0.15.0-py3-none-any.whl` | 用 `uv tool install <wheel-path>` 单独安装 CLI；也可将其绝对路径设置为 `ARP_LOCAL_WHEEL`，供启动器从本地加载。摘要校验仍然生效。 |
 | `SHA256SUMS` | PowerShell 使用 `Get-FileHash <path> -Algorithm SHA256`，Linux 使用 `sha256sum <path>`，与清单核对下载文件。 |
 
-手动安装 skill 需要 Python 3.11+ 和 uv。启动器默认在首次运行时下载固定 wheel；依赖安装仍需网络或已有 uv 缓存。IEEE 浏览器另外需要 Node.js 和 Google Chrome。不要把源码压缩包或开发 checkout 整体复制为 skill。启动和迁移问题见 [SUPPORT.md](SUPPORT.md)。
+不要把源码压缩包或开发 checkout 整体复制为 skill。启动和迁移问题见 [SUPPORT.md](https://github.com/EnosElinsa/acquire-research-papers/blob/main/SUPPORT.md)。
 
 ## 首次使用：只配置当前任务需要的能力
 
@@ -110,7 +83,7 @@ Codex、Claude Code、Kiro IDE、Kiro CLI 共用同一 skill 和固定 wheel。�
 python "$skill/scripts/arp.py" config status
 ```
 
-该命令默认只返回能力布尔值；`--details` 可附加非敏感 profile/历史验证摘要。文件凭据会读取到内存检查存在状态但不输出值；旧 DPAPI 仅检查 scope 结构而不解密秘密。`true` 表示本地已有配置，不代表远端 API 或出版社权限一定可用。Agent 应只引导配置当前任务真正需要的能力，再用有代表性的实际操作验证。
+该命令默认只返回能力布尔值，不会输出秘密值。`true` 表示本地已有配置，不代表远端 API 或出版社权限一定可用。Agent 应只引导配置当前任务真正需要的能力，再用有代表性的实际操作验证。
 
 | 能力 | 何时配置 | 配置方式 |
 | --- | --- | --- |
@@ -121,44 +94,11 @@ python "$skill/scripts/arp.py" config status
 | Elsevier | ScienceDirect 人工接管前需要解析官方预期身份 | `arp config setup elsevier` |
 | MinerU | 需要为内部全文分析解析 PDF，或明确要求导出 Markdown | `arp config setup mineru` |
 
-秘密输入采用交互式、不回显提示；机构名称和官方入口是普通非敏感输入。不要把密码、API key、token 或 Cookie 粘贴到聊天、Agent 消息、命令参数或仓库文件中。支持在本机编辑仓库外选定凭据文件。各 Provider 独立更新，互不覆盖。
-
-### 可编辑本地凭据
-
-新安装默认使用仓库外本地可编辑文件。使用 `arp config init`、`arp config path`、`arp config edit`；院校使用 `config edit --profile <id>`。配置根包含 `config.toml`、`.env`、`institutions/<id>.json`、`credentials/<id>.env`。`ARP_CONFIG_ROOT` 显式覆盖系统配置根，`ARP_DATA_ROOT` 隔离运行数据；新数据根用应用自身名称，已识别旧根继续兼容。
-
-根 `.env` 含 `SEMANTIC_SCHOLAR_API_KEY`、`OPENALEX_API_KEY`、`ELSEVIER_API_KEY`、`MINERU_TOKEN`；院校文件含 `INSTITUTION_USERNAME`、`INSTITUTION_PASSWORD`。[空模板](skills/acquire-research-papers/templates/.env.example)不含值。文件是限制当前用户访问的明文：可本机编辑，保持私有，禁止提交。保存密码不等于启用自动登录。
-
-API 优先级为显式进程环境 → 一个选定文件；文件选择为 `--env-file` → `ARP_ENV_FILE` → 默认 `.env`。不向上搜索、不隐式合并、不执行 shell、不插值，每命令读取一次快照，空值表示未配置。院校仅读取当前 profile 文件。已有 DPAPI 安装保持旧后端；在原 Windows 账户执行 `arp config migrate --from dpapi` 才显式迁移，保留原存储，仅报告冲突键名且不覆盖。详见[配置说明](skills/acquire-research-papers/references/credentials-and-cache.md)。
-
-## 命名院校、现有论文库与作者论文发现
-
-下列 `arp` 是 `python <skill-directory>/scripts/arp.py` 的简写。
-
-```text
-arp config setup ieee --profile my-institution --mode assisted
-arp config ieee list
-arp config ieee use my-institution
-arp config ieee login --profile my-institution
-arp config ieee doctor --profile my-institution --reference <IEEE-URL>
-arp library audit <library-directory> --output <audit-directory>
-arp library update <library-directory> --output <staging-directory>
-arp library import <incoming-directory> --destination <library-directory> --output <plan.json>
-arp library organize <library-directory> --output <plan.json>
-arp library apply --plan <plan.json>
-arp library apply --plan <plan.json> --rollback
-arp discover author --spec <author.json> --output <discovery-directory>
-```
-
-IEEE 支持 `direct`、`assisted` 与明确表单契约下的 `carsi` 命名 profile，各自使用隔离浏览器上下文。已配置、IdP 登录成功、返回 IEEE、核验下载及证明机构权限是不同状态；开放获取论文下载成功不等于订阅权限已验证。详见[配置说明](skills/acquire-research-papers/references/configuration.md)。
-
-论文库审计报告身份、重复、缺失和歧义，分别核验引用出版信息与 PDF 版本。BibTeX 已更新不能证明 PDF 已更新；注册库元数据仍属于发现证据。更新只暂存正式文件，导入和整理只生成带哈希计划；明确执行 apply 后才修改文件，并保留备份。原始 BibTeX 字节、BOM、编码和换行保持不变。`--metadata` 可供离线核验，`update --verify-only` 不获取文件。有界 `--watch` 只观察用户已下载的 ScienceDirect PDF/BIB，使用单一人工队列，绝不自动操作页面。详见[论文库模式](skills/acquire-research-papers/references/library-mode.md)。
-
-作者规范支持身份 ID、机构/合作者、日期范围、主页及本地目录。ORCID、DBLP、主页和数据库记录保留身份歧义及来源错误；只按准确 DOI 去重，区分正式发表、early access 与预印本，期刊卷期日期优先于在线日期，只用明确关系关联不同版本，绝不声称绝对完整。`--records` 可提供离线证据。详见[作者模式](skills/acquire-research-papers/references/author-mode.md)。
+秘密输入采用交互式、不回显提示。不要把密码、API key、token 或 Cookie 粘贴到聊天、Agent 消息、命令参数或仓库文件中。可编辑凭据文件和命名院校档案见[配置](https://enoselinsa.github.io/acquire-research-papers/zh/configuration/)。
 
 ## 快速开始
 
-### 获取一篇已知论文
+获取一篇已知论文：
 
 ```powershell
 python "$skill/scripts/arp.py" fetch `
@@ -168,293 +108,58 @@ python "$skill/scripts/arp.py" fetch `
 
 只有 JSON 状态为 `delivered` 时才可以使用输出文件。只有题名、没有 DOI 或正式链接时，必须先经过发现流程；`fetch` 不会在多个同名或近似题名之间猜测。
 
-### 建立主题论文集
+论文集和文献调研从规范或 brief 开始，由当前 Agent 根据你的要求编写。`arp` 是 `python "$skill/scripts/arp.py"` 的简写：
 
-用户通常只需要用自然语言描述任务，由当前 Agent 生成论文集规范。下面的精简示例展示系统会明确哪些边界：
+```text
+arp discover corpus --progress --spec corpus.yaml --output <corpus-run>
+arp review corpus --run <corpus-run> --decisions <review-decisions.jsonl>
+arp acquire corpus --selection <corpus-run>/selection-manifest.json --output <delivery>
 
-```yaml
-schema_version: 1
-mode: corpus
-name: llm-agent-and-evolutionary-computation
-target:
-  minimum: 20
-  preferred: 30
-  maximum: 30
-scope:
-  venues:
-    - name: "Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)"
-      short_name: ACL
-      publisher: ACL
-      kind: conference
-      years: [2025]
-    - name: IEEE Transactions on Evolutionary Computation
-      short_name: TEVC
-      publisher: IEEE TEVC
-      kind: journal
-      issn: [1089-778X, 1941-0026]
-      years: [2024, 2025]
-  years:
-    include: [2025, 2024]
-    priority: [2025, 2024]
-  publication_types:
-    include: [full, journal-article]
-  topics:
-    include:
-      - large language model multi-agent
-      - evolutionary optimization
-    synonyms:
-      - agent collaboration
-      - LLM-guided search
-    exclude:
-      - editorial
-      - correction
-quotas:
-  groups:
-    - name: ACL
-      minimum: 10
-      venues:
-        - "Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)"
-    - name: TEVC
-      minimum: 10
-      venues:
-        - IEEE Transactions on Evolutionary Computation
-delivery:
-  require_pdf: true
-  require_official_bibtex: true
-  export_markdown: false
-  profile: numbered
-  naming_template: "papers/{publisher}/{number}.{ext}"
+arp discover research --brief research-brief.yaml --output <research-run>
+arp review research --run <research-run> --decisions <research-review.jsonl>
+arp acquire research --run <research-run>
+arp evidence research --run <research-run> --records <evidence-review.jsonl>
 ```
 
-先运行发现：
-
-```powershell
-python "$skill/scripts/arp.py" discover corpus --progress `
-  --spec .\corpus.yaml --output C:\Research\corpus-run
-```
-
-当前 Agent 随后阅读 `evidence-packets.jsonl`，根据标题和摘要生成绑定哈希的评审决定。导入这些决定并冻结选集：
-
-```powershell
-python "$skill/scripts/arp.py" review corpus `
-  --run C:\Research\corpus-run `
-  --decisions C:\Research\corpus-run\review-decisions.jsonl
-```
-
-下载阶段只读取冻结清单：
-
-```powershell
-python "$skill/scripts/arp.py" acquire corpus `
-  --selection C:\Research\corpus-run\selection-manifest.json `
-  --output C:\Research\corpus-delivery
-```
-
-### 准备一次文献调研
-
-```yaml
-schema_version: 1
-mode: research
-question_type: gap-analysis
-research_question: Has prior work jointly optimized this scenario and mechanism?
-work_under_review:
-  scenario: multi-agent edge computing
-  mechanism: LLM-guided evolutionary optimization
-  decisions: [task allocation, agent communication]
-  objectives: [latency, solution quality]
-  constraints: [limited communication budget]
-seed_papers: []
-analysis:
-  max_full_text_papers: 20
-  graph_seed_limit: 3
-  graph_neighbors_per_direction: 25
-scope:
-  years: [2023, 2024, 2025, 2026]
-delivery:
-  write_narrative: false
-  export_markdown: false
-```
-
-```powershell
-python "$skill/scripts/arp.py" discover research `
-  --brief .\research-brief.yaml --output C:\Research\literature-review
-```
-
-发现阶段返回 `status: review_required`。随后由 Agent 评审经过哈希绑定的候选，冻结最相近论文，获取正式文件，阅读 MinerU 解析结果并导入证据：
-
-```powershell
-python "$skill/scripts/arp.py" review research `
-  --run C:\Research\literature-review --decisions .\research-review.jsonl
-python "$skill/scripts/arp.py" acquire research `
-  --run C:\Research\literature-review
-python "$skill/scripts/arp.py" evidence research `
-  --run C:\Research\literature-review --records .\evidence-review.jsonl
-```
-
-评审和证据 JSONL 由当前 Agent 根据不可变候选包和解析后的全文生成，并遵守 `schemas/` 中的公开格式。最终 `status: complete` 表示冻结的最相近论文都已完成评审，不表示已经找到世界上所有论文，也不表示创新性得到无条件证明。
+可直接复制的完整论文集规范和调研 brief 见[快速开始](https://enoselinsa.github.io/acquire-research-papers/zh/quick-start/)。
 
 ## 论文集检索实际如何工作
 
-论文集模式适合“指定这些 venue、这些年份，查找这些主题”的有边界任务，实际经过以下步骤：
-
-1. **定义边界。** 当前 Agent 记录准确的期刊/会议、年份、论文类型、主题、排除项、总数和配额。
-2. **先枚举再筛选。** ACL、IJCAI、NeurIPS、ICLR（2024 年起）、PMLR 系列会议（ICML、AISTATS、COLT 等）、CVF（CVPR、ICCV、WACV）和 USENIX（Security、OSDI、NSDI、ATC、FAST）读取各自的官方索引；期刊和已知会议集通过 ISSN、collection DOI、venue 和年份分页读取 Crossref；OpenAlex 和 Semantic Scholar 可以补充基于查询的候选。
-3. **记录覆盖状态。** 每个“venue × 年份”都会标记为 complete、partial 或 failed。缺少 proceedings 页面或准确标识符时，会生成诊断信息，不会把空结果伪装成完整覆盖。
-4. **合并并补全。** 优先按 DOI 去重。缺少摘要时，先按 DOI 查询 Semantic Scholar，配置 OpenAlex 后再进行第二轮补全；每个字段保留来源记录。
-5. **依据证据评审。** 确定性规则排除错误年份、venue、track、论文类型和明显的目录/封面信息。关键词只负责提出候选；正式接受必须由当前 Agent 同时判断标题和摘要，并记录理由。
-6. **满足配额后冻结。** 最终清单和规范都会绑定哈希。进入下载阶段后不能再添加、删除或替换论文。
+论文集模式适合“指定这些 venue、这些年份，查找这些主题”的有边界任务。它先记录边界，再读取官方索引（ACL、IJCAI、NeurIPS、ICLR、PMLR、CVF、USENIX）或按 ISSN、collection DOI、venue 和年份分页读取 Crossref，并把每个“venue × 年份”标记为 complete、partial 或 failed。记录按 DOI 去重并补全摘要。关键词只负责提出候选；正式接受必须由当前 Agent 同时判断标题和摘要，并记录理由。选集在获取前绑定哈希并冻结，获取阶段不能添加、删除或替换论文。
 
 两种 pending 状态是正常工作流的一部分：
 
 - `pending_abstract` 表示仍未获得可信摘要。论文会保留等待后续补全，但不能只根据题名自动接受。
 - `ready_unreviewed`（经常表现为 `decision_missing`）表示元数据足够，但尚未完成语义评审；常见原因是首选数量和全部配额已经满足。它不能进入冻结选集。
 
-发现产物同时也是断点。对同一目录重新运行时，会复用已经完成的切片，只重试不完整来源。
+无法访问的论文继续留在冻结选集中，并写入 `manual-download.csv`；临时失败写入 `retryable-downloads.csv`。重跑会从断点继续。详见[论文集检索](https://enoselinsa.github.io/acquire-research-papers/zh/corpus/)和[自动获取](https://enoselinsa.github.io/acquire-research-papers/zh/acquisition/)。
 
 ## 文献调研实际如何工作
 
-可靠的文献调研不能只运行一次完整句子搜索。设计中的 skill 工作流包含四轮互补检索：
+可靠的文献调研不能只运行一次关键词搜索。skill 使用四轮互补检索（直接术语、机制拆解、引用扩展和主动证伪），并组织成明确分阶段、可恢复的流程：
 
-1. **直接术语：**研究问题本身、近义词、缩写和旧称。
-2. **机制拆解：**分别搜索并重新组合场景、机制、决策变量、目标和约束。
-3. **引用扩展：**从高相关种子论文查看后向参考文献、前向引用、Related Work 和引用图近邻。
-4. **主动证伪：**专门寻找可能推翻 gap 的早期工作、等价机制或反例。
+- `discover research` 使用 Crossref 以及已配置的 Semantic Scholar/OpenAlex 搜索，并把有边界的引用图扩展写入 `citation-graph.json`。`search-saturation.json` 记录最后几轮查询和引用图步骤是否仍在新增论文，其中的信号说明是否需要扩大 brief 或引用图。发现阶段返回 `status: review_required`。
+- `review research` 要求当前 Agent 对每个哈希绑定候选明确给出 include/exclude 决定，然后冻结需要全文核验的最相近论文。
+- `acquire research` 复用正式出版社获取流程，并通过 MinerU 缓存解析已核验 PDF。
+- `evidence research` 校验论文 ID、哈希、claim、位置和摘录后写出报告；`--export-csv` 增加 `papers.csv` 和 `claim-coverage.csv`。
 
-标题和摘要足以提出候选并做初筛。若要判断某篇论文直接支持、反驳或已经解决某个研究问题，必须阅读正文，记录章节或页码，并保留简短摘录。Gap 结论必须限定在已经搜索的范围内，并列出最接近的反例。
-
-Research mode 是明确分阶段、可恢复的流程，不是无人参与的一键系统综述：
-
-- `discover research` 使用 Crossref 以及已配置的 Semantic Scholar/OpenAlex 搜索，按 DOI 去重，并执行有边界的后向参考文献、前向引用和 related-paper 扩展。可选来源可以独立失败，只留下脱敏诊断，不会抹掉其他来源的结果。
-- `search-saturation.json` 记录每轮查询和每个引用图扩展步骤还新增了多少论文、候选在近期和较早年份的分布，以及哪些候选只来自单一检索路径或缺少摘要。其中的 `signals`（如 `search_still_growing`、`citation_frontier_growing`、`seeds_not_expanded` 或 `stable_within_bounds`）和 `next_actions` 说明评审前是否需要扩大检索词或扩大引用图；证据报告会重复这些内容。这些数字只描述本次运行的查询和边界，不代表文献召回率。
-- `review research` 要求当前 Agent 对每个哈希绑定候选明确给出 include/exclude 决定，然后只冻结需要全文核验的最相近论文。规范化决定和审核清单也会通过哈希绑定到选集。
-- `acquire research` 复用正式出版社获取流程，保留人工和重试队列，并通过内容寻址的 MinerU 缓存解析已核验 PDF。获取待办和解析待办分别计数；顶层状态指向最早尚未完成的关口，混合失败也不会互相遮蔽。
-- `evidence research` 校验论文 ID、PDF 和 Markdown 哈希、claim ID、阅读范围、位置和摘录，之后填充证据图、最相近工作矩阵、claim 覆盖表和有边界的 gap 报告。
-
-标题和摘要仍然只能用于提出和初筛候选。直接支持或反驳必须有正文摘录以及章节或页码。因出版社访问或 MinerU 失败而未完成的论文会继续保留在同一个冻结任务中，不会被静默删除或替换。
-
-## 自动获取实际如何工作
-
-自动获取从 DOI、准确的正式页面或经过哈希验证的冻结选集开始。每个出版社 adapter 必须把请求限制在批准的准确域名内。成功交付要求：
-
-- 有效的出版社正式 PDF；
-- 原样保留的出版社原始 BibTeX；
-- DOI、题名、年份、venue 和作者范围一致；
-- provenance 和 SHA-256 哈希能够证明两份文件属于同一论文。
-
-Crossref、OpenAlex、Semantic Scholar、普通仓库和镜像都不能满足最终交付。无法访问的论文继续留在冻结清单中，并写入 `manual-download.csv`；临时网络或限流问题写入 `retryable-downloads.csv`。单篇失败不会中断其他论文。
-
-在首次访问出版社前，输出目录会绑定一个冻结选集。重新运行时，只有全部记录路径和哈希仍匹配才会跳过已交付论文。为了避免覆盖，包含未绑定 PDF、BibTeX 或 acquisition ledger 的旧目录会被拒绝；应使用干净目录或明确的迁移/导入流程。
-
-账本在每篇论文处理完后立即保存，因此中断（Ctrl+C、宿主超时、浏览器被关闭）后用同一命令和同一输出目录重跑即可续跑；中断那一篇的残留文件会移到 `.arp-interrupted/`，不会被删除。没有适配器的出版商以 `unsupported_adapter` 进入人工队列。批量下载最多同时联系四个出版社主机（`--parallel-hosts N`；设为 `1` 恢复逐篇下载），每个主机仍一次只处理一篇论文。同一主机的请求会间隔进行；遇到 HTTP 429、连续三次临时失败或机构登录失败后，该主机在本次运行剩余部分暂停。同一次运行中的 IEEE 论文共用一个专用浏览器，机构登录只需完成一次。
+标题和摘要只能用于提出候选。直接支持或反驳必须有正文摘录以及章节或页码，gap 结论必须限定在已检索范围内。详见[文献调研](https://enoselinsa.github.io/acquire-research-papers/zh/research/)。
 
 ## 来源支持与成熟度
 
-“支持”必须区分发现、正式文件获取和真实成熟度：
-
-运行 `arp sources` 或 `arp sources --spec <corpus.yaml>`，可离线查看来源能力和逐 venue/年份缺口。参见[来源台账与验收标准](skills/acquire-research-papers/references/sources.md)。优先 venue 名单尚未确定，已有 ACL/IJCAI/IEEE/ACM/ScienceDirect 场景不代表覆盖全部会议和期刊。枚举完成只针对所选来源，上游仍可能漏收。
-
-内置 venue 预设让 spec 可以只写简称，例如 `name: INFOCOM` 或 `name: IEEE TMC`：该 venue 会得到 2026 年 11 月真实核对过的标识（37 个 IEEE 期刊和 AAAI 用 ISSN；INFOCOM、ICC、GLOBECOM、WCNC、VTC、ICDCS、ICNP、IWQoS、SECON 和 SIGCOMM 用 OpenAlex 系列；MobiCom 和 MobiHoc 用每届的会议录 DOI）。GitHub 上每周自动复查一次全部预设和官方索引。spec 中自己写的标识优先，`preset: none` 关闭匹配，`arp sources` 列出全部预设。若 OpenAlex 某届收录数远低于上一年，发现阶段仍把该切片记为完成，但会加一条 `possible_upstream_lag` 警告；若因缺少 Semantic Scholar 或 OpenAlex key 而有摘要待补，会给出对应的 `arp config setup` 命令。用同一命令、同一输出目录重跑时，会重新读取带警告的切片并重新查缺失的摘要，已完成的切片不会重新抓取。
-
-| 来源 | 论文发现 | PDF/BibTeX 获取 | 当前成熟度与失败处理 |
-| --- | --- | --- | --- |
-| Crossref | 主要 venue/year 枚举和 research 搜索 | 不支持 | 稳定的公开元数据来源，但字段完整度仍取决于出版社 |
-| ACL Anthology | 官方 proceedings 枚举 | 自动 | 成熟，已经用于真实批量任务 |
-| IJCAI proceedings | 官方 proceedings 和 track 解析 | 自动 | 成熟，已经用于真实批量任务 |
-| AAAI（ojs.aaai.org） | 用 AAAI ISSN 做 Crossref venue 枚举；记录自带摘要和官方归档 URL | 自动 | 官方 OJS PDF 和 BibTeX 导出。真实验证：AAAI-24 枚举出 2,867 条带摘要的记录，抽样论文已交付。2026 年 11 月初起 AAAI 的引用导出接口对所有客户端返回 HTTP 520，在 AAAI 修复前获取结果为 `network_transient` |
-| NeurIPS proceedings | 官方年度列表：主会，以及 2022 年起的 Datasets and Benchmarks | 由发现阶段或摘要页 URL 自动获取 | 官方 PDF 和逐篇 BibTeX 文件。NeurIPS DOI 解析到 Curran Associates，单凭 DOI 不能下载。真实验证：2019 年列出 1,428 篇带摘要的论文；2019、2022 D&B 和 2023 论文已交付 |
-| ICLR proceedings | proceedings.iclr.cc 上 2024 年起的官方年度列表 | 由发现阶段或摘要页 URL 自动获取 | 官方 PDF 和逐篇 BibTeX 文件。更早的年份只在 OpenReview 上，OpenReview 对非浏览器客户端返回验证页：发现阶段把这些年份记为 `source_unavailable`，论文转人工下载。真实验证：ICLR 2024 列出 2,260 篇带摘要的论文；抽样论文已交付 |
-| PMLR | ICML、AISTATS、COLT、UAI、CoRL、ALT、ACML、L4DC、CLeaR 各卷的官方 BibTeX 文件 | 由发现阶段或论文页 URL 自动获取 | BibTeX 取自官方页面上显示的条目（provenance 记为 `publisher_page_embedded`）。真实验证：ICML 2023 列出 1,828 篇带摘要的论文；ICML 2019 和 2023 论文已交付 |
-| CVF Open Access | CVPR、ICCV、WACV 主会官方列表 | 由发现阶段或论文页 URL 自动获取 | CVF 开放获取版本，除水印外与录用版本一致；最终出版版本在 IEEE Xplore（在 venue 上声明 `publisher: IEEE` 可改走 IEEE）。BibTeX 取自页面。真实验证：WACV 2024 列出 846 篇带摘要的论文；CVPR 2019、2023、一个 CVPR workshop 和 WACV 2024 论文已交付 |
-| USENIX | USENIX Security、OSDI、NSDI、USENIX ATC 和 FAST 的 technical-sessions 页面，含每篇论文的摘要 | 由发现阶段或报告页 URL 自动获取 | 官方开放获取 PDF 和报告页上显示的 BibTeX（`publisher_page_embedded`；单独的 BibTeX 下载链接需要通过浏览器验证）。按 robots.txt 要求，对 www.usenix.org 的请求间隔 10 秒。真实验证：OSDI 2024 列出 53 篇、USENIX Security 2023 列出 422 篇，全部带摘要；OSDI 和 NSDI 论文已交付 |
-| Springer Link | 由 Crossref/OpenAlex/Semantic Scholar 发现；`10.1007` DOI | 期刊论文和书籍章节（LNCS）在页面表明本网络有权限时自动获取 | 官方 PDF 和 Springer 引用导出服务提供的 BibTeX 文件。开放获取论文在任何网络下都可下载，订阅论文只在有权限的网络（如校园网）下载；否则为 `access_required`。不做登录。真实验证：两篇 Machine Learning 期刊论文和一篇 ECCV 章节已交付 |
-| IEEE Xplore | 期刊经 Crossref（ISSN）枚举；会议经 OpenAlex（`openalex_source`，如 INFOCOM、ICC、GLOBECOM）枚举；摘要来自 OpenAlex/Semantic Scholar | 配置 CARSI 院校档案后自动 | 使用通用 profile；已在一个 CARSI 院校完成端到端真实验证。每个新增院校都需要首次适配和一篇代表论文冒烟测试 |
-| ACM Digital Library | 通常由 Crossref collection 枚举和可选查询 API 发现 | 条件式 HTTP adapter | 只有正式页面和文件接口允许独立客户端访问时才能自动完成。2026 年 11 月实测，非浏览器请求和自动化 Chrome 都会遇到 Cloudflare 人机验证，因此 ACM 论文进入人工队列，提示信息会说明是人机验证 |
-| ScienceDirect | Crossref/OpenAlex/Semantic Scholar 发现；Elsevier API 可解析预期身份 | 仅人工 | 用户在正常授权浏览器中下载，CLI 核验并接管本地文件；不自动登录或操作 ScienceDirect |
-| Semantic Scholar | 可选带 key 候选搜索、DOI 补全以及引用/related 图扩展 | 不支持 | 只提供发现和图证据；来源失败会保留为诊断 |
-| OpenAlex | 可选候选搜索、DOI 补全和引用图扩展 | 不支持 | 需要可选 API key；只提供发现和图证据 |
-| MinerU | 不负责发现 | 不负责下载 | 可选七天全文解析缓存，只服务分析，不是论文来源 |
-| 通用出版社 adapter | 内部已有受域名约束的实现 | 未作为公开生产默认入口启用 | 需要把批准域名和配置流程产品化后，才能宣称通用支持 |
-
-## IEEE 机构访问
-
-IEEE 使用独立、可见的 Chrome profile，因为机构认证和 PDF 请求必须共享同一个隔离浏览器上下文。流程会先尝试直接读取论文，不会一开始就读取凭据；缺少权限时才会：
-
-1. 进入院校档案中配置的准确 CARSI IEEE 资源入口；
-2. 选择准确的院校候选，并写入、校验 IdP entity ID；
-3. 只有当前域名与配置的 IdP 域名完全一致时，才读取当前 profile 凭据，并且最多提交一次；
-4. 处理单“继续”按钮或“接受/拒绝”属性释放页，永远不点击拒绝；
-5. CARSI 返回但尚未获得 IEEE 权限时，只重新访问配置的同一资源入口；
-6. 必须确认同一上下文已经返回准确的 `ieeexplore.ieee.org`，才请求 PDF 和 BibTeX。
-
-配置的接受/继续控件默认自动点击。传入 `--no-accept-ieee-attribute-release` 可以把可见页面留给用户手动完成。
-
-### 适配新院校
-
-公共脚本中不包含院校名称分支或共享凭据。新院校应优先通过 profile 适配：准确的 CARSI 候选、entity ID、IdP 域名、可访问表单标签、资源入口和继续/接受控件。保持浏览器可见，只使用脱敏后的阶段/域名诊断；每次修正后先用一篇代表论文测试。
-
-只有可见页面证明出现了 profile 无法表达、而且可以复用的新页面形态时，才修改通用浏览器脚本，并先添加回归 fixture。整个过程必须保留准确域名凭据释放、一次凭据提交、三次资源入口上限、共享 Cookie、禁止点击拒绝和查询参数脱敏。
-
-## ScienceDirect 人工接管
-
-ScienceDirect 按设计保持人工模式。需要解析官方预期身份时，先配置 Elsevier API key：
-
-```powershell
-python "$skill/scripts/arp.py" config setup elsevier
-```
-
-下载前先启动监听：
-
-```powershell
-python "$skill/scripts/arp.py" manual-fetch `
-  --input "10.1016/j.asieco.2024.101746" `
-  --watch "$HOME\Downloads" --output C:\Research\papers
-```
-
-CLI 只打开规范的论文页面。用户在正常 Chrome（或其他授权浏览器）中完成 organization login，并下载正式 PDF 和原始 BibTeX。CLI 只观察稳定的新文件或变更文件，核验后交付。它不会控制 ScienceDirect，不会读取用户 Chrome profile，不会导出 Cookie，也不会把 Article Retrieval API 的 403 转成脚本化网站登录。
-
-如果两个文件已经存在：
-
-```powershell
-python "$skill/scripts/arp.py" manual-fetch --input <DOI> `
-  --pdf .\paper.pdf --bibtex .\citation.bib --output C:\Research\papers
-```
-
-冻结论文集中的人工条目应使用不可变 selection ID：
-
-```powershell
-python "$skill/scripts/arp.py" manual-fetch `
-  --selection C:\Research\corpus-run\selection-manifest.json `
-  --key <selection-id> --output C:\Research\corpus-delivery `
-  --watch "$HOME\Downloads"
-```
-
-要在一次会话里处理完整个 `manual-download.csv`，使用 `--queue`：它依次打开每篇论文的正式页面，按下载到达的任意顺序导入，并更新队列。文件已经下载好时，用 `--from <文件夹>` 代替 `--watch`：
-
-```powershell
-python "$skill/scripts/arp.py" manual-fetch `
-  --selection C:\Research\corpus-run\selection-manifest.json `
-  --queue --output C:\Research\corpus-delivery --watch "$HOME\Downloads"
-```
-
-## 如何理解输出文件
-
-先读 CLI 返回的状态、数量、下一步动作和可用路径。可选文件不存在时路径返回 JSON `null`。机器状态用于恢复，日常通常只需读报告和非空待办队列。
-
-| 工作流 / 阶段 | 应保留的状态 | 面向用户的结果 / 可选导出 |
+| 来源 | 论文发现 | PDF/BibTeX 获取 |
 | --- | --- | --- |
-| 单篇获取 | 正式 PDF、原始 BibTeX 和 provenance | 核验后的文件对，不生成报告目录 |
-| Corpus 发现 | 请求、`coverage.jsonl`、候选、证据包、来源错误和 manifest | 仅有缺失元数据时写 `pending-metadata.csv` |
-| Corpus 复核 | 复核决定、`selected-papers.jsonl`、选集和复核 manifest | `pending-review.csv` 受哈希绑定，完成后仍保留空队列 |
-| Corpus 获取 | 获取账本、选集绑定、交付 manifest 和正式文件对 | `paper-manifest.csv`；人工/重试队列仅在非空时生成 |
-| Research 发现 | `research-plan.json`、`research-candidates.jsonl`、`citation-graph.json`、`search-saturation.json`、`research-run.json` | 此阶段不生成证据或 gap 报告 |
-| Research 复核 / 全文 | 复核决定、冻结选集、阶段 manifest、`full-text-manifest.jsonl` 和内部解析缓存 | 非空复核/下载队列；状态区分获取与解析阻塞 |
-| Research 证据 | `validated-evidence-reviews.jsonl`、`research-evidence.json` | 一份 `reports/report.md`；`--export-csv` 增加 `papers.csv`、`claim-coverage.csv` |
-| 作者文献 | 含来源、身份、日期证据的 `author-discovery.json` | `report.md`；`--export-csv` 增加 `author-discovery.csv` |
-| 文献库审计 | `audit.json` | `report.md`、非空人工队列；`--export-csv` 增加 `audit.csv` |
-| 文献库更新 / 导入 / 整理 | 待审计划、暂存文件、provenance、备份和 apply journal | 审核后执行计划，保留备份供回滚 |
+| Crossref | venue/year 枚举和 research 搜索 | 不支持 |
+| ACL Anthology、IJCAI、NeurIPS、ICLR（2024 年起）、PMLR、CVF Open Access、USENIX | 带摘要的官方索引 | 自动 |
+| AAAI | 用 AAAI ISSN 读取 Crossref | 自动；2026 年 11 月初起 AAAI 引用导出接口返回 HTTP 520 |
+| Springer Link | Crossref/OpenAlex/Semantic Scholar | 本网络有权限时自动 |
+| IEEE Xplore | 期刊经 Crossref，会议经 OpenAlex | 配置 CARSI 院校档案后自动 |
+| ACM Digital Library | Crossref collection | ACM 拦截非浏览器客户端期间转人工 |
+| ScienceDirect | Crossref/OpenAlex/Semantic Scholar | 仅人工，由 CLI 核验并接管 |
+| Semantic Scholar、OpenAlex | 可选搜索、补全和引用图 | 不支持 |
+| MinerU | 不负责发现 | 不负责下载；可选全文解析缓存 |
 
-新 Research 运行标记 `output_version: 2`。没有该字段的旧运行继续使用旧报告布局，不重写冻结字节或哈希。新布局将 research manifest 和 nearest-work matrix 合并为可选 `papers.csv`；证据位置、claim 状态及适用的有界 gap 结论合并到 `report.md`，检索溯源保留在 `research-plan.json`。不带 CSV 导出选项重新运行时，只清除已知生成文件；待办解决后清除对应队列。不要用这些生成文件名保存手工编辑内容。
-
-使用可重复的 `--defer-host <exact-hostname>` 暂缓本次访问指定出版社。条目继续保留在冻结选集并进入人工队列，已核验的交付继续有效。
+IEEE 流程使用通用 profile，已在一个 CARSI 院校完成端到端真实验证；每个新增院校都需要首次适配。运行 `arp sources --spec <corpus.yaml>` 可离线查看逐 venue/年份缺口。含真实验证结果的完整表格和 venue 预设见[来源支持](https://enoselinsa.github.io/acquire-research-papers/zh/sources/)。
 
 ## 准确性与可信边界
 
@@ -468,62 +173,30 @@ python "$skill/scripts/arp.py" manual-fetch `
 
 ## 当前限制
 
-- 完整 IEEE/CARSI 流程目前已在一个 CARSI 院校完成真实验证；每个新增院校虽然由通用 profile 驱动，仍需要首次观察和适配。
-- 本地文件凭据与核心命令可跨平台；当前 IEEE 浏览器及旧 DPAPI 仍依赖 Windows。Claude Code、Kiro 的交互执行尚未实机验证。
-- IEEE 期刊发现主要依赖 Crossref 和可选元数据 API；当前版本没有 IEEE 官方 venue 枚举器。
-- ACM 自动获取没有生产级浏览器 adapter；HTTP 客户端被正式页面拦截时转人工。
-- ScienceDirect 只支持人工获取；项目有意不自动操作 organization login 或文章页面。
-- Research mode 分阶段运行，并要求当前 Agent 明确给出候选评审和证据决定；它不是无人参与的一键系统综述。
-- 引用图覆盖受到种子、邻居上限、来源覆盖和 API 可用性的共同限制，不能据此宣称普遍召回率。
-- 没有可信摘要的论文保持 `pending_abstract`，禁止只按题名接受。
-- 尚未发布的 proceedings 和上游元数据不一致会造成覆盖不完整。
+- 完整 IEEE/CARSI 流程目前只在一个 CARSI 院校完成真实验证；IEEE 浏览器集成仅支持 Windows。
+- ACM 和 ScienceDirect 论文需要人工下载；项目不自动操作 organization login。
+- Research mode 分阶段运行，并要求当前 Agent 明确作出决定；它不是无人参与的一键系统综述。
+- 引用图覆盖受种子、邻居上限和来源覆盖限制；引用图和检索饱和度记录都不能证明普遍召回率。
+- 新 proceedings 和不一致的上游元数据会造成覆盖不完整。
 - `arp config status: true` 只说明本地配置结构存在，不代表凭据、额度、订阅或 API entitlement 实时有效。
-- 大批量认证下载采取保守顺序执行，可能耗时较长。
-- 现有目录的导入和整理要求明确评审带哈希计划；PDF/引用身份不明的记录仍需人工核验。
-- 内部通用出版社 adapter 尚未成为公开插件系统。
-- 目前没有跨领域标注基准支持数值化 precision/recall 声明。
+- Claude Code、Kiro 的交互执行尚未实机验证。
+
+全部已知限制见[可信边界与限制](https://enoselinsa.github.io/acquire-research-papers/zh/trust/)。
 
 ## 后续路线图
 
-以下是改进优先级，不代表当前已经支持。
-
-### 近期
-
-1. **根据检索饱和度继续检索。**在饱和度记录的基础上支持复用已完成运行的后续发现，使扩大检索词或引用图时把结果加入同一候选集，而不必新建目录。
-2. **改善 IEEE 院校诊断。**在现有命名 profile 和 doctor 基础上改进首次适配及实时访问诊断，继续保护凭据。
-3. **产品化 ACM 授权访问。**设计独立、可见、隔离并限制准确域名的浏览器契约，采用与 IEEE 相同的 fail-closed 原则；访问或页面形态未知时继续转人工。
-4. **扩展安全增量获取。**在现有论文库导入、更新计划基础上让新冻结选集复用已验证用户文件。
-5. **扩展组合指南。**在已有配方、输入模板与运行摘要基础上改进示例，后续再评估 init 命令。
-
-### 中期
-
-6. **量化发现质量。**建立标注过的 venue/topic fixture，按来源和领域统计覆盖率、precision、recall、摘要缺失率和评审分歧。
-7. **扩展官方枚举。**在存在官方索引或 API 时增加准确、可审计的 venue adapter，优先考虑 IEEE 和 ACM collection，同时保留严格标识符要求。
-8. **改善批量调度。**在已有的按主机并行、检查点和暂停机制基础上，增加跨运行的重试调度，同时保护限流和共享会话。
-9. **扩展实测平台。**分别验证各宿主与各系统的 IEEE 浏览器能力，保留显式本地文件配置和 Windows DPAPI 迁移兼容。
-10. **开放出版社插件契约。**允许用户为通用 adapter 注册准确批准域名和经过测试的页面契约，同时继续拒绝任意跳转和模型生成引用。
-
-除非出版社政策和安全的官方集成条件发生变化，否则 ScienceDirect 浏览器自动化不会进入路线图。
-
-## 可选 Markdown 规则
-
-`acquire research` 会把选定 PDF 解析到七天 SHA-256 MinerU 缓存，用于内部证据评审。缓存 Markdown 属于分析状态，不是交付文件。普通 fetch、manual fetch 和论文集流程不会产生 Markdown。只有用户明确指定目标目录时才导出：
-
-```powershell
-python "$skill/scripts/arp.py" export-md `
-  --pdf .\paper.pdf --output C:\Research\markdown
-```
+近期优先级（不代表当前已经支持）：复用已完成调研运行的后续发现、更清楚的 IEEE 院校诊断、专门的 ACM 授权访问契约、向现有论文库安全增量获取，以及更多组合指南。详见[路线图](https://enoselinsa.github.io/acquire-research-papers/zh/roadmap/)。
 
 ## 开发与验证
 
-开发安装、Python/Node/PowerShell 测试、wheel/skill 构建、隔离安装及发布校验见 [CONTRIBUTING.md](CONTRIBUTING.md)。参与项目请遵守[行为准则](CODE_OF_CONDUCT.md)；使用问题和缺陷报告见 [SUPPORT.md](SUPPORT.md)，安全漏洞见 [SECURITY.md](SECURITY.md)。
+开发安装、Python/Node/PowerShell 测试、wheel/skill 构建、隔离安装、发布校验和文档站点见 [CONTRIBUTING.md](https://github.com/EnosElinsa/acquire-research-papers/blob/main/CONTRIBUTING.md)。参与项目请遵守[行为准则](https://github.com/EnosElinsa/acquire-research-papers/blob/main/CODE_OF_CONDUCT.md)；使用问题和缺陷报告见 [SUPPORT.md](https://github.com/EnosElinsa/acquire-research-papers/blob/main/SUPPORT.md)，安全漏洞见 [SECURITY.md](https://github.com/EnosElinsa/acquire-research-papers/blob/main/SECURITY.md)。
 
 ## 引用
 
-如果本工具支撑了已发表的研究，请引用所用的发布版本。引用元数据在 [CITATION.cff](CITATION.cff) 中，GitHub 仓库页面会显示为“Cite this repository”。
+如果本工具支撑了已发表的研究，请引用所用的发布版本。引用元数据在 [CITATION.cff](https://github.com/EnosElinsa/acquire-research-papers/blob/main/CITATION.cff) 中，GitHub 仓库页面会显示为“Cite this repository”。
 
 ## 负责任使用
 
 机构访问只能用于当前账号和许可条款授权的材料。本项目不会绕过出版社控制、重新分发获取到的论文、自动化禁止的出版社交互，也不会削弱机构认证流程。
 
-本项目采用 [MIT License](LICENSE)。
+本项目采用 [MIT License](https://github.com/EnosElinsa/acquire-research-papers/blob/main/LICENSE)。

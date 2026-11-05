@@ -10,7 +10,7 @@
 
 - [ ] Tests cover the changed contract; a bug fix includes a test that fails without it.
 - [ ] `CHANGELOG.md` has a line under `## Unreleased`.
-- [ ] Both READMEs, and the skill references when the agent needs it, describe user-visible changes.
+- [ ] The English and Chinese documentation pages under `docs-site/` (and the README summaries or skill references where they apply) describe user-visible changes.
 - [ ] No credentials, browser or session data, signed URLs, downloaded papers, or runtime stores are included.
 - [ ] Publisher and institution changes keep exact-host boundaries and use redacted fixtures.
 - [ ] Library writes handle source changes, collisions, and recovery; raw citation bytes and frozen corpus/research contracts are preserved.

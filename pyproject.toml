@@ -56,12 +56,12 @@ arp = "acquire_research_papers.cli:main"
 Homepage = "https://github.com/EnosElinsa/acquire-research-papers"
 Issues = "https://github.com/EnosElinsa/acquire-research-papers/issues"
 Repository = "https://github.com/EnosElinsa/acquire-research-papers"
-Documentation = "https://github.com/EnosElinsa/acquire-research-papers#readme"
+Documentation = "https://enoselinsa.github.io/acquire-research-papers/"
 Changelog = "https://github.com/EnosElinsa/acquire-research-papers/blob/main/CHANGELOG.md"
 Support = "https://github.com/EnosElinsa/acquire-research-papers/blob/main/SUPPORT.md"
 
 [tool.hatch.build]
-exclude = ["/docs"]
+exclude = ["/docs", "/docs-site", "/mkdocs.yml", "/mkdocs.zh.yml"]
 
 [dependency-groups]
 dev = [
@@ -72,6 +72,13 @@ dev = [
   "ruff>=0.11,<1",
   "types-jsonschema>=4.26",
   "types-PyYAML>=6.0.12",
+]
+# The documentation site (mkdocs.yml, mkdocs.zh.yml); CI installs it only in the docs workflow.
+docs = [
+  # Chinese search segmentation for the Material search plugin.
+  "jieba>=0.42.1,<1",
+  "mkdocs>=1.6.1,<2",
+  "mkdocs-material>=9.7,<10",
 ]
 
 [tool.hatch.build.targets.wheel]

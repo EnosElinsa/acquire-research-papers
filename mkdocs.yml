@@ -1,0 +1,105 @@
+# English documentation site. The Chinese site (mkdocs.zh.yml) inherits this file and
+# builds into site/zh/. Both page trees use the same file names, so the language selector
+# keeps the reader on the same page.
+site_name: Acquire Research Papers
+site_description: >-
+  Agent skill and CLI for verified research-paper acquisition, auditable corpus discovery,
+  literature research, and local PDF/BibTeX library management.
+site_url: https://enoselinsa.github.io/acquire-research-papers/
+site_author: Zhiyuan Cai
+repo_url: https://github.com/EnosElinsa/acquire-research-papers
+repo_name: EnosElinsa/acquire-research-papers
+edit_uri: edit/main/docs-site/en/
+copyright: Copyright &copy; 2026 Zhiyuan Cai. MIT License.
+
+docs_dir: docs-site/en
+site_dir: site
+
+theme:
+  name: material
+  language: en
+  icon:
+    repo: fontawesome/brands/github
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - content.code.copy
+    - navigation.footer
+    - navigation.sections
+    - navigation.top
+    - navigation.tracking
+    - search.highlight
+    - search.suggest
+    - toc.follow
+
+plugins:
+  - search
+
+extra:
+  alternate:
+    - name: English
+      link: /acquire-research-papers/
+      lang: en
+    - name: 简体中文
+      link: /acquire-research-papers/zh/
+      lang: zh
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/EnosElinsa/acquire-research-papers
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - toc:
+      permalink: true
+      # Readable anchors for Chinese headings as well as English ones.
+      slugify: !!python/object/apply:pymdownx.slugs.slugify
+        kwds:
+          case: lower
+
+validation:
+  omitted_files: warn
+  absolute_links: warn
+  unrecognized_links: warn
+  anchors: warn
+
+nav:
+  - Home: index.md
+  - Get started:
+      - Install: install.md
+      - Configuration: configuration.md
+      - Quick start: quick-start.md
+  - Workflows:
+      - Corpus discovery: corpus.md
+      - Literature research: research.md
+      - Acquisition: acquisition.md
+      - Manual downloads: manual-downloads.md
+      - Libraries and authors: library-and-authors.md
+      - Outputs: outputs.md
+  - Sources and access:
+      - Source support: sources.md
+      - IEEE institutional access: ieee.md
+  - Project:
+      - Trust and limitations: trust.md
+      - Roadmap: roadmap.md
+      - Development and citation: project.md

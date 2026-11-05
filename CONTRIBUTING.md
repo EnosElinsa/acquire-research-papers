@@ -18,7 +18,7 @@ These rules come from the project's trust model and apply to every change:
 - Requests stay inside each adapter's exact approved hosts; see [source policies](skills/acquire-research-papers/references/source-policies.md). Do not bypass access controls, bot checks, or institutional authentication. ScienceDirect stays manual.
 - Never commit or attach credentials, browser profiles, cookies, signed URLs, downloaded papers, or runtime stores. Tests use synthetic fixtures and isolated temporary roots.
 - Frozen selections, raw citation bytes, hashes, and published schemas are contracts. Changing one needs a migration path for existing runs.
-- User-visible behavior is documented in both `README.md` and `README.zh-CN.md`, and in the skill references under `skills/acquire-research-papers/` when the agent needs it.
+- User-visible behavior is documented in the English and Chinese documentation site under `docs-site/`, summarized in `README.md` and `README.zh-CN.md` when it changes what a new user sees, and in the skill references under `skills/acquire-research-papers/` when the agent needs it.
 
 ## Pull requests
 
@@ -47,6 +47,7 @@ skills/acquire-research-papers/  thin skill: SKILL.md, references, examples, tem
 schemas/                         public JSON schemas; the skill keeps byte-identical copies
 scripts/                         runtime helpers (PowerShell, Node) and maintainer tools (build, release, checks)
 tests/                           unit, integration, Node, and PowerShell tests
+docs-site/en/, docs-site/zh/     documentation site pages (mkdocs.yml, mkdocs.zh.yml)
 docs/                            historical design notes and implementation plans
 .github/                         CI, weekly source check, public-release verification, issue forms
 ```
@@ -56,7 +57,7 @@ docs/                            historical design notes and implementation plan
 ```text
 git clone https://github.com/EnosElinsa/acquire-research-papers.git
 cd acquire-research-papers
-uv sync --locked --all-groups
+uv sync --locked
 uv run ruff check src tests scripts skills/acquire-research-papers/scripts
 uv run mypy
 uv run pytest -q --cov
@@ -65,6 +66,19 @@ node --test tests/node/test-ieee-playwright.mjs tests/node/test-ieee-profiles.mj
 ```
 
 On Windows, also run the credential-store, profile, and Playwright-installer suites under `tests/powershell/`. Tests use isolated temporary roots and public fixtures; never use real credentials or a real publication library for regression tests. `ARP_DATA_ROOT` and `ARP_RUNTIME_ROOT` permit isolated smoke runs. Review the exact-host boundaries and [source policies](skills/acquire-research-papers/references/source-policies.md) before changing an adapter. ScienceDirect remains manual only.
+
+## Documentation site
+
+The site at <https://enoselinsa.github.io/acquire-research-papers/> is built with [Material for MkDocs](https://squidfunk.github.io/mkdocs-material/) from `docs-site/en/` (`mkdocs.yml`) and `docs-site/zh/` (`mkdocs.zh.yml`, which inherits the English configuration and builds into `site/zh/`). Both trees use the same file names, so the language selector keeps the reader on the same page; a unit test checks that the trees and both navigations match. Change a page in both languages in the same pull request.
+
+```text
+uv sync --locked --group docs
+uv run mkdocs build --strict
+uv run mkdocs build --strict -f mkdocs.zh.yml
+uv run mkdocs serve
+```
+
+`--strict` fails on broken links and anchors. Link repository files with absolute `https://github.com/EnosElinsa/acquire-research-papers/blob/main/...` URLs, because they are outside the site. Build the English site first: it cleans `site/`, and the Chinese build then adds `site/zh/`. `mkdocs serve` previews one language at a time. The `docs` workflow builds both on every pull request that touches them and deploys to GitHub Pages from `main`. Material for MkDocs is in maintenance mode with critical fixes until May 5, 2027; the configuration avoids third-party plugins so that it can move to its successor, Zensical, which reads `mkdocs.yml`.
 
 ## Build wheel, thin skill, and ZIP
 
