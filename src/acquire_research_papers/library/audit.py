@@ -4,6 +4,7 @@ import csv
 import io
 import re
 from collections import defaultdict
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -28,7 +29,7 @@ def read_bib(path: Path) -> tuple[dict, str]:
     raw = path.read_bytes()
     text, encoding = decode_bibtex_bytes(raw)
     parsed = parse_bibtex(text)
-    fields = dict(parsed.fields)
+    fields: dict[str, Any] = dict(parsed.fields)
     fields["doi"] = normalize_doi(fields.get("doi"))
     fields["title"] = re.sub(r"[{}]", "", fields.get("title", ""))
     fields["venue"] = fields.get("journal") or fields.get("booktitle") or ""
@@ -42,12 +43,12 @@ def read_bib(path: Path) -> tuple[dict, str]:
 def pdf_evidence(path: Path) -> dict:
     try:
         reader = PdfReader(path)
-        metadata = reader.metadata or {}
+        metadata: Mapping[Any, Any] = reader.metadata or {}
         fragments = [str(value) for value in metadata.values()]
         for page in reader.pages[:2]:
             fragments.append(page.extract_text() or "")
-        found = sorted({normalize_doi(match.rstrip(".,;)]"))
-                        for match in DOI.findall("\n".join(fragments))})
+        found = sorted({doi for match in DOI.findall("\n".join(fragments))
+                        if (doi := normalize_doi(match.rstrip(".,;)]")))})
         early = bool(re.search(r"\bearly\s+access\b|\barticle\s+in\s+press\b|\baccepted\s+manuscript\b",
                                "\n".join(fragments), re.IGNORECASE))
         return {"dois": found, "pages": len(reader.pages),
@@ -206,10 +207,10 @@ def audit_library(directory: Path | str, *, metadata: dict | None = None,
     metadata = ({normalize_doi(k): v for k, v in metadata.items()}
                 if metadata is not None else None)
     provider = client or OfficialMetadataClient()
-    cache = {}
+    cache: dict[str, tuple[dict[str, Any] | None, str | None]] = {}
     for item in report["items"]:
         doi = item.get("doi")
-        official = None
+        official: dict[str, Any] | None = None
         if doi:
             if doi not in cache:
                 try:
@@ -236,7 +237,7 @@ def audit_library(directory: Path | str, *, metadata: dict | None = None,
                                  official.get("evidence_kind") == "publisher_metadata" else "metadata_only"}
         final = bool(official and official.get("issue_date") and official.get("volume")
                      and (official.get("pages") or official.get("article_number")))
-        if evidence.get("early_access") and final:
+        if evidence.get("early_access") and final and official is not None:
             item["publication_status"] = ("possible_update" if official.get("evidence_kind")
                                            == "discovery_registry" else "outdated")
             item["changes"].append({"field": "pdf_version", "local": "early_access",

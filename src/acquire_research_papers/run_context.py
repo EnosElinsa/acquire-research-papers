@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
@@ -54,7 +55,7 @@ class RunContext:
                 handle.flush()
             handle.seek(0)
             try:
-                if os.name == "nt":
+                if sys.platform == "win32":
                     import msvcrt
                     msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
                 else:
@@ -66,7 +67,7 @@ class RunContext:
                 yield
             finally:
                 handle.seek(0)
-                if os.name == "nt":
+                if sys.platform == "win32":
                     msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
                 else:
                     fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
@@ -118,8 +119,8 @@ class RunContext:
                     and previous.get("input_sha256") == fingerprint
                     and _unchanged(previous.get("artifacts", []))):
                 return {**previous["result"], "reused": True}
-            step = {"status": "running", "input_sha256": fingerprint, "inputs": references,
-                    "artifacts": [], "next_actions": []}
+            step: dict[str, Any] = {"status": "running", "input_sha256": fingerprint,
+                                    "inputs": references, "artifacts": [], "next_actions": []}
             state["steps"][name] = step
             self._save(state)
             try:

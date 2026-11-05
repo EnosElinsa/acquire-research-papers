@@ -26,8 +26,16 @@ jobs:
         run: uv sync --locked --all-groups
       - name: Lint
         run: uv run ruff check src tests scripts skills/acquire-research-papers/scripts
-      - name: Test Python
-        run: uv run pytest -q
+      - name: Type check
+        run: uv run mypy
+      - name: Test Python with coverage
+        run: uv run pytest -q --cov --cov-report=term
+      - name: Coverage summary
+        if: always() && hashFiles('.coverage') != ''
+        shell: bash
+        run: |
+          echo "### Coverage: ${{ matrix.os }}, Python ${{ matrix.python }}" >> "$GITHUB_STEP_SUMMARY"
+          uv run coverage report --format=markdown >> "$GITHUB_STEP_SUMMARY"
       - name: Validate skill
         run: uv run python scripts/validate_skill.py .
       - name: Build thin skill and wheel

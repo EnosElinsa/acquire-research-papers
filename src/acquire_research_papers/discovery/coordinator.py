@@ -162,7 +162,7 @@ class DiscoveryCoordinator:
                     provider if _SAFE_PROVIDER_ID.fullmatch(provider) else "unrecognized-provider"
                 )
             elif name in {"candidates", "diagnostics", "coverage"}:
-                safe[name] = max(0, int(value))
+                safe[name] = max(0, int(value)) if isinstance(value, (int, float, str)) else 0
             else:
                 raise ValueError("unsupported discovery progress field")
         self.progress(event, safe)

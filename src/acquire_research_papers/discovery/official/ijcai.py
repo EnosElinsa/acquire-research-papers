@@ -194,12 +194,12 @@ class IjcaiDiscoveryProvider:
                 heading = node.get_text(" ", strip=True)
                 parent_classes = {
                     str(value).casefold()
-                    for value in (node.parent.get("class", ()) if node.parent else ())
+                    for value in ((node.parent.get("class") or ()) if node.parent else ())
                 }
                 if "section_title" in parent_classes or "track" in heading.casefold():
                     track = heading
                 continue
-            classes = {str(value).casefold() for value in node.get("class", ())}
+            classes = {str(value).casefold() for value in (node.get("class") or ())}
             if "paper_wrapper" not in classes:
                 continue
             if "main track" not in track.casefold():

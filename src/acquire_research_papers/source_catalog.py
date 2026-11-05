@@ -17,7 +17,9 @@ def _scope(provider) -> str:
 
 
 def describe_sources(spec: dict | None = None) -> dict:
-    providers = [AclAnthologyDiscoveryProvider(None), IjcaiDiscoveryProvider(None),
+    # Only capabilities() is read here, so the providers never need an HTTP client.
+    providers = [AclAnthologyDiscoveryProvider(None),  # type: ignore[arg-type]
+                 IjcaiDiscoveryProvider(None),  # type: ignore[arg-type]
                  *(provider(None) for provider in ARCHIVE_INDEX_PROVIDERS)]
     sources = [
         {"id": provider.capabilities().provider_id, "role": "official_index",

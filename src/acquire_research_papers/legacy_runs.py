@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 from acquire_research_papers.artifacts import sanitize_artifact_value, sha256_file
 from acquire_research_papers.run_context import artifact_reference, content_hash
@@ -30,7 +31,8 @@ def _bound(root: Path, name: str) -> Path:
 
 def status(root: Path) -> dict:
     root = root.resolve()
-    steps, actions = {}, []
+    steps: dict[str, Any] = {}
+    actions: list[Any] = []
     for filename, kind in MANIFESTS.items():
         path = root / filename
         if not path.is_file():

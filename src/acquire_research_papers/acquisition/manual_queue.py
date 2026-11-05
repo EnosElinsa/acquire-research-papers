@@ -70,7 +70,7 @@ class ManualQueueSession:
         self,
         records: Iterable[SelectionRecord],
         *,
-        deliver: Callable[[SelectionRecord, ManualHandoffSelection], None],
+        deliver: Callable[[SelectionRecord, ManualHandoffSelection], object],
         opener: Callable[[str], bool],
         progress: Callable[[str], None] = lambda _line: None,
         poll_interval: float = 1.0,

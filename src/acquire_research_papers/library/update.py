@@ -140,7 +140,7 @@ def update_library(directory: Path | str, *, output: Path | str, application: An
     previous_hashes: dict[str, tuple[str, str]] = {}
     while watch is not None and any(row["status"] != "staged" for row in items):
         found = scan_library(Path(watch))["items"]
-        matches = {}
+        matches: dict[str, Any] = {}
         for entry in found:
             if entry["status"] == "paired":
                 matches.setdefault(entry["doi"], []).append(entry)

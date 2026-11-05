@@ -212,7 +212,7 @@ class AclAnthologyDiscoveryProvider:
             evidence.append("authors")
         if keywords:
             evidence.append("keywords")
-        source_fields = {field: (_PROVIDER_ID,) for field in evidence}
+        source_fields: dict[str, tuple[str, ...]] = {field: (_PROVIDER_ID,) for field in evidence}
         return CandidateMetadata(
             key=anthology_id,
             title=title,

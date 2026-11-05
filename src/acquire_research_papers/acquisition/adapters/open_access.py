@@ -259,7 +259,10 @@ class CvfOpenAccessAdapter(_OpenAccessAdapter):
             raise PageContractChanged("CVF PDF URL does not match the paper page")
         if [target for target, _ in page.link_targets("pdf")] != [pdf_path]:
             raise PageContractChanged("CVF page must expose one PDF link for the paper")
-        path_year = int(re.search(r"(?:19|20)\d{2}", prefix).group())
+        year_match = re.search(r"(?:19|20)\d{2}", prefix)
+        if year_match is None:
+            raise PageContractChanged("CVF paper path must name its conference year")
+        path_year = int(year_match.group())
         if page.year("citation_publication_date", "publication date") != path_year:
             raise PageContractChanged("CVF publication year disagrees with the landing path")
         workshop = "W/" in prefix

@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
 import re
+from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 from acquire_research_papers.acquisition.base import SourceDocument
@@ -38,14 +39,14 @@ def resolve_identity(record: Mapping | str) -> dict:
     value = dict(record) if isinstance(record, Mapping) else (
         {"official_url": record} if str(record).startswith(("http://", "https://"))
         else {"doi": record})
-    dois = set()
+    dois: set[str] = set()
     source_ids = value.get("source_ids", {})
     if not isinstance(source_ids, Mapping):
         raise ValueError("identity source_ids must be an object")
     for supplied in (value.get("doi"), source_ids.get("doi")):
         if supplied:
             doi = normalize_doi(str(supplied))
-            if not re.fullmatch(r"10\.\d{4,9}/\S+", doi or ""):
+            if doi is None or not re.fullmatch(r"10\.\d{4,9}/\S+", doi):
                 raise ValueError("invalid DOI identity")
             dois.add(doi)
     official = value.get("official_url") or value.get("landing_url")
@@ -55,7 +56,7 @@ def resolve_identity(record: Mapping | str) -> dict:
             raise ValueError("identity URL must be HTTP(S) without credentials")
         if url.hostname.casefold() in {"doi.org", "dx.doi.org"}:
             doi = normalize_doi(str(official))
-            if not re.fullmatch(r"10\.\d{4,9}/\S+", doi or ""):
+            if doi is None or not re.fullmatch(r"10\.\d{4,9}/\S+", doi):
                 raise ValueError("invalid DOI URL identity")
             dois.add(doi)
             official = None
@@ -157,7 +158,7 @@ def validate_reviews(records: Sequence[dict], decisions: Sequence[dict], *, poli
     from acquire_research_papers.review_contracts import review_metadata
     if policy not in {"identity", "relevance"}:
         raise ValueError("use evidence validation with exact full-text artifacts for fulltext policy")
-    indexed = {}
+    indexed: dict[str, Any] = {}
     for record in records:
         identity = resolve_identity(record)["identity"]
         if not identity:

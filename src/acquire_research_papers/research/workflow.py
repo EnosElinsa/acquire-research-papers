@@ -4,6 +4,7 @@ import re
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import Any
 
 from acquire_research_papers.discovery.corpus import CandidateMetadata
 from acquire_research_papers.discovery.coordinator import candidate_identity, merge_candidates
@@ -145,7 +146,7 @@ class ResearchDiscoverer:
         analysis: Mapping[str, object] | None = None,
         scope: Mapping[str, object] | None = None,
     ) -> ResearchDiscovery:
-        settings = analysis or {}
+        settings: Mapping[str, Any] = analysis or {}
         research_scope = scope or {}
         graph_limit = int(settings.get("graph_neighbors_per_direction", self.graph_limit))
         graph_seed_limit = int(settings.get("graph_seed_limit", self.graph_seed_limit))

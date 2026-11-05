@@ -78,6 +78,8 @@ class PublicAuthorClient:
     def _get(self, url: str, *, json_response: bool = True) -> Any:
         public_url(url)
         hostname = urlsplit(url).hostname
+        if not hostname:
+            raise ValueError("author source URL has no host")
         factory = self.http_factory or SafeHttpClient
         client = factory(allowed_hosts={hostname}, timeout=15, retries=0)
         try:
@@ -126,8 +128,9 @@ class PublicAuthorClient:
                 entry = parent[0]
                 links = [node.text or "" for node in entry.findall("ee")]
                 doi = next((link for link in links if "doi.org/" in link), None)
-                records.append({"doi": doi, "title": "".join(entry.find("title").itertext())
-                    if entry.find("title") is not None else "", "year": entry.findtext("year"),
+                title_node = entry.find("title")
+                records.append({"doi": doi, "title": "".join(title_node.itertext())
+                    if title_node is not None else "", "year": entry.findtext("year"),
                     "venue": entry.findtext("journal") or entry.findtext("booktitle"),
                     "authors": [a.text or "" for a in entry.findall("author")],
                     "type": entry.tag, "source_id": entry.get("key"),
@@ -138,7 +141,8 @@ class PublicAuthorClient:
             if not spec.get("homepage"):
                 return {"records": [], "status": "not_configured", "reason": "homepage not supplied"}
             text = self._get(spec["homepage"], json_response=False)
-            dois = sorted({normalize_doi(value.rstrip(".,;)]")) for value in DOI.findall(text)})
+            dois = sorted({doi for value in DOI.findall(text)
+                           if (doi := normalize_doi(value.rstrip(".,;)]")))})
             records, errors = [], []
             for doi in dois[:maximum]:
                 try:
@@ -189,7 +193,8 @@ def discover_author(spec: dict, *, records: dict | None = None, clients: dict | 
     spec = validate_spec(spec)
     sources = list(records) if records is not None else ["orcid", "dblp", "homepage", "database"]
     provider = PublicAuthorClient()
-    coverage, merged = {}, {}
+    coverage: dict[str, Any] = {}
+    merged: dict[str, Any] = {}
     for source in sources:
         try:
             if records is not None:
@@ -233,7 +238,7 @@ def discover_author(spec: dict, *, records: dict | None = None, clients: dict | 
                         current["conflicts"].append({"field": field, "values": [current[field], record[field]]})
         except Exception as exc:
             coverage[source] = {"status": "failed", "error": type(exc).__name__, "fetched": 0}
-    local = {}
+    local: dict[str, Any] = {}
     if spec.get("local_dir"):
         for item in scan_library(spec["local_dir"])["items"]:
             if item.get("doi"):

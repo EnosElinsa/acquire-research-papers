@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 import unicodedata
+from typing import Any
 from dataclasses import asdict, dataclass
 
 from acquire_research_papers.discovery.contracts import CandidateMetadata
@@ -279,7 +280,7 @@ class EvidencePacket:
 
     @classmethod
     def from_dict(cls, payload: dict[str, object]) -> EvidencePacket:
-        values = dict(payload)
+        values: dict[str, Any] = dict(payload)
         for field in ("keywords", "prefilter_signals", "evidence_fields"):
             values[field] = tuple(values.get(field, ()))
         values["field_provenance"] = {

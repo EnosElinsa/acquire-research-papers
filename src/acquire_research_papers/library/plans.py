@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import sys
 import re
 import shutil
 from contextlib import contextmanager
@@ -293,7 +294,7 @@ def _apply_lock(path: Path):
             stream.flush()
         stream.seek(0)
         try:
-            if os.name == "nt":
+            if sys.platform == "win32":
                 import msvcrt
                 msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
             else:
@@ -305,7 +306,7 @@ def _apply_lock(path: Path):
             yield
         finally:
             stream.seek(0)
-            if os.name == "nt":
+            if sys.platform == "win32":
                 msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
             else:
                 fcntl.flock(stream.fileno(), fcntl.LOCK_UN)

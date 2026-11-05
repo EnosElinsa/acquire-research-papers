@@ -94,7 +94,7 @@ class NeuripsIndexProvider(OfficialIndexProvider):
             anchor = content.find("a", href=True)
             url = urljoin(index_url, str(anchor["href"])) if anchor else ""
             match = _NEURIPS_ABSTRACT.fullmatch(urlsplit(url).path)
-            if not match or int(match.group(1)) != year or url in seen:
+            if anchor is None or not match or int(match.group(1)) != year or url in seen:
                 result.issue("proceedings-index", "page_contract_changed")
                 continue
             seen.add(url)
@@ -295,7 +295,7 @@ class CvfIndexProvider(OfficialIndexProvider):
             result.recognized += 1
             anchor = heading.find("a", href=True)
             url = urljoin(page_url, str(anchor["href"])) if anchor else ""
-            if not paper.fullmatch(urlsplit(url).path):
+            if anchor is None or not paper.fullmatch(urlsplit(url).path):
                 result.issue("proceedings-index", "page_contract_changed")
                 continue
             if url not in seen:

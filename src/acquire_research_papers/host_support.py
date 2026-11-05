@@ -200,7 +200,7 @@ def _remote(enabled: bool) -> dict:
 def _platform_information() -> dict:
     # platform.uname() can run cmd.exe on Python 3.11/Windows. Doctor's
     # default inventory must stay in-process even on a cold platform cache.
-    if os.name == "nt":
+    if sys.platform == "win32":
         version = sys.getwindowsversion()
         return {"system": "Windows",
                 "release": f"{version.major}.{version.minor}.{version.build}"}

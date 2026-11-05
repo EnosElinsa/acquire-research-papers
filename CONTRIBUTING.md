@@ -29,7 +29,7 @@ These rules come from the project's trust model and apply to every change:
 5. Write commit messages as `type: summary` with `feat`, `fix`, `docs`, `test`, `refactor`, or `chore`; release commits use `release: pin the v<version> wheel with …`.
 6. Fill in the pull request template: the problem, the resulting behavior, and the checks you ran.
 
-Code style is enforced by `ruff` (line length 100, Python 3.11 target). Keep public messages free of URLs with query strings and of secret values.
+Code style is enforced by `ruff` (line length 100, Python 3.11 target) and types by `mypy` over `src/`; CI runs both on Linux, Windows, and macOS, so platform branches use `sys.platform` checks that mypy understands. Branch coverage must stay at or above the `fail_under` floor in `pyproject.toml`, and each CI job writes its coverage table to the run summary. Dependabot proposes dependency and action updates every Monday, and CodeQL scans the Python, JavaScript, and workflow code on every push and pull request. Keep public messages free of URLs with query strings and of secret values.
 
 ## Repository layout
 
@@ -58,7 +58,8 @@ git clone https://github.com/EnosElinsa/acquire-research-papers.git
 cd acquire-research-papers
 uv sync --locked --all-groups
 uv run ruff check src tests scripts skills/acquire-research-papers/scripts
-uv run pytest -q
+uv run mypy
+uv run pytest -q --cov
 uv run python scripts/validate_skill.py .
 node --test tests/node/test-ieee-playwright.mjs tests/node/test-ieee-profiles.mjs
 ```

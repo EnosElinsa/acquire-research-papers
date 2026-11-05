@@ -77,7 +77,7 @@ def _spawn(popen: Callable[..., Any], command: list[str], stdout, stderr) -> Any
         # A detached process has no console; keep its files UTF-8 whatever the locale.
         "env": {**os.environ, "PYTHONIOENCODING": "utf-8"},
     }
-    if os.name != "nt":
+    if sys.platform != "win32":
         return popen(command, start_new_session=True, **options)
     flags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
     try:
@@ -152,7 +152,7 @@ def run(job_dir: Path, argv: Sequence[str], *, runner: Callable[[list[str]], int
 
 
 def pid_alive(pid: int) -> bool:
-    if os.name == "nt":
+    if sys.platform == "win32":
         import ctypes
         from ctypes import wintypes
 
@@ -181,7 +181,7 @@ def pid_alive(pid: int) -> bool:
 
 
 def _kill(pid: int) -> None:
-    if os.name == "nt":
+    if sys.platform == "win32":
         os.kill(pid, signal.SIGTERM)  # TerminateProcess
     else:
         os.killpg(pid, signal.SIGTERM)  # the job's own session, including browser helpers

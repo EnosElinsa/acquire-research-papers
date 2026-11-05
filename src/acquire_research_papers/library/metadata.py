@@ -124,9 +124,9 @@ def parse_publisher_metadata(page: str, url: str, doi: str) -> dict:
     if host not in PUBLISHER_HOSTS:
         raise ValueError("publisher metadata host is not supported")
     soup = BeautifulSoup(page, "html.parser")
-    tags = {str(tag.get("name") or tag.get("property") or "").casefold(): tag.get("content", "")
-            for tag in soup.find_all("meta")}
-    ieee = {}
+    tags = {str(tag.get("name") or tag.get("property") or "").casefold():
+            str(tag.get("content") or "") for tag in soup.find_all("meta")}
+    ieee: dict[str, Any] = {}
     if host == "ieeexplore.ieee.org":
         marker = re.search(r"(?:xplGlobal\.document\.metadata|global\.document\.metadata)\s*=\s*", page)
         if marker:

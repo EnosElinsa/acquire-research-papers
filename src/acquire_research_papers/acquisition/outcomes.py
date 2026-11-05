@@ -1,6 +1,8 @@
 """One mapping from acquisition failures to item error codes, shared by every caller."""
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
@@ -64,7 +66,7 @@ EXIT_CODES = {
 PAUSE_HOST = "pause_host"
 
 
-def public_outcome(outcome: dict[str, object]) -> dict[str, object]:
+def public_outcome(outcome: Mapping[str, object]) -> dict[str, object]:
     return {key: value for key, value in outcome.items() if key != PAUSE_HOST}
 
 
@@ -79,7 +81,7 @@ def _host(url: str) -> str:
         return "unknown host"
 
 
-def failure_outcome(error: BaseException) -> dict[str, str]:
+def failure_outcome(error: BaseException) -> dict[str, Any]:
     """Classify one acquisition failure without exposing URLs, queries, or credentials."""
     if isinstance(error, UnsupportedPublisher):
         return {"error_code": "unsupported_adapter", "message": str(error)}
@@ -96,7 +98,8 @@ def failure_outcome(error: BaseException) -> dict[str, str]:
             code = "unsupported_adapter"
         else:
             code = "contract_error"
-        outcome = {"error_code": code, "message": f"{error} (IEEE phase: {error.phase})"}
+        outcome: dict[str, Any] = {"error_code": code,
+                                   "message": f"{error} (IEEE phase: {error.phase})"}
         if error.phase in IEEE_LOGIN_PHASES:
             outcome[PAUSE_HOST] = True
         return outcome

@@ -322,8 +322,8 @@ class CorpusPlanner:
             return None
         reversed_solution = []
         cursor = solved_state
-        while parents[cursor] is not None:
-            parent, quantity = parents[cursor]
+        while (link := parents[cursor]) is not None:
+            parent, quantity = link
             reversed_solution.append(quantity)
             cursor = parent
         solution = tuple(reversed(reversed_solution))
@@ -421,7 +421,7 @@ class CorpusPlanner:
                     )
                     return (lower_cost, abs(quantity - preferred), -quantity)
 
-                children = []
+                optimize_children: list[tuple[int, int, tuple[int, ...], int, tuple[int, ...]]] = []
                 for quantity in sorted(
                     range(minimum_quantity, maximum_quantity + 1),
                     key=branch_key,
@@ -435,7 +435,7 @@ class CorpusPlanner:
                             strict=True,
                         )
                     )
-                    children.append(
+                    optimize_children.append(
                         (
                             index + 1,
                             selected_total + quantity,
@@ -444,7 +444,7 @@ class CorpusPlanner:
                             (*used, quantity),
                         )
                     )
-                optimize_stack.extend(reversed(children))
+                optimize_stack.extend(reversed(optimize_children))
 
         selected = [
             candidate

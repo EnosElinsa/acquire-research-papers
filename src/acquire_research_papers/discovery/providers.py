@@ -193,7 +193,7 @@ class CrossrefVenueDiscoveryProvider:
                             )
                         page_identity = tuple(
                             (
-                                normalize_doi(candidate.doi) if candidate.doi else "",
+                                (normalize_doi(candidate.doi) or "") if candidate.doi else "",
                                 candidate.key,
                                 candidate.title,
                                 candidate.year,
@@ -426,6 +426,7 @@ class DoiBatchEnrichmentProvider:
                 and (not venue_names or _normalized(candidate.venue) in venue_names)
             )
         )
+        dois = [doi for doi in dois if doi]
         if not dois:
             return DiscoveryBatch(covered_slices=(coverage_label,))
         found: list[CandidateMetadata] = []

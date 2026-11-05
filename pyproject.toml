@@ -65,9 +65,13 @@ exclude = ["/docs"]
 
 [dependency-groups]
 dev = [
+  "mypy>=2.4,<3",
   "pytest>=8.3,<9",
+  "pytest-cov>=7.1,<8",
   "pytest-httpserver>=1.1,<2",
   "ruff>=0.11,<1",
+  "types-jsonschema>=4.26",
+  "types-PyYAML>=6.0.12",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -101,3 +105,28 @@ addopts = "-ra"
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+[tool.mypy]
+python_version = "3.11"
+files = ["src"]
+# One `result` variable per CLI branch; the new redefinition analysis types each branch.
+allow_redefinition_new = true
+local_partial_types = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+
+[[tool.mypy.overrides]]
+# pybtex ships neither type hints nor a stub package.
+module = ["pybtex.*"]
+ignore_missing_imports = true
+
+[tool.coverage.run]
+source = ["acquire_research_papers"]
+branch = true
+
+[tool.coverage.report]
+show_missing = false
+skip_covered = true
+# Branch coverage was 85% on Windows when this floor was set; each OS skips the others'
+# platform-specific code, so the floor leaves room for that difference.
+fail_under = 80

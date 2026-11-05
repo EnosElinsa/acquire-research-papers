@@ -436,7 +436,9 @@ class Registry:
                 _now(),
             ),
         )
-        return int(cursor.lastrowid)
+        if cursor.lastrowid is None:
+            raise RuntimeError("SQLite did not report the inserted row")
+        return cursor.lastrowid
 
     def evidence_for_task(self, task_id: str) -> list[dict[str, Any]]:
         rows = self._connection.execute(

@@ -956,7 +956,7 @@ class CorpusAcquisitionWorkflow:
         to_attempt: list[SelectionRecord] = []
         for record in selection.records:
             prior = previous.get(record.selection_id)
-            if _verified_previous(record, prior, destination):
+            if prior is not None and _verified_previous(record, prior, destination):
                 settled_rows[record.selection_id] = dict(prior)
                 continue
             settled = _verified_manual_import(record, prior, destination) or _adopted_delivery(

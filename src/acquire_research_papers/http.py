@@ -28,6 +28,8 @@ _MAX_RETRY_AFTER_SECONDS = 300.0
 
 
 def _bounded_retry_after(value: object) -> float | None:
+    if not isinstance(value, (int, float, str)):
+        return None
     try:
         seconds = float(value)
     except (TypeError, ValueError):

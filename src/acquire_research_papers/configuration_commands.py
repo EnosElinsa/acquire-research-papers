@@ -66,7 +66,7 @@ def _profile_migration_lock(paths: AppPaths) -> Iterator[None]:
             handle.flush()
         handle.seek(0)
         try:
-            if os.name == "nt":
+            if sys.platform == "win32":
                 import msvcrt
                 msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
             else:
@@ -78,7 +78,7 @@ def _profile_migration_lock(paths: AppPaths) -> Iterator[None]:
             yield
         finally:
             handle.seek(0)
-            if os.name == "nt":
+            if sys.platform == "win32":
                 msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
             else:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
@@ -515,7 +515,7 @@ def dispatch(args: argparse.Namespace) -> dict[str, Any] | None:
                             "-Path", str(paths.secrets / "secrets.clixml")], interactive=True)
         saved = store.save(profile, replace=args.replace)
         store.use(args.profile)
-        result: dict[str, Any] = {"status": "configured", "profile": saved}
+        result = {"status": "configured", "profile": saved}
         if args.inspect:
             observation = bridge_for(saved, paths, manager=manager).operate("inspect")
             # This observation has names/types/labels only; it contains no values or HTML.

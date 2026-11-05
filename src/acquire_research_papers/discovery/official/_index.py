@@ -11,6 +11,7 @@ import threading
 import unicodedata
 from collections import Counter
 from collections.abc import Callable, Mapping
+from typing import TypeVar
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
@@ -33,6 +34,7 @@ from acquire_research_papers.http import (
 )
 
 _RETRYABLE = frozenset({"network_transient", "rate_limited"})
+_Item = TypeVar("_Item")
 _DATE = re.compile(r"((?:19|20)\d{2})-(\d{2})-(\d{2})")
 
 
@@ -167,8 +169,8 @@ class OfficialIndexProvider:
 
     def fetch_details(
         self,
-        items: list,
-        fetch_one: Callable[[object], CandidateMetadata],
+        items: list[_Item],
+        fetch_one: Callable[[_Item], CandidateMetadata],
         result: SliceResult,
         *,
         phase: str = "paper-detail",
@@ -176,7 +178,7 @@ class OfficialIndexProvider:
         """Run ``fetch_one`` over ``items`` with bounded concurrency, keeping index order."""
         stop = threading.Event()
 
-        def run(item: object) -> tuple[CandidateMetadata | None, str]:
+        def run(item: _Item) -> tuple[CandidateMetadata | None, str]:
             if stop.is_set():
                 return None, "rate_limited"
             try:

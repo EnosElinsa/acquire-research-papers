@@ -9,7 +9,7 @@ import webbrowser
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 import httpx
 
@@ -130,7 +130,12 @@ _RUNTIME_SCRIPT_NAMES = frozenset(
 )
 
 _IEEE_ACCESS_PHASES = IEEE_ACCESS_PHASES
-_PUBLISHER_RETRY = {"retries": 3, "backoff_seconds": 1.0}
+class _RetryOptions(TypedDict):
+    retries: int
+    backoff_seconds: float
+
+
+_PUBLISHER_RETRY: _RetryOptions = {"retries": 3, "backoff_seconds": 1.0}
 # Minimum spacing between two papers from the same publisher host in a batch.
 _PUBLISHER_INTERVAL_SECONDS = 2.0
 # Publisher hosts contacted at the same time in a batch; each host still gets one paper at a time.
@@ -386,7 +391,7 @@ class Application:
         if adapter is None:
             router = AdapterRouter()
         else:
-            hosts = getattr(adapter, "production_hosts", frozenset())
+            hosts: frozenset[str] = getattr(adapter, "production_hosts", frozenset())
             router = AdapterRouter({host: adapter.name for host in hosts}, [adapter])
         application = cls(
             paths=paths,
@@ -771,7 +776,7 @@ class Application:
         selection: ManualHandoffSelection,
         destination: Path,
     ) -> DeliveryResult:
-        provenance = {
+        provenance: dict[str, object] = {
             "selection_id": record.selection_id,
             "acquisition_method": "manual_publisher_download",
             "source_pdf_filename": selection.source_pdf.name,
@@ -1225,7 +1230,10 @@ def run_cli(
             return 78
     if args.command in {"config", "credentials"} and args.config_mode != "status":
         try:
-            _emit(configuration_commands.dispatch(args))
+            payload = configuration_commands.dispatch(args)
+            if payload is None:
+                raise ValueError(f"unsupported {args.command} command: {args.config_mode}")
+            _emit(payload)
             return 0
         except (ValueError, OSError, IeeeBridgeError, NetworkTransient,
                 MetadataMismatch, BibMissing, InvalidPdfError) as exc:
@@ -1243,7 +1251,8 @@ def run_cli(
         try:
             paths = configuration_commands.runtime_paths()
             manager = configuration_commands.credential_manager(paths, env_file=args.env_file)
-            status = dict(credential_status() if credential_status else manager.status())
+            status: dict[str, Any] = dict(
+                credential_status() if credential_status else manager.status())
             store = configuration_commands.store_for(paths, manager=manager)
             if store.active():
                 status["ieee"] = True
@@ -1272,6 +1281,8 @@ def run_cli(
                     and not args.verify_only and args.watch is None and library_app is None):
                 library_app = Application.default(load_discovery_api_keys=False, env_file=args.env_file)
             result = library_cli.dispatch(args, application=library_app)
+            if result is None:
+                raise ValueError(f"unsupported {args.command} command")
             _emit(result)
             return 78 if result.get("status") == "failed" else 0
         except (ValueError, OSError, KeyError, TypeError) as exc:
@@ -1646,7 +1657,7 @@ def run_cli(
     except (HttpStatusError, httpx.TransportError) as exc:
         outcome = failure_outcome(exc)
         _emit({"status": "error", **outcome})
-        return EXIT_CODES[outcome["error_code"]]
+        return EXIT_CODES[str(outcome["error_code"])]
     except (
         PageContractChanged,
         MetadataMismatch,

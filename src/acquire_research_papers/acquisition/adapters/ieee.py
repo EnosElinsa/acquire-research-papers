@@ -235,9 +235,8 @@ class IeeeBridge:
     def _execute(self, command: list[str]) -> subprocess.CompletedProcess[str]:
         payload = self._credential_line()
         if self.access_profile is None:
-            options = {"input": payload} if payload is not None else {}
-            return subprocess.run(command, check=False, capture_output=True, text=True, **options,
-                                  encoding="utf-8", errors="replace",
+            return subprocess.run(command, input=payload, check=False, capture_output=True,
+                                  text=True, encoding="utf-8", errors="replace",
                                   timeout=self.timeout_seconds + self.process_grace_seconds,
                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -358,7 +357,8 @@ class IeeeBridge:
                 continue
             phase = str(payload.get("phase") or "automation")
             message = str(payload.get("message") or "IEEE browser automation failed")
-            details = payload.get("details") if isinstance(payload.get("details"), dict) else {}
+            raw_details = payload.get("details")
+            details = raw_details if isinstance(raw_details, dict) else {}
             error_name = str(details.get("errorName") or "")
             if error_name.isidentifier() and len(error_name) <= 40:
                 message = f"{message} ({error_name})"
