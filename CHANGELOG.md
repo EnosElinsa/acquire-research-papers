@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.14.0 — 2026-11-04
 
 - IJCAI works again. In 2026 IJCAI moved to `ijcai.org` (with `www.ijcai.org` redirecting there) and redesigned its index and paper pages, so 0.13.0 failed every IJCAI discovery and fetch with a host-boundary or page-contract error. Both hosts are accepted now, and the new layout is read: detail links that appear twice per paper, the "PDF Download" label, the repeated BibTeX link, "Family, Given" authors, and the new abstract and keyword blocks; the old layout still parses. Live: IJCAI 2023 lists 639 main-track papers, sample pages parse with abstracts, and papers from 2023 and 2024 deliver from DOI, `www.ijcai.org`, and `ijcai.org` links.
 - `arp review template --run <discovery-run> --output <file> --reviewer <host> --rule-version <id>` writes an importable decisions file with one `pending` record per ready evidence packet, already carrying its candidate ID, evidence hash, and v2 reviewer metadata, so a reviewer only fills in decisions and reasons. Live: a 256-paper INFOCOM 2024 template with three accepts froze the same selection as hand-written decisions.
