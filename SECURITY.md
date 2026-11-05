@@ -2,7 +2,13 @@
 
 ## Supported versions
 
-Security fixes are applied to the latest release and the current `main` branch. Older releases are not maintained after a fixed release is available.
+| Version | Security fixes |
+| --- | --- |
+| [Latest release](https://github.com/EnosElinsa/acquire-research-papers/releases/latest) | Yes |
+| `main` branch | Yes |
+| Older releases | No; update to the latest release |
+
+A fix ships as a new release; assets of a published release are never replaced.
 
 ## Report a vulnerability
 
@@ -11,6 +17,8 @@ Use [GitHub's private vulnerability reporting](https://github.com/EnosElinsa/acq
 Include the affected version, operating system, the smallest reproducible sequence, and a redacted description of the observed host or redirect. Replace every secret and URL query string before attaching logs. Please allow time for triage before public disclosure.
 
 If private reporting is unavailable, open a public issue containing only a request for a private contact channel and no vulnerability details.
+
+After a report, the maintainer confirms the issue in the private advisory, prepares a fix and a regression test, publishes a release, and then publishes the advisory with credit to the reporter unless you ask to stay anonymous. This is a single-maintainer project without a guaranteed response time; the advisory thread shows the current state.
 
 ## Credential boundary
 

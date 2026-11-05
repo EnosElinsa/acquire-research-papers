@@ -1,5 +1,6 @@
 name: Institution adaptation / 机构接入
 description: A new institution or unsupported login page shape; assisted manual login is the default.
+labels: [institution]
 body:
   - type: markdown
     attributes:
@@ -34,3 +35,10 @@ body:
       description: For example single-page, two-step, CAS return, consent, QR code, or MFA. Include only redacted doctor states; a successful open-access download does not prove subscription access.
     validations:
       required: true
+  - type: checkboxes
+    id: redaction
+    attributes:
+      label: Privacy check / 隐私检查
+      options:
+        - label: This report contains no username, password, session data, cookies, SAML payloads, or personal screenshots. / 报告中没有账号、密码、会话数据、Cookie、SAML 内容或含个人信息的截图。
+          required: true

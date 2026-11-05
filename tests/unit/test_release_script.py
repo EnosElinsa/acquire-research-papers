@@ -15,7 +15,7 @@ spec = importlib.util.spec_from_file_location("release", ROOT / "scripts" / "rel
 release = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(release)
 
-COPIED = ("pyproject.toml", "src/acquire_research_papers/__init__.py", "uv.lock",
+COPIED = ("pyproject.toml", "CITATION.cff", "src/acquire_research_papers/__init__.py", "uv.lock",
           "tests/test_distribution.py", "tests/unit/test_host_installer.py",
           "tests/unit/test_skill_layout.py", "README.md", "README.zh-CN.md")
 
@@ -54,6 +54,8 @@ def test_bump_rewrites_every_pin_and_leaves_history_alone(tmp_path):
 
     assert (result["from"], result["to"]) == (old, new)
     assert release.current_version(root) == new
+    citation = (root / "CITATION.cff").read_text(encoding="utf-8")
+    assert f"\nversion: {new}\n" in citation and '\ndate-released: "2026-12-01"\n' in citation
     assert f'__version__ = "{new}"' in (root / "src/acquire_research_papers/__init__.py").read_text()
     lock = (root / "uv.lock").read_text(encoding="utf-8")
     assert f'name = "acquire-research-papers"\nversion = "{new}"' in lock

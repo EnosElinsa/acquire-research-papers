@@ -1,0 +1,26 @@
+cff-version: 1.2.0
+message: "If this software supports your research, please cite the release you used."
+type: software
+title: "Acquire Research Papers"
+abstract: >-
+  An agent skill and deterministic CLI that acquires identity-verified pairs of an
+  official publisher PDF and the publisher's raw BibTeX export, builds auditable
+  venue/year/topic corpora with coverage evidence, prepares bounded literature research
+  with claim-level evidence, and maintains local PDF/BibTeX libraries through
+  hash-bound plans with backups.
+authors:
+  - family-names: Cai
+    given-names: Zhiyuan
+    alias: EnosElinsa
+version: 0.15.0
+date-released: "2026-11-04"
+license: MIT
+repository-code: "https://github.com/EnosElinsa/acquire-research-papers"
+url: "https://github.com/EnosElinsa/acquire-research-papers"
+keywords:
+  - academic research
+  - literature review
+  - research papers
+  - bibtex
+  - corpus construction
+  - agent skill

@@ -1,4 +1,37 @@
-# Development and release validation
+# Contributing
+
+Thank you for helping improve Acquire Research Papers. This guide covers how to propose a change, the project's ground rules, the development checks, and, for maintainers, building and publishing a release. Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md).
+
+## Ways to contribute
+
+- **Report a bug or a changed publisher page** with the [issue forms](https://github.com/EnosElinsa/acquire-research-papers/issues/new/choose). A minimal synthetic reproduction and redacted diagnostics are the most useful parts; see [SUPPORT.md](SUPPORT.md).
+- **Ask for a source or venue** with the feature form: name the venue, its official index or publisher host, and a few example papers.
+- **Adapt an institution** with the institution form. Share only public entry URLs without query strings and non-sensitive page descriptions.
+- **Report a vulnerability** privately as described in [SECURITY.md](SECURITY.md), never in a public issue.
+- **Send a pull request.** For anything larger than a focused fix, open an issue first so the approach can be agreed before you write code.
+
+## Ground rules
+
+These rules come from the project's trust model and apply to every change:
+
+- A delivered paper is the official publisher PDF plus the publisher's raw BibTeX export, verified for identity. Never add mirrors, generated or repaired citations, or a metadata service as a delivery source.
+- Requests stay inside each adapter's exact approved hosts; see [source policies](skills/acquire-research-papers/references/source-policies.md). Do not bypass access controls, bot checks, or institutional authentication. ScienceDirect stays manual.
+- Never commit or attach credentials, browser profiles, cookies, signed URLs, downloaded papers, or runtime stores. Tests use synthetic fixtures and isolated temporary roots.
+- Frozen selections, raw citation bytes, hashes, and published schemas are contracts. Changing one needs a migration path for existing runs.
+- User-visible behavior is documented in both `README.md` and `README.zh-CN.md`, and in the skill references under `skills/acquire-research-papers/` when the agent needs it.
+
+## Pull requests
+
+1. Branch from `main` and keep the change focused on one problem.
+2. Add or update tests for the changed contract; a bug fix starts with a test that fails without it.
+3. Run the checks below, plus the PowerShell suites on Windows when you touch credentials or the IEEE browser helpers.
+4. Add a line under `## Unreleased` in [CHANGELOG.md](CHANGELOG.md) that describes the change from the user's side, with live evidence when a source changed.
+5. Write commit messages as `type: summary` with `feat`, `fix`, `docs`, `test`, `refactor`, or `chore`; release commits use `release: pin the v<version> wheel with …`.
+6. Fill in the pull request template: the problem, the resulting behavior, and the checks you ran.
+
+Code style is enforced by `ruff` (line length 100, Python 3.11 target). Keep public messages free of URLs with query strings and of secret values.
+
+## Repository layout
 
 End users install the thin skill with:
 
@@ -7,6 +40,16 @@ npx skills add EnosElinsa/acquire-research-papers --skill acquire-research-paper
 ```
 
 The canonical skill lives at `skills/acquire-research-papers/`; there is no root `SKILL.md`. The skill contains instructions, references, public schema snapshots, a standard-library launcher, and a fixed-wheel SHA-256 manifest. Python source, tests, development tools, runtime PowerShell/browser helpers, and the Git checkout are not installed as skill content.
+
+```text
+src/acquire_research_papers/     CLI and runtime, published as the release wheel
+skills/acquire-research-papers/  thin skill: SKILL.md, references, examples, templates, schemas, launcher
+schemas/                         public JSON schemas; the skill keeps byte-identical copies
+scripts/                         runtime helpers (PowerShell, Node) and maintainer tools (build, release, checks)
+tests/                           unit, integration, Node, and PowerShell tests
+docs/                            historical design notes and implementation plans
+.github/                         CI, weekly source check, public-release verification, issue forms
+```
 
 ## Developer setup and checks
 
@@ -52,7 +95,7 @@ Release publishing is a separate explicitly authorized operation. Build and test
 
 ## Publishing a release
 
-Update both READMEs, CHANGELOG.md, the Python version, and the runtime manifest together. Run the full supported test matrix, build the final wheel/ZIP, then verify their hashes and a separate installed runtime. Build after any change to packaged source, helpers, schemas, or README metadata. The manifest itself is outside the CLI wheel, so updating its digest does not change that wheel.
+Update both READMEs, CHANGELOG.md, CITATION.cff, the Python version, and the runtime manifest together. Run the full supported test matrix, build the final wheel/ZIP, then verify their hashes and a separate installed runtime. Build after any change to packaged source, helpers, schemas, or README metadata. The manifest itself is outside the CLI wheel, so updating its digest does not change that wheel.
 
 Publish only after the source commit is on `main` and CI is green. Tag that exact commit as `v<version>`. Upload the matching wheel, versioned thin-skill ZIP, and a `SHA256SUMS` file listing their hashes.
 
@@ -73,7 +116,7 @@ uv run python scripts/release.py remote --host <user@host> [--target kiro|codex]
 
 `scripts/check_sources.py` is the live upstream check that the `weekly source check` workflow runs every Monday (and on demand): every preset ISSN must still name its journal in Crossref and have records in the last full year, every proceedings DOI must have records, every OpenAlex source must resolve to itself with works two years back, and each official index (ACL, IJCAI, NeurIPS, PMLR, CVF) must list close to its known paper count with a few sample paper pages that still parse with an abstract. The smoke's open-access fetches (ACL, AAAI, NeurIPS, PMLR, CVF, IJCAI) run through `arp fetch` in throwaway roots without keys and must deliver; `--only presets|indexes|fetches` runs one group. A check that fails with a connection error, HTTP 5xx, or HTTP 429 runs once more after 30 seconds and is marked `retried`; if it fails that way again, its status is `upstream_error`, which is listed in the report and shown as a workflow warning but does not fail the run, since nothing in this repository can fix a remote server fault. Error text keeps only the host of each URL. OpenAlex checks need the `OPENALEX_API_KEY` repository secret (`gh secret set OPENALEX_API_KEY`) and are skipped without it; locally, `--use-configured-keys` reads the key `arp config` stores.
 
-`bump` rewrites the version in `pyproject.toml`, `__init__.py`, the project entry of `uv.lock`, the release-pinned test fixtures, the release sections of both READMEs, and the `## Unreleased` CHANGELOG heading (to `## <version> — <date>`), and writes nothing if any file is not as expected. `build` builds into `dist/release-<version>` (which must not exist yet), refreshes `runtime.json`, rebuilds in a temporary directory to prove the wheel and ZIP byte-reproducible, checks that both READMEs link the new release tag, that `CHANGELOG.md` has the new section, and that the wheel's embedded README links the tag (bump's README and CHANGELOG edits once went missing before a build), and writes `SHA256SUMS` with LF lines. Then smoke-test the assets, commit and tag the release, and push `main` and the tag yourself. `publish` checks that the working tree is clean, that `origin` has `main` and the tag at `HEAD`, and that every `test` workflow run for that commit passed (`--skip-ci-check` overrides only this check); it then creates a draft release, uploads each asset with retries, checks the uploaded sizes, publishes the draft as latest, and downloads the assets again to compare hashes. A draft left by an interrupted `publish` is reused; an already published release is refused. Prepare release notes from the changelog with installation, migration, platform limits, and validation evidence. Never replace assets under an already published version; a correction to published runtime bytes needs a new version and digest.
+`bump` rewrites the version in `pyproject.toml`, the version and release date in `CITATION.cff`, `__init__.py`, the project entry of `uv.lock`, the release-pinned test fixtures, the release sections of both READMEs, and the `## Unreleased` CHANGELOG heading (to `## <version> — <date>`), and writes nothing if any file is not as expected. `build` builds into `dist/release-<version>` (which must not exist yet), refreshes `runtime.json`, rebuilds in a temporary directory to prove the wheel and ZIP byte-reproducible, checks that both READMEs link the new release tag, that `CHANGELOG.md` has the new section, and that the wheel's embedded README links the tag (bump's README and CHANGELOG edits once went missing before a build), and writes `SHA256SUMS` with LF lines. Then smoke-test the assets, commit and tag the release, and push `main` and the tag yourself. `publish` checks that the working tree is clean, that `origin` has `main` and the tag at `HEAD`, and that every `test` workflow run for that commit passed (`--skip-ci-check` overrides only this check); it then creates a draft release, uploads each asset with retries, checks the uploaded sizes, publishes the draft as latest, and downloads the assets again to compare hashes. A draft left by an interrupted `publish` is reused; an already published release is refused. Prepare release notes from the changelog with installation, migration, platform limits, and validation evidence. Never replace assets under an already published version; a correction to published runtime bytes needs a new version and digest.
 
 The `verify public release` workflow runs after publication on Linux, Windows, and macOS. It installs the tagged skill with the real Skills installer and bootstraps its public wheel URL with no local-wheel override. The workflow can also be dispatched against a named tag or branch. Verify the default-branch installation command as well, since that is the documented user path. GitHub source archives are developer downloads; the skill ZIP is the manual-install artifact.
 

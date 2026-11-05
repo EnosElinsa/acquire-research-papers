@@ -3,11 +3,12 @@
 [English](README.md)
 
 [![CI](https://github.com/EnosElinsa/acquire-research-papers/actions/workflows/test.yml/badge.svg)](https://github.com/EnosElinsa/acquire-research-papers/actions/workflows/test.yml)
+[![Weekly source check](https://github.com/EnosElinsa/acquire-research-papers/actions/workflows/source-check.yml/badge.svg)](https://github.com/EnosElinsa/acquire-research-papers/actions/workflows/source-check.yml)
 [![Release](https://img.shields.io/github/v/release/EnosElinsa/acquire-research-papers)](https://github.com/EnosElinsa/acquire-research-papers/releases/latest)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Acquire Research Papers 是一个多个 Agent 宿主共用的 skill 和确定性命令行工具，用来获取论文和管理本地论文库：
+Acquire Research Papers 是一个 Agent skill 和确定性命令行工具，用来获取论文和管理本地论文库。Codex、Claude Code、Kiro IDE 和 Kiro CLI 共用同一个 skill：
 
 - 根据 DOI 或出版社正式页面获取已知论文；
 - 按指定期刊/会议、年份、主题和配额建立可审计的论文集；
@@ -18,6 +19,13 @@ Acquire Research Papers 是一个多个 Agent 宿主共用的 skill 和确定性
 [最新版本](https://github.com/EnosElinsa/acquire-research-papers/releases/latest) · [更新记录](CHANGELOG.md) · [开发指南](CONTRIBUTING.md) · [使用帮助与反馈](SUPPORT.md) · [安全说明](SECURITY.md)
 
 每项完成的获取都必须形成经过身份核验的一对文件：出版社托管的 PDF 和出版社导出的原始 BibTeX。Crossref、OpenAlex 和 Semantic Scholar 可以发现候选并补全元数据，但不能代替正式文件。本项目不使用论文镜像，不让模型生成引用，也不绕过出版社访问控制。
+
+## 目录
+
+- **开始使用：**[选择工作流](#选择适合的工作流) · [安装](#安装) · [首次使用](#首次使用只配置当前任务需要的能力) · [快速开始](#快速开始)
+- **工作原理：**[论文集检索](#论文集检索实际如何工作) · [文献调研](#文献调研实际如何工作) · [自动获取](#自动获取实际如何工作) · [输出文件](#如何理解输出文件)
+- **来源与访问：**[来源支持](#来源支持与成熟度) · [IEEE 机构访问](#ieee-机构访问) · [ScienceDirect](#sciencedirect-人工接管)
+- **范围与项目：**[可信边界](#准确性与可信边界) · [当前限制](#当前限制) · [路线图](#后续路线图) · [开发](#开发与验证) · [引用](#引用)
 
 ## 选择适合的工作流
 
@@ -106,9 +114,9 @@ python "$skill/scripts/arp.py" config status
 
 | 能力 | 何时配置 | 配置方式 |
 | --- | --- | --- |
-| 无需配置 | 公开 Crossref 发现、ACL 发现/获取、IJCAI 发现/获取 | 不需要密钥 |
+| 无需配置 | 公开 Crossref 发现；从 ACL、IJCAI、AAAI、NeurIPS、PMLR 和 CVF 官方归档发现并获取；Springer 开放获取论文 | 不需要密钥 |
 | Semantic Scholar | 需要带 key 的候选搜索、更高额度和第一轮 DOI 摘要补全 | `arp config setup semantic_scholar` |
-| OpenAlex | 需要额外候选搜索和第二轮 DOI 摘要补全 | `arp config setup openalex` |
+| OpenAlex | 需要通过 OpenAlex 系列枚举 IEEE 或 ACM 会议（INFOCOM、ICC、GLOBECOM、SIGCOMM 等）、额外候选搜索或第二轮 DOI 摘要补全 | `arp config setup openalex` |
 | IEEE | 需要本校 IEEE 访问；默认先人工登录，可另行启用支持的 CARSI 表单 | `arp config setup ieee` |
 | Elsevier | ScienceDirect 人工接管前需要解析官方预期身份 | `arp config setup elsevier` |
 | MinerU | 需要为内部全文分析解析 PDF，或明确要求导出 Markdown | `arp config setup mineru` |
@@ -289,7 +297,7 @@ python "$skill/scripts/arp.py" evidence research `
 论文集模式适合“指定这些 venue、这些年份，查找这些主题”的有边界任务，实际经过以下步骤：
 
 1. **定义边界。** 当前 Agent 记录准确的期刊/会议、年份、论文类型、主题、排除项、总数和配额。
-2. **先枚举再筛选。** ACL 和 IJCAI 使用官方 proceedings；期刊和已知会议集通过 ISSN、collection DOI、venue 和年份分页读取 Crossref；OpenAlex 和 Semantic Scholar 可以补充基于查询的候选。
+2. **先枚举再筛选。** ACL、IJCAI、NeurIPS、PMLR 系列会议（ICML、AISTATS、COLT 等）和 CVF（CVPR、ICCV、WACV）读取各自的官方索引；期刊和已知会议集通过 ISSN、collection DOI、venue 和年份分页读取 Crossref；OpenAlex 和 Semantic Scholar 可以补充基于查询的候选。
 3. **记录覆盖状态。** 每个“venue × 年份”都会标记为 complete、partial 或 failed。缺少 proceedings 页面或准确标识符时，会生成诊断信息，不会把空结果伪装成完整覆盖。
 4. **合并并补全。** 优先按 DOI 去重。缺少摘要时，先按 DOI 查询 Semantic Scholar，配置 OpenAlex 后再进行第二轮补全；每个字段保留来源记录。
 5. **依据证据评审。** 确定性规则排除错误年份、venue、track、论文类型和明显的目录/封面信息。关键词只负责提出候选；正式接受必须由当前 Agent 同时判断标题和摘要，并记录理由。
@@ -335,7 +343,7 @@ Crossref、OpenAlex、Semantic Scholar、普通仓库和镜像都不能满足最
 
 在首次访问出版社前，输出目录会绑定一个冻结选集。重新运行时，只有全部记录路径和哈希仍匹配才会跳过已交付论文。为了避免覆盖，包含未绑定 PDF、BibTeX 或 acquisition ledger 的旧目录会被拒绝；应使用干净目录或明确的迁移/导入流程。
 
-账本在每篇论文处理完后立即保存，因此中断（Ctrl+C、宿主超时、浏览器被关闭）后用同一命令和同一输出目录重跑即可续跑；中断那一篇的残留文件会移到 `.arp-interrupted/`，不会被删除。没有适配器的出版商以 `unsupported_adapter` 进入人工队列。批量下载时同一主机的请求会间隔进行；遇到 HTTP 429、连续三次临时失败或机构登录失败后，该主机在本次运行剩余部分暂停。同一次运行中的 IEEE 论文共用一个专用浏览器，机构登录只需完成一次。
+账本在每篇论文处理完后立即保存，因此中断（Ctrl+C、宿主超时、浏览器被关闭）后用同一命令和同一输出目录重跑即可续跑；中断那一篇的残留文件会移到 `.arp-interrupted/`，不会被删除。没有适配器的出版商以 `unsupported_adapter` 进入人工队列。批量下载最多同时联系四个出版社主机（`--parallel-hosts N`；设为 `1` 恢复逐篇下载），每个主机仍一次只处理一篇论文。同一主机的请求会间隔进行；遇到 HTTP 429、连续三次临时失败或机构登录失败后，该主机在本次运行剩余部分暂停。同一次运行中的 IEEE 论文共用一个专用浏览器，机构登录只需完成一次。
 
 ## 来源支持与成熟度
 
@@ -350,7 +358,7 @@ Crossref、OpenAlex、Semantic Scholar、普通仓库和镜像都不能满足最
 | Crossref | 主要 venue/year 枚举和 research 搜索 | 不支持 | 稳定的公开元数据来源，但字段完整度仍取决于出版社 |
 | ACL Anthology | 官方 proceedings 枚举 | 自动 | 成熟，已经用于真实批量任务 |
 | IJCAI proceedings | 官方 proceedings 和 track 解析 | 自动 | 成熟，已经用于真实批量任务 |
-| AAAI（ojs.aaai.org） | 用 AAAI ISSN 做 Crossref venue 枚举；记录自带摘要和官方归档 URL | 自动 | 官方 OJS PDF 和 BibTeX 导出。真实验证：AAAI-24 枚举出 2,867 条带摘要的记录，抽样论文已交付 |
+| AAAI（ojs.aaai.org） | 用 AAAI ISSN 做 Crossref venue 枚举；记录自带摘要和官方归档 URL | 自动 | 官方 OJS PDF 和 BibTeX 导出。真实验证：AAAI-24 枚举出 2,867 条带摘要的记录，抽样论文已交付。2026 年 11 月初起 AAAI 的引用导出接口对所有客户端返回 HTTP 520，在 AAAI 修复前获取结果为 `network_transient` |
 | NeurIPS proceedings | 官方年度列表：主会，以及 2022 年起的 Datasets and Benchmarks | 由发现阶段或摘要页 URL 自动获取 | 官方 PDF 和逐篇 BibTeX 文件。NeurIPS DOI 解析到 Curran Associates，单凭 DOI 不能下载。真实验证：2019 年列出 1,428 篇带摘要的论文；2019、2022 D&B 和 2023 论文已交付 |
 | PMLR | ICML、AISTATS、COLT、UAI、CoRL、ALT、ACML、L4DC、CLeaR 各卷的官方 BibTeX 文件 | 由发现阶段或论文页 URL 自动获取 | BibTeX 取自官方页面上显示的条目（provenance 记为 `publisher_page_embedded`）。真实验证：ICML 2023 列出 1,828 篇带摘要的论文；ICML 2019 和 2023 论文已交付 |
 | CVF Open Access | CVPR、ICCV、WACV 主会官方列表 | 由发现阶段或论文页 URL 自动获取 | CVF 开放获取版本，除水印外与录用版本一致；最终出版版本在 IEEE Xplore（在 venue 上声明 `publisher: IEEE` 可改走 IEEE）。BibTeX 取自页面。真实验证：WACV 2024 列出 846 篇带摘要的论文；CVPR 2019、2023、一个 CVPR workshop 和 WACV 2024 论文已交付 |
@@ -488,7 +496,7 @@ python "$skill/scripts/arp.py" manual-fetch `
 
 6. **量化发现质量。**建立标注过的 venue/topic fixture，按来源和领域统计覆盖率、precision、recall、摘要缺失率和评审分歧。
 7. **扩展官方枚举。**在存在官方索引或 API 时增加准确、可审计的 venue adapter，优先考虑 IEEE 和 ACM collection，同时保留严格标识符要求。
-8. **改善批量操作。**增加遵守出版社限制的安全并发、进度快照和重试调度，同时保护限流和共享会话。
+8. **改善批量调度。**在已有的按主机并行、检查点和暂停机制基础上，增加跨运行的重试调度，同时保护限流和共享会话。
 9. **扩展实测平台。**分别验证各宿主与各系统的 IEEE 浏览器能力，保留显式本地文件配置和 Windows DPAPI 迁移兼容。
 10. **开放出版社插件契约。**允许用户为通用 adapter 注册准确批准域名和经过测试的页面契约，同时继续拒绝任意跳转和模型生成引用。
 
@@ -505,7 +513,11 @@ python "$skill/scripts/arp.py" export-md `
 
 ## 开发与验证
 
-开发安装、Python/Node/PowerShell 测试、wheel/skill 构建、隔离安装及发布校验见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+开发安装、Python/Node/PowerShell 测试、wheel/skill 构建、隔离安装及发布校验见 [CONTRIBUTING.md](CONTRIBUTING.md)。参与项目请遵守[行为准则](CODE_OF_CONDUCT.md)；使用问题和缺陷报告见 [SUPPORT.md](SUPPORT.md)，安全漏洞见 [SECURITY.md](SECURITY.md)。
+
+## 引用
+
+如果本工具支撑了已发表的研究，请引用所用的发布版本。引用元数据在 [CITATION.cff](CITATION.cff) 中，GitHub 仓库页面会显示为“Cite this repository”。
 
 ## 负责任使用
 

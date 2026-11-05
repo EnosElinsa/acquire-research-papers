@@ -5,15 +5,22 @@ build-backend = "hatchling.build"
 [project]
 name = "acquire-research-papers"
 version = "0.15.0"
-description = "Codex skill and CLI for verified paper acquisition, library management, and author discovery"
+description = "Agent skill and CLI for verified research-paper acquisition, auditable corpus discovery, literature research, and local PDF/BibTeX library management"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
+authors = [{ name = "Zhiyuan Cai" }]
 keywords = [
   "academic-research",
+  "agent-skill",
   "bibtex",
+  "claude-code",
   "codex-skill",
+  "corpus",
+  "crossref",
+  "kiro",
   "literature-review",
+  "openalex",
   "research-papers",
 ]
 classifiers = [
@@ -21,6 +28,9 @@ classifiers = [
   "Environment :: Console",
   "Intended Audience :: Science/Research",
   "License :: OSI Approved :: MIT License",
+  "Operating System :: MacOS",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX :: Linux",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",

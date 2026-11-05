@@ -1,5 +1,12 @@
 # Changelog
 
+All notable changes to this project are recorded here, newest first. Versions follow [Semantic Versioning](https://semver.org/); before 1.0.0 a minor release can change behavior, so read its entry before updating. Every release is published with its wheel, skill ZIP, and `SHA256SUMS` on the [releases page](https://github.com/EnosElinsa/acquire-research-papers/releases).
+
+## Unreleased
+
+- Documentation: both READMEs gain a table of contents, a weekly source check badge, and a citation section, and describe the current sources correctly (official indexes for NeurIPS, PMLR, and CVF; no setup needed for the open archives; OpenAlex needed for IEEE and ACM conference series; up to four hosts in parallel; AAAI's citation export outage). New `CODE_OF_CONDUCT.md` and `CITATION.cff`; CONTRIBUTING starts with how to contribute, ground rules, and pull request steps; SECURITY lists supported versions and the disclosure process; issue forms carry labels, host and OS fields, and a privacy check, and the pull request template is a checklist.
+- Maintainers: `release.py bump` also updates the version and release date in `CITATION.cff`.
+
 ## 0.15.0 — 2026-11-04
 
 - Fixed on Windows: a batch acquisition with parallel hosts (the default since 0.10.0) could stop with "acquisition output contains an unverified reserved artifact" right after delivering a paper. When one host's worker created a shared venue folder while another worker was resolving a path inside it, Python's `Path.resolve()` returned the `\\?\C:\…` spelling of the path, so the delivered file no longer matched its reserved path. Paths are now compared without that prefix. Reproduced in isolation (282 of 300 trials returned the prefixed path) and in the test suite under CPU load; 0 of 20 loaded runs fail now.

@@ -1,11 +1,28 @@
 name: Feature request / 功能建议
-description: Describe a concrete research workflow and the result you need.
+description: Describe a concrete research workflow, source, or venue and the result you need.
+labels: [enhancement]
 body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area / 范围
+      options:
+        - A new source, venue, or publisher
+        - Corpus discovery and review
+        - Acquisition and manual handoff
+        - Literature research and evidence
+        - Local library management
+        - Author discovery
+        - Installation, hosts, or configuration
+        - Documentation
+        - Other
+    validations:
+      required: true
   - type: textarea
     id: problem
     attributes:
       label: Workflow and problem / 工作流与问题
-      description: Explain the task, current limitation, and expected user benefit without sharing private research data.
+      description: Explain the task, current limitation, and expected user benefit without sharing private research data. For a source or venue, name its official index or publisher host and a few example papers.
     validations:
       required: true
   - type: textarea

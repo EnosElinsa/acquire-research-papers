@@ -1,21 +1,52 @@
 name: Bug report / 问题报告
-description: A reproducible failure in installation, discovery, acquisition, or library management.
+description: A reproducible failure in installation, discovery, acquisition, research, or library management.
+labels: [bug]
 body:
   - type: markdown
     attributes:
-      value: Please use synthetic files and redact private paths. Never upload credentials, browser state, cookies, signed URLs, SAML payloads, or your paper collection. Security issues belong in private reporting.
+      value: Please use synthetic files and redact private paths. Never upload credentials, browser state, cookies, signed URLs, SAML payloads, or your paper collection. Security issues belong in [private reporting](https://github.com/EnosElinsa/acquire-research-papers/security/advisories/new).
   - type: input
     id: version
     attributes:
-      label: Version, OS, and installation method / 版本、系统、安装方式
-      description: Include Python/uv/Node versions when relevant, and whether you used npx, the ZIP, or a developer checkout.
+      label: Release version / 版本
+      description: The output of `arp --version`, or the commit if you run a developer checkout.
+      placeholder: "0.15.0"
     validations:
       required: true
+  - type: dropdown
+    id: host
+    attributes:
+      label: Agent host / 宿主
+      options:
+        - Codex
+        - Claude Code
+        - Kiro IDE
+        - Kiro CLI
+        - CLI only (no agent)
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system / 操作系统
+      options:
+        - Windows
+        - macOS
+        - Linux
+    validations:
+      required: true
+  - type: input
+    id: install
+    attributes:
+      label: Installation method and tool versions / 安装方式与工具版本
+      description: npx skills, the release ZIP, or a developer checkout; Python, uv, and Node versions when relevant.
   - type: textarea
     id: reproduce
     attributes:
       label: Minimal reproduction / 最小复现
       description: Command shape and synthetic inputs; replace private paths and remove URL queries.
+      render: text
     validations:
       required: true
   - type: textarea
@@ -28,4 +59,12 @@ body:
     id: diagnostics
     attributes:
       label: Redacted diagnostics / 脱敏诊断
-      description: Error code, phase, exact public hostname, and relevant non-secret states. Inspect every line before posting.
+      description: Status, error code, phase, exact public hostname, and relevant non-secret states. Inspect every line before posting.
+      render: text
+  - type: checkboxes
+    id: redaction
+    attributes:
+      label: Privacy check / 隐私检查
+      options:
+        - label: This report contains no credentials, cookies, session data, signed URLs, or downloaded papers. / 报告中没有凭据、Cookie、会话数据、签名链接或下载的论文。
+          required: true

@@ -1,7 +1,18 @@
-Describe the concrete problem and resulting behavior. Link a relevant issue if available.
+## Problem and change
 
-Validation: include the checks appropriate to the changed contract and any material limits.
+<!-- What problem does this solve, and how does the behavior change? Link the issue, e.g. "Fixes #123". -->
 
-For institution or publisher changes, describe the generic page/host contract with redacted fixtures. For library writes, include source-change, collision, and recovery behavior. Preserve raw citation bytes and frozen corpus/research contracts. Do not include credentials, browser/session data, signed URLs, downloaded papers, or runtime stores.
+## Validation
 
-For a release, synchronize the package version, runtime manifest, schemas, changelog, and the actual wheel digest; verify the exported skill and independent runtime before publishing.
+<!-- The checks you ran (pytest, ruff, validate_skill.py, Node or PowerShell suites, live fetches) and any material limits. -->
+
+## Checklist
+
+- [ ] Tests cover the changed contract; a bug fix includes a test that fails without it.
+- [ ] `CHANGELOG.md` has a line under `## Unreleased`.
+- [ ] Both READMEs, and the skill references when the agent needs it, describe user-visible changes.
+- [ ] No credentials, browser or session data, signed URLs, downloaded papers, or runtime stores are included.
+- [ ] Publisher and institution changes keep exact-host boundaries and use redacted fixtures.
+- [ ] Library writes handle source changes, collisions, and recovery; raw citation bytes and frozen corpus/research contracts are preserved.
+
+<!-- Releases follow the steps in CONTRIBUTING.md ("Publishing a release") with scripts/release.py. -->

@@ -3,11 +3,12 @@
 [简体中文](README.zh-CN.md)
 
 [![CI](https://github.com/EnosElinsa/acquire-research-papers/actions/workflows/test.yml/badge.svg)](https://github.com/EnosElinsa/acquire-research-papers/actions/workflows/test.yml)
+[![Weekly source check](https://github.com/EnosElinsa/acquire-research-papers/actions/workflows/source-check.yml/badge.svg)](https://github.com/EnosElinsa/acquire-research-papers/actions/workflows/source-check.yml)
 [![Release](https://img.shields.io/github/v/release/EnosElinsa/acquire-research-papers)](https://github.com/EnosElinsa/acquire-research-papers/releases/latest)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Acquire Research Papers is a shared agent skill and deterministic CLI for paper acquisition and library management:
+Acquire Research Papers is an agent skill and deterministic CLI for paper acquisition and library management. Codex, Claude Code, Kiro IDE, and Kiro CLI share the same skill:
 
 - fetch a known paper from its DOI or official publisher page;
 - build an auditable corpus for specified venues, years, topics, and quotas;
@@ -18,6 +19,13 @@ Acquire Research Papers is a shared agent skill and deterministic CLI for paper 
 [Latest release](https://github.com/EnosElinsa/acquire-research-papers/releases/latest) · [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [Help and feedback](SUPPORT.md) · [Security](SECURITY.md)
 
 A completed acquisition is an identity-verified pair: the official publisher PDF and the publisher's raw BibTeX export. Crossref, OpenAlex, and Semantic Scholar can discover and enrich candidates, but they never replace those official artifacts. The project does not use mirrors, generate citations with an LLM, or bypass publisher access controls.
+
+## Contents
+
+- **Start:** [choose the workflow](#choose-the-workflow) · [install](#install) · [first use](#first-use-configure-only-what-this-task-needs) · [quick start](#quick-start)
+- **How it works:** [corpus discovery](#how-corpus-discovery-actually-works) · [literature research](#how-literature-research-actually-works) · [acquisition](#how-acquisition-works) · [outputs](#understand-the-outputs)
+- **Sources and access:** [source support](#source-support-and-maturity) · [IEEE institutions](#ieee-institutional-access) · [ScienceDirect](#sciencedirect-manual-handoff)
+- **Scope and project:** [trust boundaries](#accuracy-and-trust-boundaries) · [limitations](#current-limitations) · [roadmap](#roadmap) · [development](#development) · [citation](#citation)
 
 ## Choose the workflow
 
@@ -106,9 +114,9 @@ The command returns capability booleans only; `--details` adds non-secret profil
 
 | Capability | Configure it when | Setup |
 | --- | --- | --- |
-| None | Public Crossref discovery, ACL discovery/acquisition, or IJCAI discovery/acquisition | No secret setup |
+| None | Public Crossref discovery; discovery and acquisition from the official ACL, IJCAI, AAAI, NeurIPS, PMLR, and CVF archives; open-access Springer papers | No secret setup |
 | Semantic Scholar | You want keyed candidate search, higher limits, and the first DOI abstract-enrichment pass | `arp config setup semantic_scholar` |
-| OpenAlex | You want additional candidate search and a second DOI abstract-enrichment pass | `arp config setup openalex` |
+| OpenAlex | You need IEEE or ACM conferences enumerated through their OpenAlex series (INFOCOM, ICC, GLOBECOM, SIGCOMM, and others), additional candidate search, or a second DOI abstract-enrichment pass | `arp config setup openalex` |
 | IEEE | You need institutional IEEE access; start with manual login and optionally enable a supported CARSI form | `arp config setup ieee` |
 | Elsevier | You need official metadata resolution for the manual ScienceDirect handoff | `arp config setup elsevier` |
 | MinerU | You need selected PDFs parsed for internal full-text analysis or explicit Markdown export | `arp config setup mineru` |
@@ -289,7 +297,7 @@ The review and evidence JSONL files are produced by the executing agent from the
 Corpus discovery is designed for bounded requests such as “papers from these venues, during these years, about these topics.” It uses the following process:
 
 1. **Define the boundary.** The executing agent records exact venues, years, publication types, topics, exclusions, totals, and quotas.
-2. **Enumerate before filtering.** ACL and IJCAI use official proceedings. Journals and identified conference collections use Crossref pagination by ISSN, collection DOI, venue, and year. OpenAlex and Semantic Scholar can add query-based candidates.
+2. **Enumerate before filtering.** ACL, IJCAI, NeurIPS, the PMLR conferences (ICML, AISTATS, COLT, and others), and CVF (CVPR, ICCV, WACV) are read from their official indexes. Journals and identified conference collections use Crossref pagination by ISSN, collection DOI, venue, and year. OpenAlex and Semantic Scholar can add query-based candidates.
 3. **Record coverage.** Every venue/year slice is marked complete, partial, or failed. A missing proceedings page or identifier becomes a diagnostic, not an empty result silently treated as complete.
 4. **Merge and enrich.** Records are deduplicated primarily by DOI. Missing abstracts are looked up by DOI through Semantic Scholar and, when configured, OpenAlex. Field provenance remains attached to the candidate.
 5. **Screen with evidence.** Deterministic rules reject wrong years, venues, tracks, types, and recognizable front matter. Keywords help nominate candidates, but acceptance requires the executing agent to judge both title and abstract and record a reason.
@@ -335,7 +343,7 @@ Crossref, OpenAlex, Semantic Scholar, repositories, and mirrors never satisfy fi
 
 The output directory is bound to one frozen selection before publisher contact. A rerun skips a delivered item only when every recorded path and hash still matches. For safety, an existing directory containing unbound PDFs, BibTeX files, or acquisition ledgers is rejected instead of being overwritten; use a clean delivery directory or a deliberate migration/import workflow.
 
-The ledger is saved after every paper, so an interrupted run (Ctrl+C, a host timeout, a closed browser) resumes with the same command and output. Leftovers of the paper that was interrupted move to `.arp-interrupted/` instead of being deleted. A publisher without an adapter goes to the manual queue as `unsupported_adapter`. Within a batch, requests to one host are spaced; a host is paused for the rest of the run after HTTP 429, three consecutive transient failures, or an institution login failure. IEEE papers of one run share a single dedicated browser, so an institutional login is reused.
+The ledger is saved after every paper, so an interrupted run (Ctrl+C, a host timeout, a closed browser) resumes with the same command and output. Leftovers of the paper that was interrupted move to `.arp-interrupted/` instead of being deleted. A publisher without an adapter goes to the manual queue as `unsupported_adapter`. A batch contacts up to four publisher hosts at the same time (`--parallel-hosts N`; `1` restores one paper at a time), and each host still gets one paper at a time. Requests to one host are spaced; a host is paused for the rest of the run after HTTP 429, three consecutive transient failures, or an institution login failure. IEEE papers of one run share a single dedicated browser, so an institutional login is reused.
 
 ## Source support and maturity
 
@@ -350,7 +358,7 @@ Built-in venue presets let a spec name a venue by its short name, such as `name:
 | Crossref | Primary venue/year enumeration and research search | No | Stable public metadata source; metadata completeness still varies by publisher |
 | ACL Anthology | Official proceedings enumeration | Automatic | Mature and used in real corpus runs |
 | IJCAI proceedings | Official proceedings and track parsing | Automatic | Mature and used in real corpus runs |
-| AAAI (ojs.aaai.org) | Crossref venue enumeration with the AAAI ISSN; records carry abstracts and archive URLs | Automatic | Official OJS PDF and BibTeX export. Live-tested: AAAI-24 enumerated 2,867 records with abstracts; papers delivered |
+| AAAI (ojs.aaai.org) | Crossref venue enumeration with the AAAI ISSN; records carry abstracts and archive URLs | Automatic | Official OJS PDF and BibTeX export. Live-tested: AAAI-24 enumerated 2,867 records with abstracts; papers delivered. Since early November 2026 AAAI's citation export answers HTTP 520 for every client, so fetches end `network_transient` until AAAI fixes it |
 | NeurIPS proceedings | Official yearly listing: main track and, from 2022, Datasets and Benchmarks | Automatic from discovery or the abstract URL | Official PDF and per-paper BibTeX file. NeurIPS DOIs resolve to Curran Associates, so a DOI alone is not enough. Live-tested: 2019 listed 1,428 papers with abstracts; papers delivered from 2019, 2022 D&B, and 2023 |
 | PMLR | Official volume BibTeX files of ICML, AISTATS, COLT, UAI, CoRL, ALT, ACML, L4DC, and CLeaR | Automatic from discovery or the paper URL | The BibTeX is the entry printed on the official page (`publisher_page_embedded` provenance). Live-tested: ICML 2023 listed 1,828 papers with abstracts; papers delivered from ICML 2019 and 2023 |
 | CVF Open Access | Official CVPR, ICCV, and WACV main-conference listings | Automatic from discovery or the paper URL | CVF's open-access version, identical to the accepted paper except for the watermark; the final version is on IEEE Xplore (declare `publisher: IEEE` to keep that route). BibTeX printed on the page. Live-tested: WACV 2024 listed 846 papers with abstracts; papers delivered from CVPR 2019 and 2023, a CVPR workshop, and WACV 2024 |
@@ -488,7 +496,7 @@ These are improvement priorities, not claims about current support.
 
 6. **Measure discovery quality.** Build labeled venue/topic fixtures and report coverage, precision, recall, pending-abstract rate, and reviewer disagreement by source and discipline.
 7. **Expand official enumeration.** Add exact, auditable venue adapters where an official index or API exists, especially for IEEE and ACM collections, without weakening identifier requirements.
-8. **Improve batch operations.** Add safe publisher-aware concurrency, progress snapshots, and retry scheduling while preserving rate limits and shared-session safety.
+8. **Improve batch scheduling.** Build on per-host parallelism, checkpoints, and pauses with retry scheduling across runs, while preserving rate limits and shared-session safety.
 9. **Expand checked portability.** Validate host integrations and IEEE browser workflows per operating system while retaining explicit file-credential setup and Windows DPAPI migration compatibility.
 10. **Open a publisher plug-in contract.** Let users register exact approved hosts and tested page contracts for the generic adapter without accepting arbitrary redirects or generated citations.
 
@@ -505,7 +513,11 @@ python "$skill/scripts/arp.py" export-md `
 
 ## Development
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, Python/Node/PowerShell checks, wheel/skill builds, isolated installation, and release validation.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, Python/Node/PowerShell checks, wheel/skill builds, isolated installation, and release validation. Participation is governed by the [Code of Conduct](CODE_OF_CONDUCT.md); questions and bug reports go through [SUPPORT.md](SUPPORT.md), and vulnerabilities through [SECURITY.md](SECURITY.md).
+
+## Citation
+
+If this tool supports published research, cite the release you used. [CITATION.cff](CITATION.cff) holds the citation metadata; GitHub shows it as "Cite this repository" on the repository page.
 
 ## Responsible use
 

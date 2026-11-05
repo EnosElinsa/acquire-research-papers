@@ -112,6 +112,11 @@ def bump(root: Path, new: str, *, today: str | None = None) -> dict:
 
     stage("pyproject.toml", _replace_exactly(_read(root / "pyproject.toml"), f'version = "{old}"',
                                              f'version = "{new}"', 1, "pyproject.toml"), 1)
+    citation = _substitute_exactly(_read(root / "CITATION.cff"),
+                                   rf"(?m)^version: {re.escape(old)}(\r?)$",
+                                   f"version: {new}\\g<1>", "CITATION.cff")
+    stage("CITATION.cff", _substitute_exactly(citation, r'(?m)^date-released: "[\d-]+"(\r?)$',
+                                              f'date-released: "{day}"\\g<1>', "CITATION.cff"), 2)
     init = "src/acquire_research_papers/__init__.py"
     stage(init, _replace_exactly(_read(root / init), f'__version__ = "{old}"',
                                  f'__version__ = "{new}"', 1, init), 1)
