@@ -4,6 +4,7 @@ All notable changes to this project are recorded here, newest first. Versions fo
 
 ## Unreleased
 
+- Security: the CLI now requires pypdf 6.21.4 or later (before: 6.14.2). Versions before 6.21.4 have 32 published advisories in which a malformed PDF makes pypdf loop forever, run for a long time, or exhaust memory, and `library audit`, library plans, and `manual-fetch` parse PDFs that come from outside sources. A new install already picked the newest pypdf, so this matters for environments that kept an older one.
 - Maintainers: the development tools move to pytest 9.2 and ruff 0.17. Ruff 0.16 began enabling 413 rules when none are selected (59 before), which reported 178 findings on unchanged code, so `pyproject.toml` now selects the previous defaults (`E4`, `E7`, `E9`, `F`) and a ruff upgrade no longer changes what is checked. CI uses `actions/setup-python` and `actions/setup-node` v7. CONTRIBUTING describes how Dependabot pull requests are reviewed and merged.
 - Maintainers: the development lock file takes the security fixes in pypdf 6.21.4 (32 advisories about infinite loops, long runtimes, and large memory use on malformed PDFs), certifi 2026.10.18 (removes the emSign root certificates, whose intermediate CA keys were compromised), and Werkzeug 3.1.9 (used only by the test server), plus platformdirs 4.14.3 and pytest-httpserver 1.2.0.
 

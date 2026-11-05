@@ -44,7 +44,7 @@ requires-dist = [
     { name = "jsonschema", specifier = ">=4.23,<5" },
     { name = "platformdirs", specifier = ">=4.3,<5" },
     { name = "pybtex", specifier = ">=0.25,<1" },
-    { name = "pypdf", specifier = ">=6.14.2,<7" },
+    { name = "pypdf", specifier = ">=6.21.4,<7" },
     { name = "python-dotenv", specifier = ">=1.1,<2" },
     { name = "pyyaml", specifier = ">=6.0,<7" },
 ]

@@ -47,7 +47,7 @@ def test_public_repository_metadata_is_complete() -> None:
     assert project["readme"] == "README.md"
     assert "Topic :: Scientific/Engineering" in project["classifiers"]
     assert project["urls"]["Repository"].endswith("/acquire-research-papers")
-    assert "pypdf>=6.14.2,<7" in project["dependencies"]
+    assert "pypdf>=6.21.4,<7" in project["dependencies"]
     force_include = configuration["tool"]["hatch"]["build"]["targets"]["wheel"][
         "force-include"
     ]
