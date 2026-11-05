@@ -65,12 +65,12 @@ python "$skill/scripts/arp.py" config status
 
 ### 发布文件与手动安装
 
-[v0.16.0 发布页](https://github.com/EnosElinsa/acquire-research-papers/releases/tag/v0.16.0)提供：
+[v0.16.1 发布页](https://github.com/EnosElinsa/acquire-research-papers/releases/tag/v0.16.1)提供：
 
 | 文件 | 用途 |
 | --- | --- |
-| `acquire-research-papers-skill-0.16.0.zip` | 解压后，将其中的 `acquire-research-papers/` 文件夹复制到新的 skill 目录。包含指令、参考资料、schemas、启动器和固定运行版本清单。 |
-| `acquire_research_papers-0.16.0-py3-none-any.whl` | 用 `uv tool install <wheel-path>` 单独安装 CLI；也可将其绝对路径设置为 `ARP_LOCAL_WHEEL`，供启动器从本地加载。摘要校验仍然生效。 |
+| `acquire-research-papers-skill-0.16.1.zip` | 解压后，将其中的 `acquire-research-papers/` 文件夹复制到新的 skill 目录。包含指令、参考资料、schemas、启动器和固定运行版本清单。 |
+| `acquire_research_papers-0.16.1-py3-none-any.whl` | 用 `uv tool install <wheel-path>` 单独安装 CLI；也可将其绝对路径设置为 `ARP_LOCAL_WHEEL`，供启动器从本地加载。摘要校验仍然生效。 |
 | `SHA256SUMS` | PowerShell 使用 `Get-FileHash <path> -Algorithm SHA256`，Linux 使用 `sha256sum <path>`，与清单核对下载文件。 |
 
 不要把源码压缩包或开发 checkout 整体复制为 skill。启动和迁移问题见 [SUPPORT.md](https://github.com/EnosElinsa/acquire-research-papers/blob/main/SUPPORT.md)。

@@ -65,12 +65,12 @@ The standard-library launcher reads `runtime.json`, downloads the fixed release 
 
 ### Release downloads and manual installation
 
-The [v0.16.0 release](https://github.com/EnosElinsa/acquire-research-papers/releases/tag/v0.16.0) provides:
+The [v0.16.1 release](https://github.com/EnosElinsa/acquire-research-papers/releases/tag/v0.16.1) provides:
 
 | Asset | Use |
 | --- | --- |
-| `acquire-research-papers-skill-0.16.0.zip` | Extract and copy the contained `acquire-research-papers/` folder to a new skill directory. It contains instructions, references, schemas, a launcher, and the pinned runtime manifest. |
-| `acquire_research_papers-0.16.0-py3-none-any.whl` | Install the CLI independently with `uv tool install <wheel-path>`, or supply its absolute path as `ARP_LOCAL_WHEEL` when bootstrapping offline. The launcher still verifies the manifest digest. |
+| `acquire-research-papers-skill-0.16.1.zip` | Extract and copy the contained `acquire-research-papers/` folder to a new skill directory. It contains instructions, references, schemas, a launcher, and the pinned runtime manifest. |
+| `acquire_research_papers-0.16.1-py3-none-any.whl` | Install the CLI independently with `uv tool install <wheel-path>`, or supply its absolute path as `ARP_LOCAL_WHEEL` when bootstrapping offline. The launcher still verifies the manifest digest. |
 | `SHA256SUMS` | Compare downloaded asset hashes with `Get-FileHash <path> -Algorithm SHA256` on PowerShell or `sha256sum <path>` on Linux. |
 
 Do not copy the source archive or a developer checkout into the skill directory. See [SUPPORT.md](https://github.com/EnosElinsa/acquire-research-papers/blob/main/SUPPORT.md) for bootstrap and migration troubleshooting.

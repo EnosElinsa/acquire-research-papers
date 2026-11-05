@@ -2,7 +2,7 @@
 
 All notable changes to this project are recorded here, newest first. Versions follow [Semantic Versioning](https://semver.org/); before 1.0.0 a minor release can change behavior, so read its entry before updating. Every release is published with its wheel, skill ZIP, and `SHA256SUMS` on the [releases page](https://github.com/EnosElinsa/acquire-research-papers/releases).
 
-## Unreleased
+## 0.16.1 — 2026-11-05
 
 - Security: the CLI now requires pypdf 6.21.4 or later (before: 6.14.2). Versions before 6.21.4 have 32 published advisories in which a malformed PDF makes pypdf loop forever, run for a long time, or exhaust memory, and `library audit`, library plans, and `manual-fetch` parse PDFs that come from outside sources. A new install already picked the newest pypdf, so this matters for environments that kept an older one.
 - Maintainers: the development tools move to pytest 9.2 and ruff 0.17. Ruff 0.16 began enabling 413 rules when none are selected (59 before), which reported 178 findings on unchanged code, so `pyproject.toml` now selects the previous defaults (`E4`, `E7`, `E9`, `F`) and a ruff upgrade no longer changes what is checked. CI uses `actions/setup-python` and `actions/setup-node` v7. CONTRIBUTING describes how Dependabot pull requests are reviewed and merged.
