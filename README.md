@@ -61,7 +61,7 @@ python "$skill/scripts/arp.py" --help
 python "$skill/scripts/arp.py" config status
 ```
 
-The standard-library launcher reads `runtime.json`, downloads the fixed release wheel, verifies SHA-256, and installs it with uv into a separate cache. File configuration and core commands support Windows/macOS/Linux. Current IEEE browser access and legacy DPAPI require Windows, PowerShell, and Node.js; on macOS and Linux, IEEE papers join the manual-download queue. Update by rerunning the same install command. [Install](https://enoselinsa.github.io/acquire-research-papers/install/) covers other hosts, `arp doctor`, and migrating from a developer checkout.
+The standard-library launcher reads `runtime.json`, downloads the fixed release wheel, verifies SHA-256, and installs it with uv into a separate cache. File configuration and core commands support Windows/macOS/Linux. Current IEEE browser access and legacy DPAPI require Windows, PowerShell, and Node.js; on macOS and Linux, IEEE papers join the manual-download queue. Update by rerunning the same install command. From v0.16.0, the CLI alone also installs from PyPI with `uv tool install acquire-research-papers`. [Install](https://enoselinsa.github.io/acquire-research-papers/install/) covers other hosts, `arp doctor`, release verification with `gh attestation verify`, and migrating from a developer checkout.
 
 ### Release downloads and manual installation
 

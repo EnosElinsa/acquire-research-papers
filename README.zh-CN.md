@@ -61,7 +61,7 @@ python "$skill/scripts/arp.py" --help
 python "$skill/scripts/arp.py" config status
 ```
 
-启动器只使用 Python 标准库，根据 `runtime.json` 获取固定版本 wheel、校验 SHA-256，再通过 uv 安装到独立缓存。文件配置与核心命令支持 Windows/macOS/Linux；当前 IEEE 浏览器和旧 DPAPI 仍需要 Windows、PowerShell、Node.js，在 macOS 和 Linux 上 IEEE 论文进入人工下载队列。更新时重新运行同一条安装命令。其他宿主、`arp doctor` 和从开发 checkout 迁移的方法见[安装](https://enoselinsa.github.io/acquire-research-papers/zh/install/)。
+启动器只使用 Python 标准库，根据 `runtime.json` 获取固定版本 wheel、校验 SHA-256，再通过 uv 安装到独立缓存。文件配置与核心命令支持 Windows/macOS/Linux；当前 IEEE 浏览器和旧 DPAPI 仍需要 Windows、PowerShell、Node.js，在 macOS 和 Linux 上 IEEE 论文进入人工下载队列。更新时重新运行同一条安装命令。从 v0.16.0 起，也可以用 `uv tool install acquire-research-papers` 从 PyPI 单独安装 CLI。其他宿主、`arp doctor`、用 `gh attestation verify` 核验发布文件以及从开发 checkout 迁移的方法见[安装](https://enoselinsa.github.io/acquire-research-papers/zh/install/)。
 
 ### 发布文件与手动安装
 

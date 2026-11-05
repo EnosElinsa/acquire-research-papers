@@ -21,6 +21,17 @@ python "$skill/scripts/arp.py" config status
 !!! warning "开发 checkout"
     如果现有 skill 目录本身是 Git 开发 checkout，请保留它，不要让第三方安装器覆盖此目录。先构建导出，再用仓库的安全复制安装器放入新目录；它拒绝含 `.git` 的目标，明确替换旧版纯 skill 时也保留备份。详见[安全迁移](https://github.com/EnosElinsa/acquire-research-papers/blob/main/CONTRIBUTING.md#safe-copy-and-checkout-migration)。
 
+## 只安装命令行工具
+
+从 v0.16.0 起，CLI wheel 也发布在 [PyPI](https://pypi.org/project/acquire-research-papers/) 上。它由发布溯源工作流在核验 wheel 与已发布版本一致后上传（见[核验发布文件](#核验发布文件)）：
+
+```text
+uv tool install acquire-research-papers
+arp --version
+```
+
+这样只安装 `arp` 命令，不包含 Agent skill。Agent 仍需按上文安装 skill；skill 的启动器继续使用自己固定并校验摘要的 wheel。
+
 ## 宿主安装与验证范围
 
 Codex、Claude Code、Kiro IDE、Kiro CLI 共用同一 skill 和固定 wheel。用户目录分别为 `~/.agents/skills/`、`~/.claude/skills/`、`~/.kiro/skills/`；只复制导出的 `acquire-research-papers/` 文件夹。Kiro 自定义 agent 需要显式 `skill://` resources，附带[资源模板](https://github.com/EnosElinsa/acquire-research-papers/blob/main/skills/acquire-research-papers/templates/kiro-agent.example.json)。参见[宿主安装及官方依据](https://github.com/EnosElinsa/acquire-research-papers/blob/main/skills/acquire-research-papers/references/hosts.md)，于 **2026-10-20** 核对。

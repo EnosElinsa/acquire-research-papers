@@ -433,8 +433,10 @@ def publish(root: Path, *, title: str, notes_file: Path, dist: Path | None = Non
     return {"status": "published", "tag": tag, "commit": head,
             "url": f"https://github.com/{repository}/releases/tag/{tag}",
             "upload_attempts": attempts, "published_assets_match": True,
-            "next_action": "Wait for the verify public release workflow, then append the run "
-                           "links to the notes with gh release edit --notes-file."}
+            "next_action": "Wait for the verify public release workflow and the release "
+                           "provenance workflow (which attests the assets and uploads the wheel "
+                           "to PyPI), then append the run links to the notes with gh release "
+                           "edit --notes-file."}
 
 
 def main(argv: list[str] | None = None) -> int:

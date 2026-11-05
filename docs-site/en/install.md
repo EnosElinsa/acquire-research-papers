@@ -21,6 +21,17 @@ Update by rerunning the same Skills install command. Registries, credentials, ca
 !!! warning "Developer checkouts"
     If your current skill directory is a Git developer checkout, preserve it. Do not point a third-party installer's overwrite operation at that directory. Build an export and use the repository's safe copy installer into a new directory; it refuses `.git` targets and keeps an explicit backup when replacing a clean previous thin skill. See [safe migration](https://github.com/EnosElinsa/acquire-research-papers/blob/main/CONTRIBUTING.md#safe-copy-and-checkout-migration).
 
+## Install only the CLI
+
+From v0.16.0 the CLI wheel is also on [PyPI](https://pypi.org/project/acquire-research-papers/), uploaded by the release provenance workflow after it has verified the wheel against the published release (see [Verify a release](#verify-a-release)):
+
+```text
+uv tool install acquire-research-papers
+arp --version
+```
+
+This installs the `arp` command without the agent skill. Agents still need the skill installed as above; its launcher keeps using its own pinned and digest-checked wheel.
+
 ## Host setup and checked support
 
 Codex, Claude Code, Kiro IDE, and Kiro CLI share the same skill and pinned wheel. User skill directories are `~/.agents/skills/`, `~/.claude/skills/`, and `~/.kiro/skills/` respectively. Copy only the exported `acquire-research-papers/` folder. Kiro custom agents require explicit `skill://` resources; a [resource template](https://github.com/EnosElinsa/acquire-research-papers/blob/main/skills/acquire-research-papers/templates/kiro-agent.example.json) is included. See [host installation and official sources](https://github.com/EnosElinsa/acquire-research-papers/blob/main/skills/acquire-research-papers/references/hosts.md), checked on **October 20, 2026**.

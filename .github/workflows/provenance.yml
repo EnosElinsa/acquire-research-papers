@@ -2,7 +2,8 @@ name: release provenance
 
 # Rebuilds a release tag on Linux and Windows, requires both rebuilds to match each other, the
 # tag's runtime.json pin, and the published wheel and ZIP byte for byte, then attests the
-# verified files (`gh attestation verify <file> --repo EnosElinsa/acquire-research-papers`).
+# verified files (`gh attestation verify <file> --repo EnosElinsa/acquire-research-papers`)
+# and uploads the verified wheel to PyPI with trusted publishing (environment `pypi`).
 # On pushes and pull requests that change the build it only proves that the two operating
 # systems build the same bytes. Releases from v0.16.0 on are reproducible; earlier ZIPs carry a CRLF runtime.json.
 on:
@@ -13,6 +14,10 @@ on:
       tag:
         description: Published release tag to rebuild, compare, and attest (v0.16.0 or later)
         required: true
+      publish_to_pypi:
+        description: Also upload the verified wheel to PyPI (already uploaded files are skipped)
+        type: boolean
+        default: false
   pull_request:
     paths:
       - "scripts/build_distribution.py"
@@ -121,3 +126,28 @@ jobs:
           subject-path: |
             rebuilt/rebuild-ubuntu-latest/*.whl
             rebuilt/rebuild-ubuntu-latest/*.zip
+
+  pypi:
+    # PyPI trusts this workflow file and environment (a trusted publisher), so no token is stored.
+    needs: verify
+    if: github.event_name == 'release' || inputs.publish_to_pypi
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/acquire-research-papers/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: rebuild-ubuntu-latest
+          path: verified
+      - name: Keep only the verified wheel
+        run: |
+          mkdir dist
+          mv verified/*.whl dist/
+      - name: Upload to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
+          skip-existing: true
