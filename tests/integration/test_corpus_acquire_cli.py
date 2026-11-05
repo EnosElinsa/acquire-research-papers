@@ -1124,3 +1124,24 @@ def test_requests_to_one_host_are_spaced(tmp_path: Path) -> None:
         acquirer=acquirer, min_host_interval_seconds=2.0, sleeper=sleep, monotonic=lambda: now[0]
     ).run(selection.manifest_path, tmp_path / "delivery")
     assert pauses == [2.0, 2.0]
+
+
+def test_a_host_that_asks_for_a_crawl_delay_gets_its_own_spacing(tmp_path: Path) -> None:
+    selection = _mixed_hosts(tmp_path / "selection", [
+        ("slow.example", "slow-1"), ("slow.example", "slow-2"),
+        ("fast.example", "fast-1"), ("fast.example", "fast-2")])
+    now = [100.0]
+    pauses: list[float] = []
+
+    def sleep(seconds: float) -> None:
+        pauses.append(round(seconds, 3))
+        now[0] += seconds
+
+    workflow = CorpusAcquisitionWorkflow(
+        acquirer=delivered_outcome, min_host_interval_seconds=2.0,
+        host_intervals={"Slow.Example": 10.0}, sleeper=sleep, monotonic=lambda: now[0])
+    result = workflow.run(selection.manifest_path, tmp_path / "delivery")
+
+    assert result.complete
+    # Before each host's second paper: 10 s for the host with a crawl delay, 2 s otherwise.
+    assert sorted(pauses) == [2.0, 10.0]
