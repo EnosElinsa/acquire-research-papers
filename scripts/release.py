@@ -205,6 +205,29 @@ def write_checksums(directory: Path) -> dict:
             "wheel_sha256": hashes[wheel], "zip_sha256": hashes[skill_zip]}
 
 
+def _archive_differences(expected: Path, actual: Path, limit: int = 8) -> str:
+    """Which members of two ZIP archives (wheel or skill ZIP) differ, and how."""
+    try:
+        with zipfile.ZipFile(expected) as left, zipfile.ZipFile(actual) as right:
+            before = {item.filename: item for item in left.infolist()}
+            after = {item.filename: item for item in right.infolist()}
+            notes = [f"only in the first: {name}" for name in sorted(set(before) - set(after))]
+            notes += [f"only in the second: {name}" for name in sorted(set(after) - set(before))]
+            for name in sorted(set(before) & set(after)):
+                changed = [field for field in ("CRC", "date_time", "external_attr",
+                                               "compress_type", "create_system")
+                           if getattr(before[name], field) != getattr(after[name], field)]
+                if changed:
+                    notes.append(f"{name} ({', '.join(changed)})")
+            if not notes and [item.filename for item in left.infolist()] != [
+                    item.filename for item in right.infolist()]:
+                notes.append("the same members in a different order")
+    except zipfile.BadZipFile as exc:
+        return f"not a readable ZIP ({exc})"
+    shown = notes[:limit] + ([f"{len(notes) - limit} more"] if len(notes) > limit else [])
+    return ", ".join(shown) or "identical members, different archive bytes"
+
+
 def compare_releases(directories: Sequence[Path], *, version: str | None = None,
                      pin: Path | None = None) -> dict:
     """Require byte-identical wheel and ZIP in every directory (rebuilds, published assets).
@@ -219,7 +242,10 @@ def compare_releases(directories: Sequence[Path], *, version: str | None = None,
         _, hashes = _release_assets(directory.resolve(), found)
         differing = [name for name in reference if hashes[name] != reference[name]]
         if differing:
-            raise ReleaseError(f"{directory} differs from {first} in {', '.join(differing)}")
+            details = "; ".join(
+                f"{name}: {_archive_differences(first / name, directory.resolve() / name)}"
+                for name in differing)
+            raise ReleaseError(f"{directory} differs from {first} in {details}")
     wheel, skill_zip = _asset_names(found)
     if pin is not None:
         runtime = json.loads(pin.read_text(encoding="utf-8"))

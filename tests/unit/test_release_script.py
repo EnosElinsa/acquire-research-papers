@@ -377,3 +377,24 @@ def test_compare_and_checksums_run_from_the_command_line(tmp_path, capsys):
 
     lines = capsys.readouterr().out.strip().splitlines()
     assert json.loads(lines[-1])["status"] == "error"
+
+
+def test_compare_names_the_archive_members_that_differ(tmp_path):
+    def archive(path: Path, members: list[tuple[str, bytes]]) -> bytes:
+        with zipfile.ZipFile(path, "w") as handle:
+            for name, data in members:
+                handle.writestr(zipfile.ZipInfo(name, date_time=(2020, 2, 2, 0, 0, 0)), data)
+        return path.read_bytes()
+
+    first = asset_directory(tmp_path / "first")
+    second = asset_directory(tmp_path / "second")
+    for directory, members in ((first, [("a.py", b"1"), ("b.py", b"2")]),
+                               (second, [("b.py", b"2"), ("a.py", b"changed"), ("c.py", b"")])):
+        wheel = next(directory.glob("*.whl"))
+        wheel.write_bytes(archive(tmp_path / f"{directory.name}.zip", members))
+
+    with pytest.raises(release.ReleaseError) as raised:
+        release.compare_releases([first, second])
+
+    assert "only in the second: c.py" in str(raised.value)
+    assert "a.py (CRC)" in str(raised.value)
