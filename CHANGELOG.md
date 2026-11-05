@@ -2,6 +2,10 @@
 
 All notable changes to this project are recorded here, newest first. Versions follow [Semantic Versioning](https://semver.org/); before 1.0.0 a minor release can change behavior, so read its entry before updating. Every release is published with its wheel, skill ZIP, and `SHA256SUMS` on the [releases page](https://github.com/EnosElinsa/acquire-research-papers/releases).
 
+## Unreleased
+
+- Maintainers: the development tools move to pytest 9.2 and ruff 0.17. Ruff 0.16 began enabling 413 rules when none are selected (59 before), which reported 178 findings on unchanged code, so `pyproject.toml` now selects the previous defaults (`E4`, `E7`, `E9`, `F`) and a ruff upgrade no longer changes what is checked. CI uses `actions/setup-python` and `actions/setup-node` v7. CONTRIBUTING describes how Dependabot pull requests are reviewed and merged.
+
 ## 0.16.0 — 2026-11-05
 
 - ICLR (from 2024) and USENIX (Security, OSDI, NSDI, USENIX ATC, FAST) join the official indexes: corpus discovery reads their listings with abstracts, and `fetch` delivers the official PDF with the publisher's BibTeX from a discovery record or an abstract/presentation URL. ICLR uses proceedings.iclr.cc; earlier ICLR years exist only on OpenReview, which answers non-browser clients with a challenge, so discovery reports them `source_unavailable` and their papers become manual downloads. USENIX's separate BibTeX download sits behind a bot check, so the entry printed on the presentation page is used (`publisher_page_embedded`), and requests to www.usenix.org are spaced 10 s apart, as its robots.txt asks. Live: ICLR 2024 listed 2,260 papers, OSDI 2024 53, and USENIX Security 2023 422, all with abstracts; ICLR, OSDI, and NSDI papers delivered, and an OSDI corpus run delivered 2 of 2. The release smoke and the weekly source check include both.
