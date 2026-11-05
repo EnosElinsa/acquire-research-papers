@@ -307,3 +307,73 @@ def test_publish_refuses_a_published_release_and_changed_assets(tmp_path):
     with pytest.raises(release.ReleaseError, match="SHA256SUMS does not match"):
         release.publish(root, title="t", notes_file=notes, repository="x/y",
                         runner=FakeGitHub(), sleeper=lambda seconds: None)
+
+
+def asset_directory(path: Path, version: str = "1.2.3", *, wheel: bytes = b"wheel",
+                    skill: bytes = b"skill") -> Path:
+    path.mkdir(parents=True)
+    (path / f"acquire_research_papers-{version}-py3-none-any.whl").write_bytes(wheel)
+    (path / f"acquire-research-papers-skill-{version}.zip").write_bytes(skill)
+    return path
+
+
+def test_checksums_writes_the_same_sha256sums_as_build(tmp_path):
+    directory = asset_directory(tmp_path / "rebuild")
+
+    result = release.write_checksums(directory)
+
+    expected = (f"{hashlib.sha256(b'wheel').hexdigest()}  acquire_research_papers-1.2.3-py3-none-any.whl\n"
+                f"{hashlib.sha256(b'skill').hexdigest()}  acquire-research-papers-skill-1.2.3.zip\n")
+    assert (directory / "SHA256SUMS").read_bytes() == expected.encode("ascii")
+    assert result["version"] == "1.2.3"
+    with pytest.raises(release.ReleaseError, match="already exists"):
+        release.write_checksums(directory)
+
+
+def test_compare_accepts_identical_rebuilds_and_published_assets(tmp_path):
+    linux = asset_directory(tmp_path / "linux")
+    windows = asset_directory(tmp_path / "windows")
+    published = asset_directory(tmp_path / "published")
+    release.write_checksums(published)
+    pin = tmp_path / "runtime.json"
+    pin.write_text(json.dumps({"version": "1.2.3",
+                               "wheel": {"sha256": hashlib.sha256(b"wheel").hexdigest()}}))
+
+    result = release.compare_releases([published, linux, windows], version="1.2.3", pin=pin)
+
+    assert result["status"] == "identical" and result["pin_checked"]
+
+
+@pytest.mark.parametrize("problem, message", [
+    ("zip", "differs from .* in acquire-research-papers-skill-1.2.3.zip"),
+    ("sums", "does not list the hashes"),
+    ("version", "holds version 1.2.4, expected 1.2.3"),
+    ("pin", "does not pin the wheel"),
+    ("missing", "exactly one release wheel and one skill ZIP"),
+])
+def test_compare_names_what_differs(tmp_path, problem, message):
+    published = asset_directory(tmp_path / "published")
+    release.write_checksums(published)
+    rebuilt = asset_directory(tmp_path / "rebuilt", "1.2.4" if problem == "version" else "1.2.3",
+                              skill=b"other" if problem == "zip" else b"skill")
+    if problem == "sums":
+        (published / "SHA256SUMS").write_bytes(b"0" * 64 + b"  something\n")
+    if problem == "missing":
+        next(rebuilt.glob("*.zip")).unlink()
+    pin = tmp_path / "runtime.json"
+    pin.write_text(json.dumps({"version": "1.2.3", "wheel": {"sha256": "0" * 64}}))
+
+    with pytest.raises(release.ReleaseError, match=message):
+        release.compare_releases([published, rebuilt],
+                                 pin=pin if problem == "pin" else None)
+
+
+def test_compare_and_checksums_run_from_the_command_line(tmp_path, capsys):
+    first = asset_directory(tmp_path / "first")
+    second = asset_directory(tmp_path / "second", skill=b"changed")
+
+    assert release.main(["checksums", str(first)]) == 0
+    assert release.main(["compare", str(first), str(second)]) == 1
+
+    lines = capsys.readouterr().out.strip().splitlines()
+    assert json.loads(lines[-1])["status"] == "error"

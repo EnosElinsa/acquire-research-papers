@@ -38,3 +38,14 @@ Every [GitHub release](https://github.com/EnosElinsa/acquire-research-papers/rel
 | `SHA256SUMS` | Compare downloaded asset hashes with `Get-FileHash <path> -Algorithm SHA256` on PowerShell or `sha256sum <path>` on Linux. |
 
 Manual skill installation needs Python 3.11+ and uv. The launcher normally downloads its pinned wheel on first use; dependency installation also needs network access or a populated uv cache. Node.js and Google Chrome are additionally required for IEEE browser access. Do not copy the source archive or a developer checkout into the skill directory. See [SUPPORT.md](https://github.com/EnosElinsa/acquire-research-papers/blob/main/SUPPORT.md) for bootstrap and migration troubleshooting.
+
+## Verify a release
+
+From v0.16.0 on, the [release provenance workflow](https://github.com/EnosElinsa/acquire-research-papers/actions/workflows/provenance.yml) rebuilds every published release from its tag on Linux and on Windows. It requires both rebuilds, the tag's `runtime.json` pin, and the published wheel and ZIP to be identical byte for byte, and then records a GitHub artifact attestation for the two files. Check a downloaded asset with the [GitHub CLI](https://cli.github.com/):
+
+```text
+gh attestation verify acquire_research_papers-<version>-py3-none-any.whl --repo EnosElinsa/acquire-research-papers
+gh attestation verify acquire-research-papers-skill-<version>.zip --repo EnosElinsa/acquire-research-papers
+```
+
+A passing check means the file's SHA-256 matches a build that this repository's workflow produced from the release tag. Releases before v0.16.0 have no attestation; compare their hashes with `SHA256SUMS` instead.

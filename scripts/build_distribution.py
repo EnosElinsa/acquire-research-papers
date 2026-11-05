@@ -42,8 +42,16 @@ SKILL_FILES = (
 )
 
 
+BUILD_CONSTRAINTS = "build-constraints.txt"
+
+
 def _hash(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _manifest_bytes(manifest: dict) -> bytes:
+    # LF on every OS, so a Windows build and a Linux build of the same tag are identical.
+    return (json.dumps(manifest, indent=2) + "\n").encode("utf-8")
 
 
 def _safe_output(root: Path, output: Path, source: Path) -> None:
@@ -83,8 +91,12 @@ def build(root: Path, output: Path, *, wheel: Path | None = None,
         if not uv:
             raise ValueError("uv is required to build the runtime wheel")
         environment = dict(os.environ, SOURCE_DATE_EPOCH="1700000000")
-        subprocess.run([uv, "build", "--wheel", "--out-dir", str(output)],
-                       cwd=root, env=environment, check=True)
+        command = [uv, "build", "--wheel", "--out-dir", str(output)]
+        constraints = root / BUILD_CONSTRAINTS
+        if constraints.is_file():
+            # The exact, hash-pinned hatchling makes a later rebuild of a tag byte-identical.
+            command += ["--build-constraint", str(constraints), "--require-hashes"]
+        subprocess.run(command, cwd=root, env=environment, check=True)
         wheel = output / f"acquire_research_papers-{version}-py3-none-any.whl"
     wheel = wheel.resolve()
     _check_wheel(wheel, version)
@@ -92,7 +104,7 @@ def build(root: Path, output: Path, *, wheel: Path | None = None,
         "wheel": {"url": f"https://github.com/EnosElinsa/{NAME}/releases/download/v{version}/{wheel.name}",
                   "sha256": _hash(wheel)}}
     if update_source_manifest:
-        (source / "runtime.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+        (source / "runtime.json").write_bytes(_manifest_bytes(manifest))
         (source / "schemas").mkdir(parents=True, exist_ok=True)
         for name in SCHEMA_FILES:
             shutil.copyfile(root / "schemas" / name, source / "schemas" / name)
@@ -109,7 +121,7 @@ def build(root: Path, output: Path, *, wheel: Path | None = None,
             target = stage / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             if relative == "runtime.json":
-                target.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+                target.write_bytes(_manifest_bytes(manifest))
             elif relative.startswith("schemas/"):
                 shutil.copyfile(root / relative, target)
             else:

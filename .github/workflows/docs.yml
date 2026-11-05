@@ -1,10 +1,9 @@
 name: docs
 
-# Builds the English and Chinese documentation sites with `--strict` on every change to
-# them, and publishes both to GitHub Pages from main.
+# Builds the English and Chinese documentation sites with `--strict` on every push and pull
+# request that changes them, and publishes both to GitHub Pages from main.
 on:
   push:
-    branches: [main]
     paths:
       - "docs-site/**"
       - "mkdocs.yml"

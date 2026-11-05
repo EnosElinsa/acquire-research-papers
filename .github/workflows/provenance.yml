@@ -1,0 +1,123 @@
+name: release provenance
+
+# Rebuilds a release tag on Linux and Windows, requires both rebuilds to match each other, the
+# tag's runtime.json pin, and the published wheel and ZIP byte for byte, then attests the
+# verified files (`gh attestation verify <file> --repo EnosElinsa/acquire-research-papers`).
+# On pushes and pull requests that change the build it only proves that the two operating
+# systems build the same bytes. Releases from v0.16.0 on are reproducible; earlier ZIPs carry a CRLF runtime.json.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published release tag to rebuild, compare, and attest (v0.16.0 or later)
+        required: true
+  pull_request:
+    paths:
+      - "scripts/build_distribution.py"
+      - "scripts/release.py"
+      - "build-constraints.txt"
+      - "pyproject.toml"
+      - ".github/workflows/provenance.yml"
+  push:
+    paths:
+      - "scripts/build_distribution.py"
+      - "scripts/release.py"
+      - "build-constraints.txt"
+      - "pyproject.toml"
+      - ".github/workflows/provenance.yml"
+
+permissions:
+  contents: read
+
+env:
+  TAG: ${{ github.event.release.tag_name || inputs.tag }}
+
+jobs:
+  rebuild:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Check out the tools
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Check out the release tag
+        if: env.TAG != ''
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+          path: source
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Install uv
+        run: python -m pip install uv
+      - name: Rebuild the wheel and skill ZIP
+        shell: bash
+        run: |
+          root=.
+          if [ -n "$TAG" ]; then root=source; fi
+          python "$root/scripts/build_distribution.py" --root "$root" --output "$RUNNER_TEMP/rebuild"
+          python scripts/release.py checksums "$RUNNER_TEMP/rebuild"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: rebuild-${{ matrix.os }}
+          path: |
+            ${{ runner.temp }}/rebuild/*.whl
+            ${{ runner.temp }}/rebuild/*.zip
+            ${{ runner.temp }}/rebuild/SHA256SUMS
+          if-no-files-found: error
+
+  verify:
+    needs: rebuild
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Check out the tools
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Check out the release tag
+        if: env.TAG != ''
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+          path: source
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: rebuild-*
+          path: rebuilt
+      - name: Compare the Linux and Windows rebuilds
+        run: python scripts/release.py compare rebuilt/rebuild-ubuntu-latest rebuilt/rebuild-windows-latest
+      - name: Download the published assets
+        if: env.TAG != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir published
+          --pattern "*.whl" --pattern "*.zip" --pattern SHA256SUMS
+      - name: Compare the rebuilds with the published assets and the tag's pin
+        if: env.TAG != ''
+        run: >-
+          python scripts/release.py compare published rebuilt/rebuild-ubuntu-latest
+          --version "${TAG#v}" --pin source/skills/acquire-research-papers/runtime.json
+      - name: Attest the verified wheel and ZIP
+        if: env.TAG != ''
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            rebuilt/rebuild-ubuntu-latest/*.whl
+            rebuilt/rebuild-ubuntu-latest/*.zip

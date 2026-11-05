@@ -116,6 +116,10 @@ def test_builder_exports_only_allowlisted_assets_and_matching_digest(tmp_path):
     assert not (exported/'scripts'/'secret-store.ps1').exists()
     with zipfile.ZipFile(result['zip']) as archive:
         names = archive.namelist()
+        packed_manifest = archive.read('acquire-research-papers/runtime.json')
+    # LF on every OS, so Linux and Windows builds of one tag are byte-identical.
+    assert b'\r' not in packed_manifest
+    assert b'\r' not in (exported/'runtime.json').read_bytes()
     assert 'acquire-research-papers/SKILL.md' in names
     assert all('.git' not in Path(name).parts for name in names)
     assert set(builder.SKILL_FILES) == {p.relative_to(exported).as_posix()

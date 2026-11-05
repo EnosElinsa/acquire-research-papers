@@ -38,3 +38,14 @@ Codex、Claude Code、Kiro IDE、Kiro CLI 共用同一 skill 和固定 wheel。�
 | `SHA256SUMS` | PowerShell 使用 `Get-FileHash <path> -Algorithm SHA256`，Linux 使用 `sha256sum <path>`，与清单核对下载文件。 |
 
 手动安装 skill 需要 Python 3.11+ 和 uv。启动器默认在首次运行时下载固定 wheel；依赖安装仍需网络或已有 uv 缓存。IEEE 浏览器另外需要 Node.js 和 Google Chrome。不要把源码压缩包或开发 checkout 整体复制为 skill。启动和迁移问题见 [SUPPORT.md](https://github.com/EnosElinsa/acquire-research-papers/blob/main/SUPPORT.md)。
+
+## 核验发布文件
+
+从 v0.16.0 起，[发布溯源工作流](https://github.com/EnosElinsa/acquire-research-papers/actions/workflows/provenance.yml)会在 Linux 和 Windows 上分别从标签重新构建每个已发布版本。它要求两次重建、标签中 `runtime.json` 的固定摘要以及已发布的 wheel 和 ZIP 逐字节一致，然后为这两个文件记录 GitHub artifact attestation。用 [GitHub CLI](https://cli.github.com/) 核验下载的文件：
+
+```text
+gh attestation verify acquire_research_papers-<版本>-py3-none-any.whl --repo EnosElinsa/acquire-research-papers
+gh attestation verify acquire-research-papers-skill-<版本>.zip --repo EnosElinsa/acquire-research-papers
+```
+
+核验通过表示该文件的 SHA-256 与本仓库工作流从发布标签构建出的文件一致。v0.16.0 之前的版本没有 attestation，请改用 `SHA256SUMS` 核对哈希。

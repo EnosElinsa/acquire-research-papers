@@ -6,6 +6,8 @@
   python scripts/release.py publish --title "v0.13.0 — …" --notes-file notes.md
   python scripts/release.py smoke --public   # the same checks from the public release URL
   python scripts/release.py remote --host user@host   # install on a remote host over SSH
+  python scripts/release.py checksums <dir>           # SHA256SUMS for a rebuilt wheel and ZIP
+  python scripts/release.py compare <dir> <dir> ...   # byte-identical assets, or exit 1
 
 ``bump`` rewrites every version string in one pass and changes nothing if any file is not as
 expected. ``build`` builds the wheel and skill ZIP, rebuilds them in a temporary directory to
@@ -15,8 +17,10 @@ creates a draft release, uploads each asset with retries
 (GitHub's upload host sometimes drops a connection), checks the uploaded sizes, publishes the
 draft, and downloads the assets again to compare hashes. ``remote`` installs the built skill
 ZIP into ``~/.kiro/skills`` and ``~/.codex/skills`` on a host given at run time, after backing
-up the installed skill (see ``release_remote.py``). Committing, tagging, and pushing stay
-manual. Every step prints one JSON object.
+up the installed skill (see ``release_remote.py``). ``checksums`` and ``compare`` serve the
+release provenance workflow, which rebuilds a tag on Linux and Windows and compares the
+rebuilds with each other and with the published assets before attesting them. Committing,
+tagging, and pushing stay manual. Every step prints one JSON object.
 """
 from __future__ import annotations
 
@@ -155,6 +159,78 @@ def _asset_names(version: str) -> tuple[str, str]:
             f"{NAME}-skill-{version}.zip")
 
 
+_WHEEL_NAME = re.compile(r"acquire_research_papers-(\d+\.\d+\.\d+)-py3-none-any\.whl")
+_ZIP_NAME = re.compile(rf"{re.escape(NAME)}-skill-(\d+\.\d+\.\d+)\.zip")
+
+
+def _sums_text(hashes: dict[str, str], names: Sequence[str]) -> str:
+    return "".join(f"{hashes[name]}  {name}\n" for name in names)  # LF lines, wheel first
+
+
+def _release_assets(directory: Path, version: str | None = None) -> tuple[str, dict[str, str]]:
+    """The version and wheel/ZIP hashes in one asset directory.
+
+    A SHA256SUMS file beside them, when present, must list exactly those hashes.
+    """
+    if not directory.is_dir():
+        raise ReleaseError(f"{directory} is not a directory")
+    wheels = sorted(path.name for path in directory.iterdir() if _WHEEL_NAME.fullmatch(path.name))
+    zips = sorted(path.name for path in directory.iterdir() if _ZIP_NAME.fullmatch(path.name))
+    if len(wheels) != 1 or len(zips) != 1:
+        raise ReleaseError(f"{directory} must hold exactly one release wheel and one skill ZIP; "
+                           f"found {wheels + zips or 'neither'}")
+    found = wheels[0].split("-")[1]
+    if zips[0] != f"{NAME}-skill-{found}.zip":
+        raise ReleaseError(f"{directory} holds a wheel and a ZIP of different versions")
+    if version is not None and found != version:
+        raise ReleaseError(f"{directory} holds version {found}, expected {version}")
+    names = _asset_names(found)
+    hashes = {name: _sha256(directory / name) for name in names}
+    sums = directory / "SHA256SUMS"
+    if sums.is_file() and sums.read_bytes() != _sums_text(hashes, names).encode("ascii"):
+        raise ReleaseError(f"{sums} does not list the hashes of the wheel and ZIP beside it")
+    return found, hashes
+
+
+def write_checksums(directory: Path) -> dict:
+    """Write SHA256SUMS for the wheel and ZIP in a directory, as build does."""
+    directory = directory.resolve()
+    sums = directory / "SHA256SUMS"
+    if sums.exists():
+        raise ReleaseError(f"{sums} already exists")
+    version, hashes = _release_assets(directory)
+    wheel, skill_zip = _asset_names(version)
+    sums.write_bytes(_sums_text(hashes, (wheel, skill_zip)).encode("ascii"))
+    return {"status": "written", "version": version, "sha256sums": str(sums),
+            "wheel_sha256": hashes[wheel], "zip_sha256": hashes[skill_zip]}
+
+
+def compare_releases(directories: Sequence[Path], *, version: str | None = None,
+                     pin: Path | None = None) -> dict:
+    """Require byte-identical wheel and ZIP in every directory (rebuilds, published assets).
+
+    With ``pin``, that runtime.json must also pin the wheel, as a release tag's does.
+    """
+    if len(directories) < 2:
+        raise ReleaseError("compare needs at least two asset directories")
+    first = directories[0].resolve()
+    found, reference = _release_assets(first, version)
+    for directory in directories[1:]:
+        _, hashes = _release_assets(directory.resolve(), found)
+        differing = [name for name in reference if hashes[name] != reference[name]]
+        if differing:
+            raise ReleaseError(f"{directory} differs from {first} in {', '.join(differing)}")
+    wheel, skill_zip = _asset_names(found)
+    if pin is not None:
+        runtime = json.loads(pin.read_text(encoding="utf-8"))
+        if runtime.get("version") != found or runtime.get("wheel", {}).get("sha256") != reference[wheel]:
+            raise ReleaseError(f"{pin} does not pin the wheel {wheel} found in {first}")
+    return {"status": "identical", "version": found,
+            "directories": [str(directory) for directory in directories],
+            "wheel_sha256": reference[wheel], "zip_sha256": reference[skill_zip],
+            "pin_checked": pin is not None}
+
+
 def _load_sibling(name: str):
     spec = importlib.util.spec_from_file_location(name, Path(__file__).resolve().parent / f"{name}.py")
     module = importlib.util.module_from_spec(spec)
@@ -208,8 +284,7 @@ def build_release(root: Path, output: Path | None = None, *,
     if runtime.get("version") != version or runtime["wheel"]["sha256"] != hashes[names[0]]:
         raise ReleaseError("skills/acquire-research-papers/runtime.json does not pin the built wheel")
     _check_bumped_text(root, output, version)
-    sums = "".join(f"{hashes[name]}  {name}\n" for name in names)
-    (output / "SHA256SUMS").write_bytes(sums.encode("ascii"))  # LF lines, wheel first
+    (output / "SHA256SUMS").write_bytes(_sums_text(hashes, names).encode("ascii"))
     return {"status": "built", "version": version, "output": str(output),
             "wheel_sha256": hashes[names[0]], "zip_sha256": hashes[names[1]],
             "reproducible": True,
@@ -391,6 +466,15 @@ def main(argv: list[str] | None = None) -> int:
     remote_parser.add_argument("--target", action="append", choices=["kiro", "codex"],
                                help="skills folder to install into (repeatable; default both)")
     remote_parser.add_argument("--dist", type=Path)
+    checksums_parser = commands.add_parser(
+        "checksums", help="write SHA256SUMS for the wheel and ZIP in a directory")
+    checksums_parser.add_argument("directory", type=Path)
+    compare_parser = commands.add_parser(
+        "compare", help="require byte-identical wheel and ZIP in two or more directories")
+    compare_parser.add_argument("directories", type=Path, nargs="+")
+    compare_parser.add_argument("--version", help="the version every directory must hold")
+    compare_parser.add_argument("--pin", type=Path,
+                                help="a runtime.json that must pin the wheel")
     args = parser.parse_args(argv)
     root = args.root.resolve()
     try:
@@ -412,6 +496,10 @@ def main(argv: list[str] | None = None) -> int:
                 dist, version, host=args.host, targets=args.target or ("kiro", "codex"))
             print(json.dumps(result, indent=2, ensure_ascii=False))
             return 0 if result["status"] == "installed" else 1
+        elif args.command == "checksums":
+            result = write_checksums(args.directory)
+        elif args.command == "compare":
+            result = compare_releases(args.directories, version=args.version, pin=args.pin)
         else:
             if not shutil.which("gh"):
                 raise ReleaseError("the GitHub CLI (gh) is required to publish")
