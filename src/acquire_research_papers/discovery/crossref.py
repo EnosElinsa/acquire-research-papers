@@ -5,7 +5,11 @@ from urllib.parse import urlencode
 
 from bs4 import BeautifulSoup
 
-from acquire_research_papers.discovery.contracts import CandidateMetadata, CandidatePage
+from acquire_research_papers.discovery.contracts import (
+    CandidateMetadata,
+    CandidatePage,
+    DiscoveryRequest,
+)
 from acquire_research_papers.http import SafeHttpClient
 from acquire_research_papers.models import normalize_doi
 
@@ -16,9 +20,12 @@ class CrossrefClient:
         *,
         client: SafeHttpClient,
         endpoint: str = "https://api.crossref.org/works",
+        mailto: str | None = None,
     ) -> None:
         self.client = client
         self.endpoint = endpoint
+        # The user's own contact address for Crossref's polite pool; never invented.
+        self.mailto = mailto or None
 
     @staticmethod
     def _candidate(item: dict[str, Any], query_url: str) -> CandidateMetadata:
@@ -116,7 +123,10 @@ class CrossrefClient:
                 for item in (value if isinstance(value, tuple) else (value,))
             )))
         query_url = f"{self.endpoint}?{urlencode(parameters)}"
-        payload = self.client.get(query_url).json()
+        # The contact address goes only to Crossref; recorded query URLs omit it.
+        request_url = (f"{query_url}&{urlencode({'mailto': self.mailto})}" if self.mailto
+                       else query_url)
+        payload = self.client.get(request_url).json()
         message = payload.get("message") or {}
         candidates = tuple(
             self._candidate(item, query_url) for item in message.get("items") or []
@@ -134,3 +144,21 @@ class CrossrefClient:
 
     def corpus_searcher(self, query: str, rows: int) -> tuple[CandidateMetadata, ...]:
         return self.search(query, rows=rows).candidates
+
+    def filtered_search(
+        self, query: str, rows: int, request: DiscoveryRequest,
+    ) -> tuple[CandidateMetadata, ...]:
+        """Keyword search restricted to the request's years, DOI prefixes, and ISSNs.
+
+        Crossref has no review type for articles; a review filter is applied to the titles by
+        the caller.
+        """
+        filters: dict[str, str | tuple[str, ...]] = {}
+        if request.years:
+            filters["from-pub-date"] = f"{min(request.years):04d}-01-01"
+            filters["until-pub-date"] = f"{max(request.years):04d}-12-31"
+        if request.query_filters.doi_prefixes:
+            filters["prefix"] = tuple(request.query_filters.doi_prefixes)
+        if request.query_filters.issns:
+            filters["issn"] = tuple(request.query_filters.issns)
+        return self.search(query, rows=rows, filters=filters or None).candidates

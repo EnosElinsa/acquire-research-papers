@@ -4,13 +4,14 @@ These are copyable applications of independent capabilities, not additional kern
 
 | Scenario | Recipe | Input template |
 | --- | --- | --- |
-| Known list acquisition | [Known list](01-known-list.md) | [known-papers.json](inputs/known-papers.json) |
+| Known list acquisition | [Known list](01-known-list.md) | [known-papers.json](inputs/known-papers.json), [doi-list.txt](inputs/doi-list.txt) |
+| A few surveys on a topic across many journals | [Topic surveys](08-topic-surveys.md) | [doi-list.txt](inputs/doi-list.txt) |
 | Topic corpus | [Topic corpus](02-topic-corpus.md) | [corpus.yaml](inputs/corpus.yaml) |
 | Author gap check | [Author gap check](03-author-gap-check.md) | [author.json](inputs/author.json), [empty-metadata.json](inputs/empty-metadata.json) |
 | Local library update/organization | [Library maintenance](04-library-maintenance.md) | [empty-metadata.json](inputs/empty-metadata.json) |
 | Related Work, claim evidence and gap analysis | [Research](05-related-work.md) | [related-work.yaml](inputs/related-work.yaml), [gap-analysis.yaml](inputs/gap-analysis.yaml) |
 | Explicit chapters | [Book chapters](07-book-chapters.md) | [chapter-map.json](inputs/chapter-map.json) |
 
-Start with `arp doctor --host <actual-host> --skill-directory <actual-installed-skill-directory>` and `arp config status`. Configure only required optional providers. The agent reads packets and full text and writes real hash-bound decisions. Templates contain no acceptance decisions, output hashes, credentials, model claims, or fabricated publisher artifacts.
+Start with `arp doctor --agent-host <actual-host> --skill-directory <actual-installed-skill-directory>` and `arp config status`. Configure only required optional providers. The agent reads packets and full text and writes real hash-bound decisions. Templates contain no acceptance decisions, output hashes, credentials, model claims, or fabricated publisher artifacts.
 
 Capability commands can record a lightweight run using `--run`; check it with `arp run status --run <directory>`. A read-only adapter also summarizes supported legacy manifests without converting or rewriting them. Legacy corpus/research/author commands keep their original recovery instructions. Never assume one run format can be substituted for another. Keep each frozen selection unchanged and use a new directory for changed scope.

@@ -1,0 +1,2 @@
+# One DOI or official publisher URL per line; blank lines and lines starting with # are skipped.
+# Replace this comment block with the DOIs the user asked for or the agent accepted in review.

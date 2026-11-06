@@ -4,10 +4,11 @@ import re
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import replace
 from typing import Any
 from urllib.parse import quote, urlencode
 
-from acquire_research_papers.discovery.contracts import CandidateMetadata
+from acquire_research_papers.discovery.contracts import CandidateMetadata, DiscoveryRequest
 from acquire_research_papers.http import RateLimited, SafeHttpClient
 from acquire_research_papers.models import normalize_doi
 
@@ -173,6 +174,80 @@ class SemanticScholarClient:
         return tuple(
             self._candidate(item, query_url) for item in payload.get("data") or ()
         )
+
+    def filtered_search(
+        self, query: str, rows: int, request: DiscoveryRequest,
+    ) -> tuple[CandidateMetadata, ...]:
+        """Keyword search within the request's year range (at most 100 papers).
+
+        Every candidate carries Semantic Scholar's publication types in
+        ``provenance.publication_types``; DOI prefixes and titles are checked by the caller.
+        """
+        fields = (
+            "paperId,title,abstract,venue,year,publicationDate,publicationTypes,"
+            "authors,externalIds,url,citationCount"
+        )
+        parameters: dict[str, str | int] = {
+            "query": query, "limit": max(1, min(rows, 100)), "fields": fields,
+            **self._scope_parameters(request)}
+        query_url = f"{self.search_endpoint}?{urlencode(parameters)}"
+        payload = self._get_json(query_url, self.search_endpoint)
+        return tuple(self._typed(item, query_url) for item in payload.get("data") or ()
+                     if isinstance(item, dict))
+
+    @staticmethod
+    def _scope_parameters(request: DiscoveryRequest) -> dict[str, str]:
+        parameters: dict[str, str] = {}
+        if request.years:
+            first, last = min(request.years), max(request.years)
+            parameters["year"] = str(first) if first == last else f"{first}-{last}"
+        if request.query_filters.issns and request.query_filters.venue_names:
+            # Semantic Scholar has no ISSN filter; it accepts the journals' names.
+            parameters["venue"] = ",".join(request.query_filters.venue_names)
+        return parameters
+
+    def _get_json(self, url: str, endpoint: str) -> dict[str, Any]:
+        headers = {"x-api-key": self.api_key} if self.api_key else None
+        payload = self._request(lambda: self.client.get(url, headers=headers),
+                                endpoint=endpoint).json()
+        return payload if isinstance(payload, dict) else {}
+
+    def _typed(self, item: dict[str, Any], query_url: str) -> CandidateMetadata:
+        candidate = self._candidate(item, query_url)
+        return replace(candidate, provenance={
+            **candidate.provenance,
+            "publication_types": [str(value) for value in item.get("publicationTypes") or ()],
+        })
+
+    def bulk_search(
+        self, query: str, rows: int, request: DiscoveryRequest, *, max_pages: int = 3,
+    ) -> tuple[CandidateMetadata, ...]:
+        """Every paper whose title or abstract holds all query terms (stemmed), most cited first.
+
+        Unlike the relevance search, bulk search is exhaustive within Semantic Scholar's index
+        for the query, years, and venues; it returns up to ``rows`` papers (1,000 per page).
+        """
+        fields = (
+            "paperId,title,abstract,venue,year,publicationDate,publicationTypes,"
+            "authors,externalIds,url,citationCount"
+        )
+        endpoint = self.search_endpoint.rstrip("/") + "/bulk"
+        parameters: dict[str, str] = {"query": query, "fields": fields,
+                                      "sort": "citationCount:desc",
+                                      **self._scope_parameters(request)}
+        wanted = max(1, rows)
+        candidates: list[CandidateMetadata] = []
+        token = ""
+        for _ in range(max(1, max_pages)):
+            page_parameters = {**parameters, **({"token": token} if token else {})}
+            query_url = f"{endpoint}?{urlencode(parameters)}"
+            payload = self._get_json(f"{endpoint}?{urlencode(page_parameters)}", endpoint)
+            candidates.extend(self._typed(item, query_url) for item in payload.get("data") or ()
+                              if isinstance(item, dict) and item.get("paperId"))
+            token = str(payload.get("token") or "")
+            if len(candidates) >= wanted or not token:
+                break
+        return tuple(candidates[:wanted])
 
     def lookup_dois(self, dois: list[str]) -> tuple[CandidateMetadata, ...]:
         if not dois:

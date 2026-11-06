@@ -6,7 +6,7 @@
 
 ## venue 预设
 
-内置 venue 预设让 spec 可以只写简称，例如 `name: INFOCOM` 或 `name: IEEE TMC`：该 venue 会得到 2026 年 11 月真实核对过的标识（37 个 IEEE 期刊和 AAAI 用 ISSN；INFOCOM、ICC、GLOBECOM、WCNC、VTC、ICDCS、ICNP、IWQoS、SECON 和 SIGCOMM 用 OpenAlex 系列；MobiCom 和 MobiHoc 用每届的会议录 DOI）。GitHub 上每周自动复查一次全部预设和官方索引。spec 中自己写的标识优先，`preset: none` 关闭匹配，`arp sources` 列出全部预设。
+内置 venue 预设让 spec 可以只写简称，例如 `name: INFOCOM` 或 `name: IEEE TMC`：该 venue 会得到 2026 年 11 月真实核对过的标识（47 个 IEEE 期刊、Wiley 的 Journal of Field Robotics（论文需手动下载）和 AAAI 用 ISSN，其中包括 T-RO、RA-L、T-Mech、RAM、T-FR 等机器人期刊；INFOCOM、ICC、GLOBECOM、WCNC、VTC、ICDCS、ICNP、IWQoS、SECON 和 SIGCOMM 用 OpenAlex 系列；MobiCom 和 MobiHoc 用每届的会议录 DOI）。GitHub 上每周自动复查一次全部预设和官方索引。spec 中自己写的标识优先，`preset: none` 关闭匹配，`arp sources` 列出全部预设。
 
 若 OpenAlex 某届收录数远低于上一年，发现阶段仍把该切片记为完成，但会加一条 `possible_upstream_lag` 警告；若因缺少 Semantic Scholar 或 OpenAlex key 而有摘要待补，会给出对应的 `arp config setup` 命令。用同一命令、同一输出目录重跑时，会重新读取带警告的切片并重新查缺失的摘要，已完成的切片不会重新抓取。
 

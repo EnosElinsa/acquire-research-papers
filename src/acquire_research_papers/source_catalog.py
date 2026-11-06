@@ -46,7 +46,9 @@ def describe_sources(spec: dict | None = None) -> dict:
                    "ScienceDirect": "manual_only", "AAAI": "official_pair",
                    "NeurIPS": "official_pair", "PMLR": "official_pair_page_embedded_bibtex",
                    "CVF": "open_access_version_page_embedded_bibtex",
-                   "Springer": "official_pair_open_access_or_entitled_network"}
+                   "Springer": "official_pair_open_access_or_entitled_network",
+                   # Wiley Online Library answers non-browser clients with a bot check.
+                   "Wiley": "manual_only"}
     slices = []
     if spec is not None:
         request = DiscoveryRequest.from_spec(spec)

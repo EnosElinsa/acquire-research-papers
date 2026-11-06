@@ -30,6 +30,8 @@ New installations default to an editable local file backend outside the reposito
 
 The root `.env` contains `SEMANTIC_SCHOLAR_API_KEY`, `OPENALEX_API_KEY`, `ELSEVIER_API_KEY`, and `MINERU_TOKEN`. A selected institution file contains `INSTITUTION_USERNAME` and `INSTITUTION_PASSWORD`. [Empty templates](https://github.com/EnosElinsa/acquire-research-papers/blob/main/skills/acquire-research-papers/templates/.env.example) ship without values. Files are plaintext restricted to the current user: edit locally, keep private, and never commit them. Saving credentials does not enable automatic login.
 
+Crossref answers requests that carry a contact address from its faster polite pool. To use it, put your own address in `config.toml` under `[discovery]` as `contact_email = "..."`, or set `ARP_CONTACT_EMAIL`; `arp config status --details` shows whether one is set. Nothing is filled in for you, and the address is left out of recorded query URLs.
+
 API precedence is explicit process environment → one selected file; file selection is `--env-file` → `ARP_ENV_FILE` → default `.env`. There is no upward search, implicit dotenv merging, shell execution, or interpolation. Each command reads a snapshot; empty values are unconfigured. Institutions read only their selected profile file. Existing DPAPI installations stay legacy; explicit `arp config migrate --from dpapi` runs on the original Windows account, preserves the source, reports conflicting key names, and never overwrites conflicts. See [configuration details](https://github.com/EnosElinsa/acquire-research-papers/blob/main/skills/acquire-research-papers/references/credentials-and-cache.md).
 
 ## Named institution profiles

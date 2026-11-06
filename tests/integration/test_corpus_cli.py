@@ -380,7 +380,7 @@ def test_unrelated_command_does_not_load_discovery_api_keys(
     def default(cls, **kwargs):
         observed.update(kwargs)
         return SimpleNamespace(
-            fetch=lambda _reference, _output: SimpleNamespace(
+            fetch=lambda _reference, _output, **_options: SimpleNamespace(
                 status="complete",
                 pdf=tmp_path / "paper.pdf",
                 bibtex=tmp_path / "paper.bib",

@@ -7,6 +7,7 @@ import os
 import sys
 import webbrowser
 from collections.abc import Callable, Mapping, Sequence
+from contextvars import ContextVar
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, TypedDict
@@ -56,7 +57,7 @@ from acquire_research_papers.acquisition.manual_handoff import (
 )
 from acquire_research_papers.acquisition.manual_queue import ManualQueueSession
 from acquire_research_papers.acquisition.router import AdapterRouter
-from acquire_research_papers.artifacts import InvalidPdfError, sha256_file
+from acquire_research_papers.artifacts import InvalidPdfError, atomic_write_bytes, sha256_file
 from acquire_research_papers.bibliography import BibMissing, MetadataMismatch
 from acquire_research_papers.delivery import DeliveryResult, GenericDelivery
 from acquire_research_papers.discovery.contracts import (
@@ -77,6 +78,7 @@ from acquire_research_papers.discovery.official import (
 from acquire_research_papers.discovery.providers import (
     CrossrefVenueDiscoveryProvider,
     DoiBatchEnrichmentProvider,
+    FilteredQueryProvider,
     OpenAlexVenueDiscoveryProvider,
     QueryApiProvider,
 )
@@ -105,7 +107,11 @@ from acquire_research_papers.registry import Registry
 from acquire_research_papers.research.evidence_workflow import ResearchEvidenceWorkflow
 from acquire_research_papers.research.fulltext import ResearchFullTextWorkflow
 from acquire_research_papers.research.review import ResearchReviewWorkflow
-from acquire_research_papers.research.workflow import ResearchDiscoverer, ResearchWorkflow
+from acquire_research_papers.research.workflow import (
+    ResearchDiscoverer,
+    ResearchWorkflow,
+    ScopedSearcher,
+)
 from acquire_research_papers.resolver import AmbiguousInput, Resolver, UnsupportedPublisher
 from acquire_research_papers.selection import SelectionRecord, SelectionStore
 from acquire_research_papers.specs import (
@@ -227,6 +233,44 @@ def _production_discovery_providers(
         providers.append(
             QueryApiProvider("semantic-scholar-search", semantic.corpus_searcher)
         )
+    return providers
+
+
+def _candidate_discovery_providers(
+    corpus_providers: Sequence[DiscoveryProvider],
+    *,
+    crossref: CrossrefClient,
+    environment: Mapping[str, str] | None = None,
+    api_keys: Mapping[str, str] | None = None,
+    semantic_request_pacer: SemanticScholarRequestPacer | None = None,
+) -> list[DiscoveryProvider]:
+    """Providers of discover candidates: the venue listings plus filtered keyword search.
+
+    Crossref and Semantic Scholar search work without a key; OpenAlex search needs one. The
+    two Semantic Scholar searches share one request pacer, so they take turns.
+    """
+    configured = os.environ if environment is None else environment
+    stored = api_keys or {}
+    providers = [provider for provider in corpus_providers
+                 if provider.capabilities().source_class != "metadata_api"]
+    providers.append(FilteredQueryProvider("crossref-search", crossref.filtered_search))
+    openalex_key = (configured.get("OPENALEX_API_KEY", "").strip()
+                    or stored.get("openalex", "").strip())
+    if openalex_key:
+        openalex = OpenAlexClient(client=SafeHttpClient(allowed_hosts={"api.openalex.org"}),
+                                  api_key=openalex_key)
+        providers.append(FilteredQueryProvider("openalex-search", openalex.filtered_search))
+    semantic_key = (configured.get("SEMANTIC_SCHOLAR_API_KEY", "").strip()
+                    or stored.get("semantic_scholar", "").strip())
+    semantic = SemanticScholarClient(
+        client=SafeHttpClient(allowed_hosts={"api.semanticscholar.org"}),
+        api_key=semantic_key or None, request_pacer=semantic_request_pacer)
+    # Relevance search ranks loosely related papers too; bulk search returns every paper
+    # whose title or abstract holds all query terms. Both filter journals by name.
+    providers.append(FilteredQueryProvider("semantic-scholar-search", semantic.filtered_search,
+                                           issn_filter=False, name_filter=True))
+    providers.append(FilteredQueryProvider("semantic-scholar-bulk", semantic.bulk_search,
+                                           issn_filter=False, name_filter=True))
     return providers
 
 
@@ -370,6 +414,8 @@ class Application:
     manual_handoff: ManualHandoffWorkflow | None = None
     manual_selection: ManualSelectionWorkflow | None = None
     discovery_coordinator: DiscoveryCoordinator | None = None
+    # discover candidates: keyword search with filters instead of the corpus query providers.
+    candidate_coordinator: DiscoveryCoordinator | None = None
     # Abstract-enrichment providers without an API key ("semantic_scholar", "openalex").
     missing_discovery_keys: tuple[str, ...] = ()
 
@@ -459,6 +505,7 @@ class Application:
         ieee = IeeeXploreAdapter(bridge)
         crossref = CrossrefClient(
             client=SafeHttpClient(allowed_hosts={"api.crossref.org"}),
+            mailto=configuration_commands.contact_email(paths),
         )
         discovery_api_keys = (
             {provider: manager.api_provider(provider, API_PROVIDER_HOSTS[provider]).optional() or ""
@@ -485,6 +532,11 @@ class Application:
         elsevier_key = manager.api_provider("elsevier", ELSEVIER_API_HOST)
         coordinator = DiscoveryCoordinator(discovery_providers, enrichers=discovery_enrichers,
                                            progress=discovery_progress)
+        candidate_coordinator = DiscoveryCoordinator(
+            _candidate_discovery_providers(
+                discovery_providers, crossref=crossref, api_keys=discovery_api_keys,
+                semantic_request_pacer=semantic_request_pacer),
+            enrichers=discovery_enrichers, progress=discovery_progress)
         manual_handoff = ManualHandoffWorkflow(
             resolver=ElsevierSearchClient(
                 client=SafeHttpClient(allowed_hosts={ELSEVIER_API_HOST}),
@@ -511,6 +563,7 @@ class Application:
             manual_handoff=manual_handoff,
             manual_selection=ManualSelectionWorkflow(opener=webbrowser.open),
             discovery_coordinator=coordinator,
+            candidate_coordinator=candidate_coordinator,
         )
         application.corpus_acquisition = CorpusAcquisitionWorkflow(
             acquirer=application.acquire_selected,
@@ -518,7 +571,10 @@ class Application:
             host_intervals=_HOST_INTERVAL_SECONDS,
             max_parallel_hosts=_PARALLEL_HOSTS,
         )
-        research_searchers = [crossref.corpus_searcher]
+        # Research searches apply the brief's scope (years, types, DOI prefixes, journals)
+        # at each source, so every result row can be in scope.
+        research_searchers: list[ScopedSearcher] = [
+            ScopedSearcher("crossref", crossref.filtered_search)]
         research_graph_expanders = []
         semantic_key = (
             os.environ.get("SEMANTIC_SCHOLAR_API_KEY", "").strip()
@@ -531,7 +587,9 @@ class Application:
         )
         research_graph_expanders.append(semantic_research.expand)
         if semantic_key:
-            research_searchers.append(semantic_research.corpus_searcher)
+            research_searchers.append(ScopedSearcher(
+                "semantic-scholar", semantic_research.filtered_search, issn_filter=False,
+                name_filter=True))
         openalex_key = (
             os.environ.get("OPENALEX_API_KEY", "").strip()
             or discovery_api_keys.get("openalex", "").strip()
@@ -541,7 +599,7 @@ class Application:
                 client=SafeHttpClient(allowed_hosts={"api.openalex.org"}),
                 api_key=openalex_key,
             )
-            research_searchers.append(openalex_research.corpus_searcher)
+            research_searchers.append(ScopedSearcher("openalex", openalex_research.filtered_search))
             research_graph_expanders.append(openalex_research.expand)
         application.research_workflow = ResearchWorkflow(
             discoverer=ResearchDiscoverer(
@@ -569,6 +627,7 @@ class Application:
         provenance_extra: dict[str, Any] | None = None,
         registry_payload: dict[str, Any] | None = None,
         relative_paths: tuple[Path, Path, Path] | None = None,
+        layout: str = "bundle",
     ) -> DeliveryResult:
         metadata = pair.document.metadata
         paper_id = self.registry.upsert_paper(
@@ -589,7 +648,7 @@ class Application:
         if status is PaperStatus.RESOLVING:
             self.registry.transition(paper_id, PaperStatus.DOWNLOADED)
             status = PaperStatus.DOWNLOADED
-        result = GenericDelivery(destination).deliver(
+        result = GenericDelivery(destination, layout=layout).deliver(
             pair=pair,
             paper_id=paper_id,
             provenance_extra=provenance_extra,
@@ -634,7 +693,7 @@ class Application:
         )
         return result
 
-    def fetch(self, value: str, output: Path) -> DeliveryResult:
+    def fetch(self, value: str, output: Path, *, layout: str = "bundle") -> DeliveryResult:
         try:
             destination = ensure_outside_repository(output, self.repository_root)
         except ValueError as exc:
@@ -652,7 +711,28 @@ class Application:
             pair=pair,
             destination=destination,
             source=resolved.adapter.name,
+            layout=layout,
         )
+
+    def fetch_list(self, input_file: Path, output: Path, *, layout: str = "bundle",
+                   progress: Callable[[dict[str, Any]], None] | None = None) -> dict[str, Any]:
+        """Fetch every DOI or official URL of a list file into one output directory."""
+        from acquire_research_papers.acquisition.fetch_list import (
+            FetchListWorkflow,
+            read_input_list,
+        )
+        try:
+            destination = ensure_outside_repository(output, self.repository_root)
+            inputs = read_input_list(input_file)
+        except ValueError as exc:
+            raise AmbiguousInput(str(exc)) from exc
+        workflow = FetchListWorkflow(
+            fetch=lambda value, root: self.fetch(value, root, layout=layout),
+            min_host_interval_seconds=_PUBLISHER_INTERVAL_SECONDS,
+            host_intervals=_HOST_INTERVAL_SECONDS,
+            progress=progress,
+        )
+        return workflow.run(inputs, destination)
 
     def manual_fetch(
         self,
@@ -976,8 +1056,18 @@ def build_parser() -> argparse.ArgumentParser:
         configuration_commands.register(config_modes)
 
     fetch = subparsers.add_parser("fetch", help="fetch an official PDF and BibTeX pair")
-    fetch.add_argument("--input", required=True)
+    fetch_inputs = fetch.add_mutually_exclusive_group(required=True)
+    fetch_inputs.add_argument("--input", help="one DOI or official publisher URL")
+    fetch_inputs.add_argument(
+        "--input-file", type=Path,
+        help="a text file with one DOI or official URL per line (# comments allowed); every "
+             "paper goes into --output, with one row per paper in fetch-ledger.jsonl")
     fetch.add_argument("--output", type=Path, required=True)
+    fetch.add_argument(
+        "--layout", choices=("bundle", "flat"), default="bundle",
+        help="bundle (default): <output>/<title>--<id>/paper.pdf, citation.bib, "
+             "provenance.json; flat: <output>/<short title>--<id>.pdf, .bib, "
+             ".provenance.json for shorter paths")
     fetch.add_argument("--ieee-profile", help="use a named institution for this operation")
     fetch.add_argument(
         "--accept-ieee-attribute-release",
@@ -1121,20 +1211,36 @@ def build_parser() -> argparse.ArgumentParser:
                             evidence_modes=evidence_modes, acquire_modes=acquire_modes)
     from acquire_research_papers import host_support
     host_support.register(subparsers)
-    def env_option(command):
+    def global_options(command):
         command.add_argument("--env-file", type=Path, default=argparse.SUPPRESS,
                              help="select one API dotenv file; no workspace search")
+        command.add_argument("--result-file", type=Path, default=argparse.SUPPRESS,
+                             help="also write the final JSON result to this file, for hosts "
+                                  "that cannot read stdout")
         for action in command._actions:
             if isinstance(action, argparse._SubParsersAction):
                 for child in action.choices.values():
-                    env_option(child)
-    env_option(parser)
-    parser.set_defaults(env_file=None)
+                    global_options(child)
+    global_options(parser)
+    parser.set_defaults(env_file=None, result_file=None)
     return parser
 
 
+# Set per command by --result-file; _emit then writes each result there as well.
+_RESULT_FILE: ContextVar[Path | None] = ContextVar("arp_result_file", default=None)
+
+
 def _emit(payload: dict[str, Any]) -> None:
-    print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    text = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    print(text, flush=True)
+    target = _RESULT_FILE.get()
+    if target is not None:
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_bytes(target, (text + "\n").encode("utf-8"))
+        except OSError as exc:
+            print(json.dumps({"event": "result_file_failed", "path": str(target),
+                              "error": type(exc).__name__}), file=sys.stderr, flush=True)
 
 
 def run_cli(
@@ -1143,6 +1249,19 @@ def run_cli(
     application: Application | None = None,
     credential_status: Callable[[], Mapping[str, bool]] | None = None,
 ) -> int:
+    token = _RESULT_FILE.set(None)
+    try:
+        return _run_cli(argv, application=application, credential_status=credential_status)
+    finally:
+        _RESULT_FILE.reset(token)
+
+
+def _run_cli(
+    argv: Sequence[str] | None,
+    *,
+    application: Application | None,
+    credential_status: Callable[[], Mapping[str, bool]] | None,
+) -> int:
     raw_argv = list(sys.argv[1:] if argv is None else argv)
     if raw_argv[:3] == ["job", "run", "--job"] and len(raw_argv) >= 5 and raw_argv[4] == "--":
         # Internal: the body of a process started by --background.
@@ -1150,6 +1269,13 @@ def run_cli(
         return jobs.run(Path(raw_argv[3]), raw_argv[5:], runner=run_cli)
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.result_file is not None and args.background is None:
+        # With --background the file receives the final result, written by the job itself.
+        if args.result_file.is_dir():
+            _emit({"status": "error", "error_code": "invalid_input",
+                   "message": "--result-file must name a file, not a directory"})
+            return 64
+        _RESULT_FILE.set(args.result_file.resolve())
     if args.version:
         _emit({"name": "acquire-research-papers", "version": __version__})
         return 0
@@ -1264,7 +1390,9 @@ def run_cli(
                 status["configuration"] = {"backend": manager.backend,
                     "env_file": str(manager.env_file), "remote_services_verified": False,
                     "api_sources": {key: "environment" if name in manager.environ else manager.backend
-                        for key, name in API_KEYS.items()}}
+                        for key, name in API_KEYS.items()},
+                    # Whether Crossref requests carry the user's own polite-pool address.
+                    "crossref_contact_email": bool(configuration_commands.contact_email(paths))}
             _emit(status)
             return 0
         except (CredentialStatusError, ValueError, OSError) as exc:
@@ -1314,8 +1442,16 @@ def run_cli(
         )
         return 78
     try:
+        if args.command == "fetch" and args.input_file is not None:
+            def fetch_progress(event: dict[str, Any]) -> None:
+                print(json.dumps(event, ensure_ascii=False, sort_keys=True), file=sys.stderr,
+                      flush=True)
+
+            _emit(app.fetch_list(args.input_file, args.output, layout=args.layout,
+                                 progress=fetch_progress))
+            return 0
         if args.command == "fetch":
-            result = app.fetch(args.input, args.output)
+            result = app.fetch(args.input, args.output, layout=args.layout)
             _emit(
                 {
                     "status": result.status,

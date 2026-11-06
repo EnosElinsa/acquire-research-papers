@@ -1,18 +1,109 @@
 from __future__ import annotations
 
+import html
 import re
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from acquire_research_papers.discovery.contracts import DiscoveryRequest
 from acquire_research_papers.discovery.corpus import CandidateMetadata
 from acquire_research_papers.discovery.coordinator import candidate_identity, merge_candidates
+from acquire_research_papers.discovery.providers import matches_query_filters, query_filters
+from acquire_research_papers.discovery.venue_presets import find_preset
 from acquire_research_papers.mineru import MineruCache, MineruResult
 from acquire_research_papers.research.delivery import ResearchDelivery, ResearchDeliveryResult
 from acquire_research_papers.research.evidence import EvidenceRecord
 from acquire_research_papers.research.planner import ResearchPlan, ResearchPlanner
 from acquire_research_papers.research.saturation import StepYield, assess
+
+
+_ISSN = re.compile(r"\d{4}-\d{3}[\dXx]")
+
+
+def _normalized(value: object) -> str:
+    # Crossref writes some venue names with HTML entities ("Surveys &amp; Tutorials").
+    return " ".join(re.findall(r"\w+", html.unescape(str(value)).casefold()))
+
+
+@lru_cache(maxsize=64)
+def _venue_scope(venues: tuple[str, ...]) -> tuple[frozenset[str], frozenset[str]]:
+    """Normalized venue names and ISSNs a research scope accepts.
+
+    Each scope entry is an ISSN, a venue name, or a built-in preset's ID, short name, name,
+    or alias; a preset entry accepts all of the preset's names and ISSNs.
+    """
+    names: set[str] = set()
+    issns: set[str] = set()
+    for venue in venues:
+        if _ISSN.fullmatch(venue.strip()):
+            issns.add(venue.strip().upper())
+            continue
+        names.add(_normalized(venue))
+        preset = find_preset(venue)
+        if preset is not None:
+            names.update(_normalized(value) for value in
+                         (preset.name, preset.short_name, *preset.aliases))
+            issns.update(value.upper() for value in preset.issn)
+    return frozenset(names), frozenset(issns)
+
+
+@dataclass(frozen=True)
+class ScopedSearcher:
+    """A keyword search that applies the research scope (years, filters) at its source.
+
+    ``search(query, rows, request)`` receives the scope as a ``DiscoveryRequest``, so the
+    source returns in-scope papers instead of the top results of all years. A source without
+    an ISSN filter (``issn_filter=False``) searches by the journals' names when
+    ``name_filter`` is set and every scope venue is a known journal, and otherwise without
+    a journal restriction; the scope check then drops out-of-scope venues.
+    """
+
+    provider_id: str
+    search: Callable[[str, int, DiscoveryRequest], Iterable[CandidateMetadata]]
+    issn_filter: bool = True
+    name_filter: bool = False
+
+    def request_for(self, request: DiscoveryRequest) -> DiscoveryRequest:
+        filters = request.query_filters
+        if filters.issns and not self.issn_filter and not (
+                self.name_filter and filters.venue_names):
+            return replace(request, query_filters=replace(filters, issns=(), venue_names=()))
+        return request
+
+
+@lru_cache(maxsize=64)
+def _filter_request(years: tuple[int, ...], publication_types: tuple[str, ...],
+                    doi_prefixes: tuple[str, ...], issns: tuple[str, ...],
+                    title_terms: tuple[str, ...], rows: int) -> DiscoveryRequest:
+    request = DiscoveryRequest.from_spec({
+        "name": "research scope", "target": {"minimum": 0, "maximum": max(1, rows)},
+        "scope": {"years": {"include": list(years)}}})
+    return replace(request, query_filters=query_filters(
+        publication_types=publication_types, doi_prefixes=doi_prefixes, issns=issns,
+        title_terms=title_terms))
+
+
+def _strings(scope: Mapping[str, object], key: str) -> tuple[str, ...]:
+    value = scope.get(key)
+    return tuple(str(item) for item in value) if isinstance(value, (list, tuple)) else ()
+
+
+def scope_request(scope: Mapping[str, object], rows: int = 25) -> DiscoveryRequest:
+    """The research scope as a search request: years, types, DOI prefixes, title terms, and
+    the venues' ISSNs when every scope venue is an ISSN or a known journal."""
+    years = scope.get("years")
+    year_values = tuple(sorted({int(year) for year in years})) if isinstance(
+        years, (list, tuple)) else ()
+    venues = _strings(scope, "venues")
+    per_venue = [_venue_scope((venue,))[1] for venue in venues]
+    issns = tuple(sorted(set().union(*per_venue))) if per_venue and all(per_venue) else ()
+    return _filter_request(year_values, _strings(scope, "publication_types"),
+                           _strings(scope, "doi_prefixes"), issns,
+                           _strings(scope, "title_terms"), rows)
 
 
 @dataclass(frozen=True)
@@ -74,7 +165,7 @@ class ResearchDiscovery(Sequence[CandidateMetadata]):
 class ResearchDiscoverer:
     def __init__(
         self,
-        searchers: Iterable[Callable[[str, int], Iterable[CandidateMetadata]]],
+        searchers: Iterable[Callable[[str, int], Iterable[CandidateMetadata]] | ScopedSearcher],
         *,
         graph_expanders: Iterable[
             Callable[[str, str, int], Iterable[CandidateMetadata]]
@@ -101,6 +192,8 @@ class ResearchDiscoverer:
             source = str(candidate.provenance.get("source") or "")
             if source:
                 return source
+        if isinstance(expander, ScopedSearcher):
+            return expander.provider_id
         owner = getattr(expander, "__self__", None)
         return str(getattr(owner, "graph_provider_id", "graph-provider"))
 
@@ -115,15 +208,21 @@ class ResearchDiscoverer:
         }:
             return False
 
-        def normalized(value: object) -> str:
-            return " ".join(re.findall(r"\w+", str(value).casefold()))
-
         venues = scope.get("venues")
         if isinstance(venues, (list, tuple)) and venues:
-            allowed = {normalized(venue) for venue in venues}
-            if normalized(candidate.venue) not in allowed:
+            names, issns = _venue_scope(tuple(str(venue) for venue in venues))
+            candidate_issns = {
+                str(value).upper()
+                for record in (candidate.provenance, *candidate.source_records)
+                if isinstance(record, Mapping)
+                for value in record.get("issn") or ()
+            }
+            if _normalized(candidate.venue) not in names and not (candidate_issns & issns):
                 return False
-        haystack = normalized(
+        # Publication type, DOI prefix, and title terms, checked as discover candidates does.
+        if not matches_query_filters(candidate, scope_request(scope)):
+            return False
+        haystack = _normalized(
             " ".join(
                 (
                     candidate.title,
@@ -135,11 +234,11 @@ class ResearchDiscoverer:
         )
         include_terms = scope.get("include_terms")
         if isinstance(include_terms, (list, tuple)) and include_terms:
-            if not any(normalized(term) in haystack for term in include_terms):
+            if not any(_normalized(term) in haystack for term in include_terms):
                 return False
         exclude_terms = scope.get("exclude_terms")
         if isinstance(exclude_terms, (list, tuple)) and any(
-            normalized(term) in haystack for term in exclude_terms
+            _normalized(term) in haystack for term in exclude_terms
         ):
             return False
         return True
@@ -155,25 +254,45 @@ class ResearchDiscoverer:
         research_scope = scope or {}
         graph_limit = int(settings.get("graph_neighbors_per_direction", self.graph_limit))
         graph_seed_limit = int(settings.get("graph_seed_limit", self.graph_seed_limit))
+        rows_per_query = int(settings.get("rows_per_query", self.rows_per_query))
+        maximum = int(settings.get("max_candidates", self.maximum))
         discovered: dict[str, CandidateMetadata] = {}
         query_passes: dict[str, list[str]] = {}
         diagnostics: list[GraphDiagnostic] = []
         pass_yields: list[StepYield] = []
+        search_scope = scope_request(research_scope, rows_per_query)
+
+        def search(searcher, text: str) -> tuple[tuple[CandidateMetadata, ...], Exception | None]:
+            try:
+                if isinstance(searcher, ScopedSearcher):
+                    return tuple(searcher.search(text, rows_per_query,
+                                                 searcher.request_for(search_scope))), None
+                return tuple(searcher(text, rows_per_query)), None
+            except Exception as exc:  # recorded by class name only
+                return (), exc
+
         for query in plan.queries:
             seen_before = set(discovered)
             returned: set[str] = set()
             failed = 0
-            for searcher in self.searchers:
-                try:
-                    searched = tuple(searcher(query.query, self.rows_per_query))
-                except Exception as exc:
+            if len(self.searchers) > 1:
+                # Each searcher is a different service: ask them at the same time and merge
+                # the answers in searcher order, so the result does not depend on timing.
+                with ThreadPoolExecutor(max_workers=len(self.searchers),
+                                        thread_name_prefix="arp-research-search") as pool:
+                    outcomes = list(pool.map(lambda item: search(item, query.query),
+                                             self.searchers))
+            else:
+                outcomes = [search(searcher, query.query) for searcher in self.searchers]
+            for searcher, (searched, error) in zip(self.searchers, outcomes, strict=True):
+                if error is not None:
                     failed += 1
                     diagnostics.append(
                         GraphDiagnostic(
                             seed="",
                             direction=f"search:{query.kind}",
                             provider=self._provider(searcher),
-                            error=type(exc).__name__,
+                            error=type(error).__name__,
                         )
                     )
                     continue
@@ -267,7 +386,7 @@ class ResearchDiscoverer:
                             edges.append(edge)
                 frontier_yields.append(StepYield(f"{seed} {direction}", len(returned),
                                                  len(returned - seen_before), failed))
-        truncated = len(discovered) > self.maximum
+        truncated = len(discovered) > maximum
         ranked = sorted(
             discovered.items(),
             key=lambda item: (
@@ -276,7 +395,7 @@ class ResearchDiscoverer:
                 -item[1].year,
                 item[0],
             ),
-        )[: self.maximum]
+        )[:maximum]
         candidates = tuple(
             replace(
                 candidate,
@@ -305,7 +424,7 @@ class ResearchDiscoverer:
             routes={key: len(query_passes.get(key, ())) + len(graph_paths.get(key, ()))
                     for key in discovered},
             skipped_seeds=graph_bounds.skipped_seeds,
-            maximum=self.maximum,
+            maximum=maximum,
             truncated=truncated,
             scope_years=[int(year) for year in scope_years]
             if isinstance(scope_years, (list, tuple)) else (),

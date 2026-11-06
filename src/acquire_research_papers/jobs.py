@@ -146,6 +146,14 @@ def run(job_dir: Path, argv: Sequence[str], *, runner: Callable[[list[str]], int
         code = exc.code if isinstance(exc.code, int) else 1
     finally:
         finished.set()
+        # stdout is a file here, so the result line sits in a block buffer until the process
+        # exits, which can be long after the command (closing a reused browser). Flush it
+        # before exit.json tells job status that the result is complete.
+        for stream in (sys.stdout, sys.stderr):
+            try:
+                stream.flush()
+            except (OSError, ValueError, AttributeError):
+                pass
         _write_json(root / EXIT_FILE, {"exit_code": code, "finished_at": _now(),
                                        "stop_requested": (root / STOP_FILE).exists()})
     return code
@@ -247,11 +255,33 @@ def _report(root: Path, job: dict[str, Any], alive: Callable[[int], bool]) -> di
     stop_requested = (root / STOP_FILE).exists()
     if ended is None:
         # The process is gone without recording an end: killed, or the machine restarted.
-        return {**base, "status": "stopped" if stop_requested else "crashed",
-                "result": _last_result(root)}
-    return {**base, "status": "stopped" if ended.get("stop_requested") else "finished",
-            "exit_code": ended.get("exit_code"), "finished_at": ended.get("finished_at"),
-            "result": _last_result(root)}
+        return _with_outcome({**base, "status": "stopped" if stop_requested else "crashed",
+                              "result": _last_result(root)})
+    return _with_outcome({**base, "status": "stopped" if ended.get("stop_requested") else "finished",
+                          "exit_code": ended.get("exit_code"),
+                          "finished_at": ended.get("finished_at"), "result": _last_result(root)})
+
+
+def _with_outcome(report: dict[str, Any]) -> dict[str, Any]:
+    """Lift the result's status, error code, and message to the top of an ended job's report."""
+    result = report.get("result")
+    if isinstance(result, dict):
+        report["result_status"] = result.get("status")
+        if result.get("error_code"):
+            report["error_code"] = result["error_code"]
+        if result.get("message"):
+            report["message"] = result["message"]
+        return report
+    report["result_status"] = None
+    if report["status"] == "crashed":
+        report["message"] = ("the process ended without recording an exit or a result; "
+                             "rerun the command with the same output")
+    elif report.get("exit_code") == 130 or report["status"] == "stopped":
+        report["message"] = ("the command was stopped before it printed a result; rerun it "
+                             "with the same output to resume")
+    else:
+        report["message"] = f"the command printed no result; see {PROGRESS_FILE}"
+    return report
 
 
 def status(

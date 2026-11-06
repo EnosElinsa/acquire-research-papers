@@ -43,7 +43,8 @@ delivery:
     payload = json.loads(capsys.readouterr().out)
     assert exit_code == 0
     assert payload["status"] == "review_required"
-    assert payload["query_passes"] == 4
+    # direct, mechanism-decomposition, falsification; core-terms repeats the decomposition.
+    assert payload["query_passes"] == 3
     for filename in (
         "research-plan.json",
         "research-candidates.jsonl",

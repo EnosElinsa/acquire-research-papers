@@ -76,8 +76,9 @@ def test_year_coverage_flags_a_candidate_set_with_only_recent_work() -> None:
 
 
 def test_the_discoverer_counts_new_papers_per_pass_and_graph_step() -> None:
+    # The brief has only a scenario and a mechanism, so core-terms repeats the decomposition.
     per_pass = {"direct": ["a", "b"], "mechanism-decomposition": ["b", "c"],
-                "citation-expansion": ["c"], "falsification": ["a"]}
+                "falsification": ["a", "c"]}
     plan = ResearchPlanner().build(BRIEF)
     kinds = iter(query.kind for query in plan.queries)
 
@@ -91,8 +92,7 @@ def test_the_discoverer_counts_new_papers_per_pass_and_graph_step() -> None:
 
     steps = discovery.saturation["query_passes"]["steps"]
     assert [(step["step"], step["returned"], step["new"]) for step in steps] == [
-        ("direct", 2, 2), ("mechanism-decomposition", 2, 1), ("citation-expansion", 1, 0),
-        ("falsification", 1, 0)]
+        ("direct", 2, 2), ("mechanism-decomposition", 2, 1), ("falsification", 2, 0)]
     frontier = discovery.saturation["citation_frontier"]
     assert [(step["returned"], step["new"]) for step in frontier["steps"]] == [(1, 1), (0, 0), (0, 0)]
     assert frontier["skipped_seeds"] == ["10.1000/b", "10.1000/c"]

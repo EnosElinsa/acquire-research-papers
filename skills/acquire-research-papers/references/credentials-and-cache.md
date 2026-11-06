@@ -29,6 +29,17 @@ Initialization never overwrites existing files. Config/edit/setup/status output 
 
 The root `.env` contains `SEMANTIC_SCHOLAR_API_KEY`, `OPENALEX_API_KEY`, `ELSEVIER_API_KEY`, and `MINERU_TOKEN`. A profile credential file contains only `INSTITUTION_USERNAME` and `INSTITUTION_PASSWORD`. Empty values mean unconfigured. Browser sessions remain in isolated browser directories, never credential files. [Empty API template](../templates/.env.example) and [empty institution template](../templates/institution.env.example) contain no secret values.
 
+### Crossref contact address
+
+Crossref serves requests that carry a contact address from its faster "polite" pool. Discovery adds one only when the user configured their own, in `ARP_CONTACT_EMAIL` or in `config.toml`:
+
+```toml
+[discovery]
+contact_email = "<the user's own address>"
+```
+
+`arp config status --details` shows whether one is set (`crossref_contact_email`). Never invent, guess, or borrow an address; without one, requests go without it. The address is sent only to Crossref and is left out of recorded query URLs. Agents should use `arp discover candidates` instead of writing their own Crossref or Semantic Scholar scripts.
+
 API precedence is explicit process environment → one selected dotenv file. Select that file using `--env-file <path>` → `ARP_ENV_FILE` → default `<config-root>/.env`. The command reads a snapshot once, does not search parent directories, does not merge additional dotenv files, does not execute shell code, and disables dotenv interpolation. Quotes, comments, special characters and non-ASCII values are data. A malformed file reports only path/field/line details, never its value. Institution credentials come only from the selected profile's referenced file; they are not taken from the API file or another institution.
 
 Saving a password never enables automatic login. The institution mode and reviewed exact-host form contract control that separately. Keep profile selection explicit and user-interaction requirements unchanged.

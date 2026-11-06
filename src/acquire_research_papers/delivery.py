@@ -44,21 +44,38 @@ _RESERVED_PROVENANCE_FIELDS = frozenset(
         "bibtex_source",
         "bibtex_encoding",
         "delivered_at",
+        "acquisition_retries",
     }
 )
 
+# "bundle": <root>/<title>--<id>/paper.pdf, citation.bib, provenance.json (the default).
+# "flat": <root>/<short title>--<id>.pdf, .bib, .provenance.json, for shorter paths.
+LAYOUTS = ("bundle", "flat")
+_FLAT_TITLE_CHARACTERS = 40
 
-def _slug(value: str) -> str:
+
+def _slug(value: str, length: int = 80) -> str:
     normalized = unicodedata.normalize("NFKC", value).strip()
     slug = re.sub(r"[^\w.-]+", "_", normalized, flags=re.UNICODE).strip("._")
-    return (slug or "paper")[:80]
+    return (slug or "paper")[:length]
 
 
 class GenericDelivery:
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, *, layout: str = "bundle") -> None:
+        if layout not in LAYOUTS:
+            raise ValueError(f"unknown delivery layout: {layout}")
         self.root = resolve_path(root)
+        self.layout = layout
 
     def _paths(self, pair: AcquiredPair, paper_id: str) -> DeliveryResult:
+        if self.layout == "flat":
+            title = _slug(pair.document.metadata.title, _FLAT_TITLE_CHARACTERS).rstrip("._")
+            stem = f"{title or 'paper'}--{paper_id[:12]}"
+            return DeliveryResult(
+                pdf=self.root / f"{stem}.pdf",
+                bibtex=self.root / f"{stem}.bib",
+                provenance=self.root / f"{stem}.provenance.json",
+            )
         bundle = self.root / f"{_slug(pair.document.metadata.title)}--{paper_id[:12]}"
         return DeliveryResult(
             pdf=bundle / "paper.pdf",
@@ -125,7 +142,7 @@ class GenericDelivery:
 
         atomic_write_bytes(result.pdf, pair.pdf_bytes, validator=validate_pdf)
         atomic_write_bytes(result.bibtex, pair.citation_bytes)
-        provenance = {
+        provenance: dict[str, Any] = {
             "paper_id": paper_id,
             "metadata": asdict(pair.document.metadata),
             "official_landing_url": pair.document.metadata.landing_url,
@@ -137,6 +154,9 @@ class GenericDelivery:
             "bibtex_encoding": citation_encoding,
             "delivered_at": datetime.now(UTC).isoformat(),
         }
+        if pair.retries:
+            # Attempts that failed transiently and were retried before this verified pair.
+            provenance["acquisition_retries"] = [dict(item) for item in pair.retries]
         provenance.update(extra)
         atomic_write_bytes(
             result.provenance,

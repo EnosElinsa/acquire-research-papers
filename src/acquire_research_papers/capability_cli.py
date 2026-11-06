@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 import csv
-from dataclasses import asdict
+from collections.abc import Sequence
+from dataclasses import asdict, replace
 import io
 import json
 from pathlib import Path
@@ -14,7 +15,13 @@ from acquire_research_papers.capabilities import (
 )
 from acquire_research_papers.credentials import ApiKeyLoadError
 from acquire_research_papers.contracts import validate_contract
-from acquire_research_papers.discovery.contracts import DiscoveryRequest
+from acquire_research_papers.discovery.contracts import (
+    CandidateMetadata, DiscoveryRequest, QueryFilters,
+)
+from acquire_research_papers.discovery.coordinator import candidate_identity
+from acquire_research_papers.discovery.providers import matches_query_filters, query_filters
+from acquire_research_papers.discovery.ranking import rank
+from acquire_research_papers.discovery.venue_presets import apply_presets, find_preset
 from acquire_research_papers.mineru import (
     MineruCache, MineruCliRunner, MineruExtractionError, MineruRateLimited,
 )
@@ -62,11 +69,44 @@ def register(subparsers, *, discover_modes, review_modes, evidence_modes, acquir
     review.add_argument("--decisions", type=Path, required=True)
     review.add_argument("--policy", choices=["identity", "relevance"], required=True)
     _output_options(review)
-    discover = discover_modes.add_parser("candidates", help="discover without selecting or acquiring")
-    discover.add_argument("--query", required=True)
-    discover.add_argument("--venue", action="append", default=[])
+    discover = discover_modes.add_parser(
+        "candidates", help="search for candidate papers by topic without selecting or acquiring")
+    discover.add_argument("--query", required=True, action="append",
+                          help="keyword search terms (repeatable; each runs as its own search)")
+    discover.add_argument("--venue", action="append", default=[],
+                          help="list every paper of this venue and year, as a corpus does "
+                               "(repeatable; a preset short name such as T-RO is enough)")
     discover.add_argument("--year", type=int, action="append", default=[])
-    discover.add_argument("--maximum", type=int, default=100)
+    discover.add_argument("--maximum", type=int, default=100,
+                          help="results per search and source (Semantic Scholar: at most 100)")
+    discover.add_argument("--type", action="append", default=[], choices=["review"],
+                          help="keep only reviews: the source classifies the work as a review, "
+                               "or its title names a survey, review, overview, tutorial, or "
+                               "state of the art")
+    discover.add_argument("--doi-prefix", action="append", default=[], metavar="PREFIX",
+                          help="keep only DOIs under this prefix, e.g. 10.1109 for IEEE "
+                               "(repeatable)")
+    discover.add_argument("--issn", action="append", default=[],
+                          help="search only these journals (repeatable); Semantic Scholar has "
+                               "no ISSN filter, searches preset journals by name, and skips "
+                               "other ISSNs")
+    discover.add_argument("--preset", action="append", default=[],
+                          help="search only this journal preset's ISSNs, e.g. T-RO or ieee-ral "
+                               "(repeatable; arp sources lists the presets)")
+    discover.add_argument("--title-term", action="append", default=[], metavar="TERM",
+                          help="the title must contain this term (repeatable, all required); "
+                               "'a|b' accepts either")
+    discover.add_argument("--progress", action="store_true",
+                          help="emit discovery progress as JSON lines on stderr")
+    discover.add_argument("--provider-timeout", type=float, default=180.0, metavar="SECONDS",
+                          help="give up on a source after this long and continue with the "
+                               "others (default 180)")
+    discover.add_argument("--keep-unmatched", action="store_true",
+                          help="keep candidates whose title and abstract hold none of the "
+                               "query's topic words (dropped by default)")
+    discover.add_argument("--fresh", action="store_true",
+                          help="search every source again instead of keeping the results of "
+                               "an earlier run of the same search in --output")
     _output_options(discover)
     evidence = evidence_modes.add_parser("validate", help="validate excerpts against one exact parse")
     evidence.add_argument("--parse-result", type=Path, required=True)
@@ -123,12 +163,49 @@ def _write(path: Path, value) -> None:
                                         sort_keys=True) + "\n").encode("utf-8"))
 
 
-def request_for(query: str, *, venues=(), years=(), maximum=100) -> DiscoveryRequest:
+def request_for(query: str | Sequence[str], *, venues=(), years=(), maximum=100,
+                filters: QueryFilters | None = None) -> DiscoveryRequest:
+    queries = [query] if isinstance(query, str) else [value for value in query if value.strip()]
+    if not queries:
+        raise ValueError("--query must not be empty")
     if maximum < 1 or any(year < 1000 or year > 9999 for year in years):
         raise ValueError("maximum must be positive and years must have four digits")
-    return DiscoveryRequest.from_spec({"name": query, "target": {"minimum": 0, "maximum": maximum},
+    # A venue named by a preset's short name ("T-RO", "TMC") gets the preset's identifiers.
+    spec = apply_presets({"name": queries[0], "target": {"minimum": 0, "maximum": maximum},
         "scope": {"venues": [{"name": v} for v in venues], "years": {"include": list(years)},
-                  "topics": {"include": [query]}}})
+                  "topics": {"include": queries}}})
+    request = DiscoveryRequest.from_spec(spec)
+    return replace(request, query_filters=filters) if filters is not None else request
+
+
+def _previous_candidates(
+    output: Path | None, fingerprint: str,
+) -> tuple[tuple[CandidateMetadata, ...], frozenset[str]] | None:
+    """The records and finished sources of an earlier run of the same search, if any."""
+    if output is None or not output.is_file():
+        return None
+    try:
+        payload = json.loads(output.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict) or payload.get("search_fingerprint") != fingerprint:
+            return None
+        records = tuple(CandidateMetadata.from_dict(record) for record in payload["records"])
+        return records, frozenset(str(label) for label in payload.get("completed_sources", ()))
+    except (OSError, UnicodeError, ValueError, KeyError, TypeError):
+        return None  # an unreadable earlier output is searched again from scratch
+
+
+def preset_issns(values: Sequence[str]) -> list[str]:
+    """The ISSNs of each named journal preset (ID, short name, name, or alias)."""
+    issns: list[str] = []
+    for value in values:
+        preset = find_preset(value)
+        if preset is None:
+            raise ValueError(f"unknown --preset {value}; arp sources lists the presets")
+        if not preset.issn:
+            raise ValueError(f"preset {preset.id} has no ISSN to search within; use --venue "
+                             f"{preset.short_name} to list its papers instead")
+        issns.extend(preset.issn)
+    return issns
 
 
 def validate_fulltext(parse_result: dict, decisions: list[dict]) -> dict:
@@ -198,7 +275,7 @@ def dispatch(args, *, application=None) -> dict:
         output = ensure_outside_repository(output, repository)
     run = ensure_outside_repository(args.run, repository) if args.run else None
     inputs = [value for name, value in vars(args).items() if isinstance(value, Path)
-              and name not in {"run", "output", "env_file"}]
+              and name not in {"run", "output", "env_file", "result_file"}]
     if args.command == "metadata" and args.metadata_mode == "enrich":
         inputs.append(Path(args.input))
     identity_record = None
@@ -215,12 +292,18 @@ def dispatch(args, *, application=None) -> dict:
         # Validate frozen contents even when a prior successful step is reusable.
         selection = SelectionStore.load(args.selection)
         inputs.append(selection.selected_path)
+    # Options that change how a command reports, not what it computes, stay out of the
+    # run fingerprint, so adding them to a rerun still resumes the same step.
     parameters = {name: str(value) if isinstance(value, Path) else value
-                  for name, value in vars(args).items() if name != "env_file"}
+                  for name, value in vars(args).items()
+                  if name not in {"env_file", "result_file", "progress"}}
 
     def app():
+        from acquire_research_papers.cli import _stderr_discovery_progress
         return application or Application.default(env_file=args.env_file,
-            load_discovery_api_keys=True, ieee_profile=getattr(args, "ieee_profile", None))
+            load_discovery_api_keys=True, ieee_profile=getattr(args, "ieee_profile", None),
+            discovery_progress=(_stderr_discovery_progress if getattr(args, "progress", False)
+                                else None))
 
     def operation():
         payload = {}
@@ -265,18 +348,59 @@ def dispatch(args, *, application=None) -> dict:
                        "next_actions": [{"action": "review", "identity": key,
                                          "policy": args.policy} for key in outstanding]}
         elif args.command == "discover":
-            coordinator = app().discovery_coordinator
+            if args.provider_timeout <= 0:
+                raise ValueError("--provider-timeout must be positive")
+            filters = query_filters(publication_types=args.type, doi_prefixes=args.doi_prefix,
+                                    issns=[*args.issn, *preset_issns(args.preset)],
+                                    title_terms=args.title_term)
+            request = request_for(args.query, venues=args.venue, years=args.year,
+                                  maximum=args.maximum, filters=filters)
+            searched = {"queries": list(request.queries), "years": list(request.years),
+                        "venues": list(args.venue), "maximum": args.maximum,
+                        "keep_unmatched": args.keep_unmatched, **filters.to_dict()}
+            fingerprint = content_hash(searched)
+            previous = None if args.fresh else _previous_candidates(output, fingerprint)
+            if previous is not None:
+                # Same search into the same output: keep what earlier runs found and query
+                # again only the sources that did not finish.
+                request = request.with_completed_slices(previous[1]).with_seed_candidates(
+                    previous[0])
+            service = app()
+            coordinator = service.candidate_coordinator or service.discovery_coordinator
             if coordinator is None:
                 raise ValueError("discovery service is not configured")
-            batch = coordinator.discover(request_for(args.query, venues=args.venue,
-                                          years=args.year, maximum=args.maximum))
-            payload = {"records": [r.to_dict() for r in batch.candidates],
+            batch = coordinator.discover(request, provider_timeout_seconds=args.provider_timeout,
+                                         partial_on_interrupt=True, parallel_search=True)
+            found = {candidate_identity(r): r for r in request.seed_candidates}
+            found.update((candidate_identity(r), r) for r in batch.candidates)
+            # Venue listings and merged records get the same checks as the keyword search.
+            filtered = [r for r in found.values() if matches_query_filters(r, request)]
+            records, unmatched = rank(filtered, request.queries,
+                                      keep_unmatched=args.keep_unmatched,
+                                      prefer_named_reviews="review" in filters.publication_types)
+            # Abstract lookups are not kept as finished: they run again for new candidates.
+            completed_sources = sorted(
+                label for label in set(request.completed_slices) | set(batch.complete_slice_labels)
+                if not label.endswith(":doi-batch"))
+            payload = {"records": [r.to_dict() for r in records],
                 "coverage": [asdict(r) for r in batch.coverage],
                 "diagnostics": [asdict(r) for r in batch.diagnostics],
-                "completed": len(batch.candidates)}
-            if batch.diagnostics or any(r.state != "complete" for r in batch.coverage):
+                "filters": {"queries": searched["queries"], "years": searched["years"],
+                            **({"venues": searched["venues"]} if args.venue else {}),
+                            **filters.to_dict()},
+                "search_fingerprint": fingerprint,
+                "completed_sources": completed_sources,
+                "resumed": previous is not None,
+                "dropped_unmatched": unmatched,
+                "interrupted": batch.interrupted,
+                "completed": len(records)}
+            # A source that cannot apply a filter is a fact about the result, not a failure.
+            failures = [r for r in batch.diagnostics if r.error_code != "filter_unsupported"]
+            if batch.interrupted or failures or any(r.state != "complete" for r in batch.coverage):
                 payload.update(status="partial", next_actions=[{"action": "resume",
-                    "provider": r.provider_id, "reason": r.error_code} for r in batch.diagnostics])
+                    "provider": r.provider_id, "reason": r.error_code,
+                    "message": "rerun the same command with the same --output; finished "
+                               "sources are kept"} for r in failures])
         elif args.command == "evidence":
             parse_result = read_value(args.parse_result)
             payload = validate_fulltext(parse_result, read_records(args.records))

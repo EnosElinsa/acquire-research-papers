@@ -152,3 +152,21 @@ def test_the_crossref_client_repeats_a_filter_for_each_value():
 
     (value,) = parse_qs(urlsplit(urls[0]).query)["filter"]
     assert value == "from-pub-date:2025-01-01,issn:1063-6692,issn:2998-4157"
+
+
+@pytest.mark.parametrize(("name", "preset_id", "issns"), [
+    ("T-RO", "ieee-tro", ["1552-3098", "1941-0468"]),
+    ("IEEE RA-L", "ieee-ral", ["2377-3766"]),
+    ("IEEE/ASME Transactions on Mechatronics", "ieee-tmech", ["1083-4435", "1941-014X"]),
+    ("TIE", "ieee-tie", ["0278-0046", "1557-9948"]),
+    ("IEEE TIM", "ieee-tim", ["0018-9456", "1557-9662"]),
+    ("IEEE/CAA JAS", "ieee-jas", ["2329-9266", "2329-9274"]),
+    ("IEEE Robotics and Automation Magazine", "ieee-ram", ["1070-9932", "1558-223X"]),
+    ("TCST", "ieee-tcst", ["1063-6536", "1558-0865"]),
+    ("TCDS", "ieee-tcds", ["2379-8920", "2379-8939"]),
+])
+def test_robotics_journals_receive_their_print_and_electronic_issns(name, preset_id, issns):
+    venue = venue_of(spec({"name": name}))
+
+    assert (venue["preset"], venue["issn"]) == (preset_id, issns)
+    assert find_preset(preset_id).checked.startswith("Crossref ISSN")

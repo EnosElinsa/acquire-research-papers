@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 from acquire_research_papers.models import PaperMetadata
 
@@ -33,6 +33,9 @@ class AcquiredPair:
     bibtex_text: str
     bibtex_bytes: bytes | None = None
     bibtex_source: str = "publisher_download"
+    # Failed attempts retried automatically before this pair was retrieved, oldest first:
+    # {"attempt": 1, "error_code": ..., "phase": ...}. Recorded in the delivery provenance.
+    retries: tuple[dict[str, Any], ...] = ()
 
     @property
     def citation_bytes(self) -> bytes:

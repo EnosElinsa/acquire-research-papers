@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import re
+import threading
+import time
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import replace
+from functools import partial
+from typing import Any
 
 from acquire_research_papers.discovery.contracts import (
     CandidateMetadata,
@@ -12,6 +16,7 @@ from acquire_research_papers.discovery.contracts import (
     DiscoveryEnricher,
     DiscoveryProvider,
     DiscoveryRequest,
+    VenueScope,
 )
 from acquire_research_papers.http import HttpStatusError, NetworkTransient, RateLimited
 from acquire_research_papers.models import normalize_doi
@@ -21,8 +26,83 @@ class CandidateConflict(ValueError):
     """Two records sharing a discovery identity disagree on a hard identity field."""
 
 
+class ProviderTimeout(RuntimeError):
+    """A provider did not finish within the time limit of this discovery."""
+
+
 _METADATA_SOURCES = frozenset({"crossref", "openalex", "semantic-scholar"})
 _SAFE_PROVIDER_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+# Providers that list whole venues. Without a requested venue they would list every paper of
+# their archive (all ACL or IJCAI papers of each year), so they only run for named venues.
+_VENUE_SCOPED = frozenset({"official_index", "venue_enumerator"})
+_JOIN_SECONDS = 0.5
+
+
+def _call_bounded(function: Callable[[], Any], timeout_seconds: float | None,
+                  monotonic: Callable[[], float]) -> Any:
+    """Run ``function`` in a helper thread while the caller stays responsive to Ctrl+C.
+
+    The caller waits in short joins, so a stop request (KeyboardInterrupt) or the time limit
+    takes effect within half a second even while the provider blocks on the network. An
+    abandoned daemon thread ends with the process; its late result is ignored.
+    """
+    outcome: dict[str, Any] = {}
+
+    def target() -> None:
+        try:
+            outcome["value"] = function()
+        except BaseException as exc:  # handed to the caller below
+            outcome["error"] = exc
+
+    worker = threading.Thread(target=target, name="arp-discovery-provider", daemon=True)
+    worker.start()
+    deadline = None if timeout_seconds is None else monotonic() + timeout_seconds
+    while worker.is_alive():
+        wait = _JOIN_SECONDS
+        if deadline is not None:
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                raise ProviderTimeout()
+            wait = min(wait, remaining)
+        worker.join(wait)
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome.get("value")
+
+
+def _run_side_by_side(
+    functions: list[Callable[[], Any]], timeout_seconds: float | None,
+    monotonic: Callable[[], float],
+) -> tuple[list[tuple[str, Any] | None], bool]:
+    """Run ``functions`` at once; each outcome is ("ok", value), ("error", exception), or
+    ("timeout", None) after the shared time limit. A stop request (KeyboardInterrupt) returns
+    at once with ``None`` for the unfinished ones and ``True`` as the second value."""
+    results: list[tuple[str, Any] | None] = [None] * len(functions)
+
+    def target(index: int, function: Callable[[], Any]) -> None:
+        try:
+            results[index] = ("ok", function())
+        except BaseException as exc:  # handed to the caller
+            results[index] = ("error", exc)
+
+    workers = [threading.Thread(target=target, args=(index, function), daemon=True,
+                                name="arp-discovery-search")
+               for index, function in enumerate(functions)]
+    for worker in workers:
+        worker.start()
+    deadline = None if timeout_seconds is None else monotonic() + timeout_seconds
+    try:
+        while any(worker.is_alive() for worker in workers):
+            wait = _JOIN_SECONDS
+            if deadline is not None:
+                remaining = deadline - monotonic()
+                if remaining <= 0:
+                    break
+                wait = min(wait, remaining)
+            next(worker for worker in workers if worker.is_alive()).join(wait)
+    except KeyboardInterrupt:
+        return list(results), True
+    return [result if result is not None else ("timeout", None) for result in results], False
 
 
 def _normalized(value: str) -> str:
@@ -146,10 +226,12 @@ class DiscoveryCoordinator:
         *,
         enrichers: Iterable[DiscoveryEnricher] = (),
         progress: Callable[[str, Mapping[str, object]], None] | None = None,
+        monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self.providers = tuple(providers)
         self.enrichers = tuple(enrichers)
         self.progress = progress
+        self._monotonic = monotonic
 
     def _report(self, event: str, **details: object) -> None:
         if self.progress is None:
@@ -161,13 +243,38 @@ class DiscoveryCoordinator:
                 safe[name] = (
                     provider if _SAFE_PROVIDER_ID.fullmatch(provider) else "unrecognized-provider"
                 )
-            elif name in {"candidates", "diagnostics", "coverage"}:
+            elif name in {"candidates", "diagnostics", "coverage", "seconds"}:
                 safe[name] = max(0, int(value)) if isinstance(value, (int, float, str)) else 0
             else:
                 raise ValueError("unsupported discovery progress field")
         self.progress(event, safe)
 
-    def discover(self, request: DiscoveryRequest) -> DiscoveryBatch:
+    def discover(
+        self,
+        request: DiscoveryRequest,
+        *,
+        provider_timeout_seconds: float | None = None,
+        partial_on_interrupt: bool = False,
+        parallel_search: bool = False,
+    ) -> DiscoveryBatch:
+        """Run every applicable provider, then every enricher, and merge their candidates.
+
+        ``provider_timeout_seconds`` bounds each provider and enricher; one that runs longer
+        is recorded as a retryable ``provider_timeout`` diagnostic and discovery continues
+        without its results. With ``partial_on_interrupt``, Ctrl+C or a job stop ends discovery
+        with the candidates gathered so far (``interrupted`` is set) instead of raising. With
+        ``parallel_search``, the keyword-search providers (different services) run at the
+        same time after the venue listings; their results are merged in provider order, so
+        the outcome does not depend on which finishes first.
+        """
+        bounded = provider_timeout_seconds is not None or partial_on_interrupt
+
+        def call(function: Callable[[], Any]) -> Any:
+            if not bounded:
+                return function()
+            return _call_bounded(function, provider_timeout_seconds, self._monotonic)
+
+        interrupted = False
         seed_by_identity: dict[str, CandidateMetadata] = {
             candidate_identity(candidate): candidate
             for candidate in request.seed_candidates
@@ -216,7 +323,91 @@ class DiscoveryCoordinator:
                 if venue.supports_year(year)
             }
 
+        def settle(capability, provider_request: DiscoveryRequest,
+                   supported_venues: tuple[VenueScope, ...], outcome: tuple[str, Any],
+                   elapsed: float) -> None:
+            """Record one provider's outcome: a batch, a time-out, or a provider failure."""
+            kind, value = outcome
+
+            def failed_slices(error_code: str) -> None:
+                if capability.source_class in _VENUE_SCOPED:
+                    coverage.extend(
+                        CoverageSlice(capability.provider_id, venue.name, year, "failed",
+                                      diagnostic_code=error_code)
+                        for venue in supported_venues
+                        for year in provider_request.years
+                        if venue.supports_year(year)
+                    )
+
+            if kind == "timeout":
+                diagnostics.append(DiscoveryDiagnostic(
+                    capability.provider_id, "discover", "provider_timeout",
+                    f"provider did not finish within {provider_timeout_seconds:g} seconds; "
+                    "its results are not included", retryable=True))
+                failed_slices("provider_timeout")
+                self._report("provider_timed_out", provider=capability.provider_id,
+                             seconds=elapsed, diagnostics=1)
+                return
+            if kind == "error":
+                if isinstance(value, (RateLimited, NetworkTransient)):
+                    error_code, message, retryable = (
+                        "network_transient", "provider temporarily unavailable", True)
+                elif isinstance(value, (HttpStatusError, RuntimeError, ValueError)):
+                    error_code, message, retryable = (
+                        "provider_error", "provider failed during discovery", False)
+                else:
+                    raise value
+                diagnostics.append(DiscoveryDiagnostic(
+                    capability.provider_id, "discover", error_code, message,
+                    retryable=retryable))
+                failed_slices(error_code)
+                self._report("provider_failed", provider=capability.provider_id,
+                             diagnostics=1)
+                return
+            batch = value
+            diagnostics.extend(batch.diagnostics)
+            covered.extend(batch.covered_slices)
+            coverage.extend(batch.coverage)
+            if capability.source_class == "official_index":
+                for item in batch.coverage:
+                    venue_name = requested_name(item.venue)
+                    if item.state == "complete" and venue_name is not None:
+                        official_complete.add((venue_name, item.year))
+            for candidate in batch.candidates:
+                identity = candidate_identity(candidate)
+                try:
+                    merged[identity] = merge_candidates(merged.get(identity), candidate)
+                except CandidateConflict:
+                    diagnostics.append(
+                        DiscoveryDiagnostic(
+                            capability.provider_id,
+                            "merge",
+                            "identity_conflict",
+                            "candidate identity fields conflict",
+                        )
+                    )
+            self._report(
+                "provider_completed",
+                provider=capability.provider_id,
+                candidates=len(batch.candidates),
+                diagnostics=len(batch.diagnostics),
+            )
+
+        def stopped(capability, phase: str) -> None:
+            diagnostics.append(DiscoveryDiagnostic(
+                capability.provider_id, phase, "interrupted",
+                "discovery was stopped before this provider finished", retryable=True))
+            self._report("provider_interrupted", provider=capability.provider_id)
+
+        # Keyword searches of different services, run side by side with parallel_search.
+        deferred: list[tuple[DiscoveryProvider, Any, DiscoveryRequest,
+                             tuple[VenueScope, ...]]] = []
         for _, (provider, capability) in ordered:
+            if interrupted:
+                break
+            if not request.venues and capability.source_class in _VENUE_SCOPED:
+                self._report("provider_skipped", provider=capability.provider_id)
+                continue
             if (
                 capability.source_class == "metadata_api"
                 and request.venues
@@ -263,100 +454,71 @@ class DiscoveryCoordinator:
                 supported_venues or request.venues,
                 supported_years or request.years,
             )
+            if parallel_search and capability.source_class == "metadata_api":
+                deferred.append((provider, capability, provider_request, supported_venues))
+                continue
             self._report("provider_started", provider=capability.provider_id)
+            started = self._monotonic()
+            outcome: tuple[str, Any]
             try:
-                batch = provider.discover(provider_request)
-            except (RateLimited, NetworkTransient):
-                error_code = "network_transient"
-                diagnostics.append(
-                    DiscoveryDiagnostic(
-                        capability.provider_id,
-                        "discover",
-                        error_code,
-                        "provider temporarily unavailable",
-                        retryable=True,
-                    )
-                )
-                if capability.source_class in {"official_index", "venue_enumerator"}:
-                    coverage.extend(
-                        CoverageSlice(
-                            capability.provider_id,
-                            venue.name,
-                            year,
-                            "failed",
-                            diagnostic_code=error_code,
-                        )
-                        for venue in supported_venues
-                        for year in provider_request.years
-                        if venue.supports_year(year)
-                    )
-                self._report(
-                    "provider_failed",
-                    provider=capability.provider_id,
-                    diagnostics=1,
-                )
-                continue
-            except (HttpStatusError, RuntimeError, ValueError):
-                error_code = "provider_error"
-                diagnostics.append(
-                    DiscoveryDiagnostic(
-                        capability.provider_id,
-                        "discover",
-                        error_code,
-                        "provider failed during discovery",
-                    )
-                )
-                if capability.source_class in {"official_index", "venue_enumerator"}:
-                    coverage.extend(
-                        CoverageSlice(
-                            capability.provider_id,
-                            venue.name,
-                            year,
-                            "failed",
-                            diagnostic_code=error_code,
-                        )
-                        for venue in supported_venues
-                        for year in provider_request.years
-                        if venue.supports_year(year)
-                    )
-                self._report(
-                    "provider_failed",
-                    provider=capability.provider_id,
-                    diagnostics=1,
-                )
-                continue
-            diagnostics.extend(batch.diagnostics)
-            covered.extend(batch.covered_slices)
-            coverage.extend(batch.coverage)
-            if capability.source_class == "official_index":
-                for item in batch.coverage:
-                    venue_name = requested_name(item.venue)
-                    if item.state == "complete" and venue_name is not None:
-                        official_complete.add((venue_name, item.year))
-            for candidate in batch.candidates:
-                identity = candidate_identity(candidate)
-                try:
-                    merged[identity] = merge_candidates(merged.get(identity), candidate)
-                except CandidateConflict:
-                    diagnostics.append(
-                        DiscoveryDiagnostic(
-                            capability.provider_id,
-                            "merge",
-                            "identity_conflict",
-                            "candidate identity fields conflict",
-                        )
-                    )
-            self._report(
-                "provider_completed",
-                provider=capability.provider_id,
-                candidates=len(batch.candidates),
-                diagnostics=len(batch.diagnostics),
-            )
+                outcome = ("ok", call(lambda: provider.discover(provider_request)))
+            except KeyboardInterrupt:
+                if not partial_on_interrupt:
+                    raise
+                interrupted = True
+                stopped(capability, "discover")
+                break
+            except ProviderTimeout:
+                outcome = ("timeout", None)
+            except (RateLimited, NetworkTransient, HttpStatusError, RuntimeError,
+                    ValueError) as exc:
+                outcome = ("error", exc)
+            settle(capability, provider_request, supported_venues, outcome,
+                   self._monotonic() - started)
+        if deferred and not interrupted:
+            for _, capability, _, _ in deferred:
+                self._report("provider_started", provider=capability.provider_id)
+            started = self._monotonic()
+            outcomes, was_stopped = _run_side_by_side(
+                [partial(provider.discover, provider_request)
+                 for provider, _, provider_request, _ in deferred],
+                provider_timeout_seconds, self._monotonic)
+            if was_stopped and not partial_on_interrupt:
+                raise KeyboardInterrupt
+            for (_, capability, provider_request, supported_venues), result in zip(
+                    deferred, outcomes, strict=True):
+                if result is None:
+                    stopped(capability, "discover")
+                else:
+                    settle(capability, provider_request, supported_venues, result,
+                           self._monotonic() - started)
+            interrupted = interrupted or was_stopped
         for enricher in self.enrichers:
+            if interrupted:
+                break
             capability = enricher.capabilities()
             self._report("enricher_started", provider=capability.provider_id)
+            started = self._monotonic()
+            snapshot = tuple(merged.values())
             try:
-                batch = enricher.enrich(tuple(merged.values()), request)
+                batch = call(lambda: enricher.enrich(snapshot, request))
+            except KeyboardInterrupt:
+                if not partial_on_interrupt:
+                    raise
+                interrupted = True
+                diagnostics.append(DiscoveryDiagnostic(
+                    capability.provider_id, "enrich", "interrupted",
+                    "discovery was stopped before metadata enrichment finished", retryable=True))
+                self._report("enricher_interrupted", provider=capability.provider_id)
+                break
+            except ProviderTimeout:
+                diagnostics.append(DiscoveryDiagnostic(
+                    capability.provider_id, "enrich", "provider_timeout",
+                    f"metadata enrichment did not finish within {provider_timeout_seconds:g} "
+                    "seconds; abstracts it would have added are missing", retryable=True))
+                self._report("enricher_timed_out", provider=capability.provider_id,
+                             seconds=self._monotonic() - started, diagnostics=1)
+                continue
             except (RateLimited, NetworkTransient):
                 diagnostics.append(
                     DiscoveryDiagnostic(
@@ -425,4 +587,5 @@ class DiscoveryCoordinator:
             diagnostics=tuple(diagnostics),
             covered_slices=tuple(dict.fromkeys(covered)),
             coverage=tuple(coverage),
+            interrupted=interrupted,
         )

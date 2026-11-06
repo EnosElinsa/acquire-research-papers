@@ -9,10 +9,11 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Protocol
+from typing import Any, Callable, Protocol
 from urllib.parse import urlsplit
 
 from acquire_research_papers.acquisition.base import (
@@ -48,6 +49,21 @@ class IeeeBridgeError(RuntimeError):
     def __init__(self, phase: str, message: str) -> None:
         super().__init__(message)
         self.phase = phase
+
+
+class IeeeTransientError(NetworkTransient):
+    """One browser step timed out or IEEE asked the browser to slow down (classified as
+    ``network_transient``); the phase names the step."""
+
+    def __init__(self, phase: str, message: str) -> None:
+        super().__init__(message)
+        self.phase = phase
+
+
+# Unexpected browser failures, such as a Playwright TimeoutError, that one more attempt in the
+# same browser usually clears. Login and access phases are never repeated automatically.
+RETRIED_AUTOMATION_PHASES = frozenset({"automation"})
+RETRY_DELAY_SECONDS = 5.0
 
 
 @dataclass(frozen=True)
@@ -367,7 +383,7 @@ class IeeeBridge:
                 "citation-request-timeout",
                 "paper-http-418",
             } or details.get("retryable") is True:
-                return NetworkTransient(f"{message} (IEEE phase: {phase})")
+                return IeeeTransientError(phase, f"{message} (IEEE phase: {phase})")
             return IeeeBridgeError(phase, message)
         return IeeeBridgeError("automation", "IEEE browser automation failed")
 
@@ -479,9 +495,43 @@ class IeeeXploreAdapter:
     name = "ieee-xplore"
     production_hosts = frozenset({IEEE_HOST})
 
-    def __init__(self, bridge: IeeeBridgeProtocol) -> None:
+    def __init__(
+        self,
+        bridge: IeeeBridgeProtocol,
+        *,
+        retries: int = 1,
+        retry_delay_seconds: float = RETRY_DELAY_SECONDS,
+        sleeper: Callable[[float], None] = time.sleep,
+    ) -> None:
         self.bridge = bridge
+        self.retries = max(0, retries)
+        self.retry_delay_seconds = max(0.0, retry_delay_seconds)
+        self._sleeper = sleeper
         self._pairs: dict[str, AcquiredPair] = {}
+
+    @staticmethod
+    def _retry_reason(error: Exception) -> dict[str, str] | None:
+        if isinstance(error, IeeeTransientError):
+            return {"error_code": "network_transient", "phase": error.phase}
+        if isinstance(error, IeeeBridgeError) and error.phase in RETRIED_AUTOMATION_PHASES:
+            return {"error_code": "automation_error", "phase": error.phase}
+        return None
+
+    def _retrieve(self, reference: str) -> tuple[IeeeBridgeResult, tuple[dict[str, Any], ...]]:
+        """Retrieve once more after a timed-out step or an unexpected browser failure."""
+        retried: list[dict[str, Any]] = []
+        while True:
+            try:
+                return self.bridge.retrieve(reference), tuple(retried)
+            except (IeeeTransientError, IeeeBridgeError) as error:
+                reason = self._retry_reason(error)
+                if reason is None or len(retried) >= self.retries:
+                    raise
+                retried.append({"attempt": len(retried) + 1, **reason})
+                print(json.dumps({"event": "ieee_retry", **retried[-1],
+                                  "delay_seconds": self.retry_delay_seconds}),
+                      file=sys.stderr, flush=True)
+                self._sleeper(self.retry_delay_seconds)
 
     def supports(self, landing_url: str) -> bool:
         parsed = urlsplit(landing_url)
@@ -497,7 +547,8 @@ class IeeeXploreAdapter:
         if parsed.scheme != "https" or not parsed.hostname or parsed.hostname.casefold() != IEEE_HOST:
             raise NotOfficial(f"IEEE {label} URL is outside the exact publisher host")
 
-    def _pair(self, result: IeeeBridgeResult) -> AcquiredPair:
+    def _pair(self, result: IeeeBridgeResult,
+              retries: tuple[dict[str, Any], ...] = ()) -> AcquiredPair:
         if not result.bibtex.strip():
             raise BibMissing("IEEE official BibTeX export is empty")
         self._require_ieee_url(result.landing_url, "landing")
@@ -525,18 +576,19 @@ class IeeeXploreAdapter:
             bibtex_text=result.bibtex,
             bibtex_bytes=result.bibtex.encode("utf-8"),
             bibtex_source="publisher_export_api",
+            retries=retries,
         )
 
     def resolve(self, landing_url: str) -> SourceDocument:
         if not self.supports(landing_url):
             raise PageContractChanged("IEEE input is not an exact ieeexplore.ieee.org URL")
-        pair = self._pair(self.bridge.retrieve(landing_url))
+        pair = self._pair(*self._retrieve(landing_url))
         self._pairs[pair.document.metadata.landing_url] = pair
         return pair.document
 
     def acquire(self, document: SourceDocument) -> AcquiredPair:
         pair = self._pairs.get(document.metadata.landing_url)
         if pair is None:
-            pair = self._pair(self.bridge.retrieve(document.metadata.landing_url))
+            pair = self._pair(*self._retrieve(document.metadata.landing_url))
             self._pairs[document.metadata.landing_url] = pair
         return pair

@@ -11,6 +11,8 @@
 3. **引用扩展：**从高相关种子论文查看后向参考文献、前向引用、Related Work 和引用图近邻。
 4. **主动证伪：**专门寻找可能推翻 gap 的早期工作、等价机制或反例。
 
+`discover research` 生成的关键词检索只含 brief 自身的词：研究问题加场景和机制、全部维度合并、只用机制和场景、以及去掉所提机制后的同一问题（用于证伪）。brief 中 `queries` 和 `synonyms` 的每一项各增加一次检索。引用扩展通过引用图完成，不作为关键词检索。`analysis.rows_per_query` 和 `analysis.max_candidates` 分别设定每次检索的结果数和保留的候选数；`scope.venues` 可以写刊名、ISSN，或 `T-RO` 这类预设名。`scope.publication_types: [review]`、`scope.doi_prefixes`、`scope.title_terms` 的过滤方式与 `discover candidates` 相同。年份、DOI 前缀和期刊限制由各来源在检索时直接应用，返回的结果都在范围内。
+
 标题和摘要足以提出候选并做初筛。若要判断某篇论文直接支持、反驳或已经解决某个研究问题，必须阅读正文，记录章节或页码，并保留简短摘录。Gap 结论必须限定在已经搜索的范围内，并列出最接近的反例。
 
 ## 分阶段流程

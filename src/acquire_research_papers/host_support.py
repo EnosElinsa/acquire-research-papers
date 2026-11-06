@@ -37,7 +37,10 @@ def skill_directory(host: str, *, home: Path | None = None,
 
 def register(subparsers) -> None:
     parser = subparsers.add_parser("doctor", help="inspect local runtime and a selected host")
-    parser.add_argument("--host", choices=tuple(HOSTS), required=True)
+    # --agent-host is the same option: some host shells (Kiro) refuse a command line that
+    # contains --host, taking it for a server start.
+    parser.add_argument("--agent-host", "--host", dest="host", choices=tuple(HOSTS),
+                        required=True, help="the agent host whose skill installation to inspect")
     parser.add_argument("--skill-directory", type=Path)
     parser.add_argument("--project-root", type=Path)
     parser.add_argument("--check-host-version", action="store_true",

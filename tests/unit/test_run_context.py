@@ -128,3 +128,38 @@ def test_status_reports_both_input_and_output_changes(tmp_path):
         {'action': 'rerun', 'step': 'copy', 'reason': 'input_changed'},
         {'action': 'rerun', 'step': 'copy', 'reason': 'output_changed'},
     ]
+
+
+def test_the_lock_names_its_process_and_a_dead_owner_does_not_block_a_rerun(tmp_path):
+    import os
+    import subprocess
+    import sys
+
+    from acquire_research_papers.run_context import LOCK_FILE, lock_state
+
+    def owner_bytes():
+        with (tmp_path / 'run' / LOCK_FILE).open('rb') as handle:
+            handle.seek(1)  # byte 0 is the locked one
+            return handle.read()
+
+    context = RunContext(tmp_path / 'run')
+    with context.lock():
+        assert owner_bytes() == str(os.getpid()).encode()
+        with pytest.raises(RunLocked, match=f'by process {os.getpid()}'):
+            with RunContext(tmp_path / 'run').lock():
+                pass
+    assert (tmp_path / 'run' / LOCK_FILE).read_bytes() == b'0'
+    assert lock_state(tmp_path / 'run') == {'state': 'free'}
+
+    # A killed command leaves its PID behind; the operating system has released its lock.
+    holder = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])
+    try:
+        (tmp_path / 'run' / LOCK_FILE).write_bytes(b'0' + str(holder.pid).encode())
+        assert lock_state(tmp_path / 'run') == {'state': 'held', 'pid': holder.pid}
+    finally:
+        holder.kill()
+        holder.wait()
+    state = lock_state(tmp_path / 'run')
+    assert (state['state'], state['ended_pid']) == ('free', holder.pid)
+    with context.lock():
+        pass

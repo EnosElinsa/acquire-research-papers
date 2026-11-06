@@ -25,3 +25,13 @@ Discovery artifacts are checkpoints. Rerunning the same directory reuses complet
 Venue presets let a specification name a venue by its short name, such as `name: INFOCOM` or `name: IEEE TMC`; [source support](sources.md#venue-presets) lists what they cover. Run `arp sources --spec <corpus.yaml>` before discovery to see per-venue/year gaps offline.
 
 After review, [acquisition](acquisition.md) delivers only the frozen selection. The [skill's corpus reference](https://github.com/EnosElinsa/acquire-research-papers/blob/main/skills/acquire-research-papers/references/corpus-mode.md) holds the complete agent-facing contract.
+
+## A few surveys on a topic
+
+A corpus lists every paper of every venue and year first. For a handful of surveys from many journals, search by topic instead:
+
+```text
+arp discover candidates --query "mobile robot path planning survey" --year 2024 --year 2025 --type review --doi-prefix 10.1109 --title-term "path planning|motion planning" --output candidates.json
+```
+
+The search runs on Crossref and Semantic Scholar without a key and on OpenAlex with one, all at once, within the years and filters; `--preset T-RO` or `--issn` limits it to named journals. Records whose title and abstract contain none of the query's topic words are dropped, and the rest come best match first. Rerunning the same command into the same output asks again only the sources that did not finish. The agent reviews the titles and abstracts, writes the accepted DOIs into a text file, and runs `arp fetch --input-file`. The [topic-survey recipe](https://github.com/EnosElinsa/acquire-research-papers/blob/main/skills/acquire-research-papers/examples/08-topic-surveys.md) has the full steps. Keyword search is not exhaustive; report the searched queries and filters with the result.

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import html
 import re
 import time
+import unicodedata
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
 
@@ -13,6 +15,7 @@ from acquire_research_papers.discovery.contracts import (
     DiscoveryCapabilities,
     DiscoveryDiagnostic,
     DiscoveryRequest,
+    QueryFilters,
     VenueScope,
 )
 from acquire_research_papers.http import HttpStatusError, NetworkTransient, RateLimited
@@ -534,3 +537,158 @@ class QueryApiProvider:
             diagnostics=tuple(diagnostics),
             covered_slices=(self.provider_id,) if successful_query else (),
         )
+
+
+# Titles that name a review article; used where a source has no review type of its own.
+REVIEW_TITLE_TERMS = "survey|review|overview|tutorial|state of the art"
+PUBLICATION_TYPE_FILTERS = frozenset({"review"})
+
+
+def _title_words(value: str) -> str:
+    text = unicodedata.normalize("NFKC", html.unescape(value)).casefold()
+    return " " + " ".join(re.findall(r"\w+", text)) + " "
+
+
+def title_term_matches(title: str, term: str) -> bool:
+    """Whether one ``a|b`` entry occurs in ``title``, each alternative at a word start."""
+    words = _title_words(title)
+    return any(
+        (" " + " ".join(re.findall(r"\w+", option.casefold()))) in words
+        for option in term.split("|")
+        if re.findall(r"\w+", option)
+    )
+
+
+def _is_review(candidate: CandidateMetadata) -> bool:
+    # Merged records keep each source's provenance in source_records, so a review type
+    # reported by any source counts.
+    kinds = {str(candidate.publication_type or "").casefold()}
+    for record in (candidate.provenance, *candidate.source_records):
+        values = record.get("publication_types", ()) if isinstance(record, dict) else ()
+        kinds.update(str(value).casefold() for value in values or ())
+    return "review" in kinds or title_term_matches(candidate.title, REVIEW_TITLE_TERMS)
+
+
+def matches_query_filters(candidate: CandidateMetadata, request: DiscoveryRequest) -> bool:
+    """The filters every source can check on a record: years, DOI prefix, title, type.
+
+    ISSN restrictions are applied by the sources that support them in the request itself.
+    """
+    filters = request.query_filters
+    if request.years and candidate.year not in request.years:
+        return False
+    if filters.doi_prefixes:
+        doi = (normalize_doi(candidate.doi) or "").casefold()
+        if not any(doi.startswith(prefix.casefold().rstrip("/") + "/")
+                   for prefix in filters.doi_prefixes):
+            return False
+    if not all(title_term_matches(candidate.title, term) for term in filters.title_terms):
+        return False
+    if "review" in filters.publication_types and not _is_review(candidate):
+        return False
+    return True
+
+
+@dataclass(frozen=True)
+class FilteredQueryProvider:
+    """Keyword search honoring the request's years and ``QueryFilters`` (discover candidates).
+
+    ``searcher(query, rows, request)`` applies what its source can filter server-side;
+    every returned record is then checked with ``matches_query_filters``. A source with
+    ``issn_filter=False`` cannot restrict a search by ISSN; with ``name_filter=True`` it
+    restricts by the journals' names instead when every ISSN has a known name, and otherwise
+    it is skipped with a ``filter_unsupported`` diagnostic. An HTTP 429 is retried once after
+    the requested delay (at most ``max_retry_after_seconds``).
+    """
+
+    provider_id: str
+    searcher: Callable[[str, int, DiscoveryRequest], Iterable[CandidateMetadata]]
+    issn_filter: bool = True
+    name_filter: bool = False
+    max_retry_after_seconds: float = 30.0
+    sleeper: Callable[[float], None] = time.sleep
+
+    def capabilities(self) -> DiscoveryCapabilities:
+        return DiscoveryCapabilities(provider_id=self.provider_id, source_class="metadata_api")
+
+    def _search(self, query: str, request: DiscoveryRequest) -> tuple[CandidateMetadata, ...]:
+        try:
+            return tuple(self.searcher(query, request.maximum, request))
+        except RateLimited as exc:
+            delay = 5.0 if exc.retry_after_seconds is None else exc.retry_after_seconds
+            if delay > self.max_retry_after_seconds:
+                raise
+            self.sleeper(delay)
+            return tuple(self.searcher(query, request.maximum, request))
+
+    def discover(self, request: DiscoveryRequest) -> DiscoveryBatch:
+        if self.provider_id in request.completed_slices:
+            return DiscoveryBatch()
+        filters = request.query_filters
+        if (filters.issns and not self.issn_filter
+                and not (self.name_filter and filters.venue_names)):
+            return DiscoveryBatch(diagnostics=(DiscoveryDiagnostic(
+                provider_id=self.provider_id, phase="query", error_code="filter_unsupported",
+                message=f"{self.provider_id} cannot restrict a search to these ISSNs, so it "
+                        "was skipped"),))
+        found: list[CandidateMetadata] = []
+        diagnostics: list[DiscoveryDiagnostic] = []
+        successful_query = False
+        for query in request.queries:
+            try:
+                results = self._search(query, request)
+            except (RateLimited, NetworkTransient):
+                diagnostics.append(DiscoveryDiagnostic(
+                    provider_id=self.provider_id, phase="query", error_code="network_transient",
+                    message="metadata query is temporarily unavailable", retryable=True))
+                continue
+            except (HttpStatusError, RuntimeError, ValueError):
+                diagnostics.append(DiscoveryDiagnostic(
+                    provider_id=self.provider_id, phase="query", error_code="provider_error",
+                    message="metadata query failed"))
+                continue
+            successful_query = True
+            found.extend(
+                replace(candidate, title=html.unescape(candidate.title),
+                        venue=html.unescape(candidate.venue))
+                for candidate in results
+                if matches_query_filters(candidate, request)
+            )
+        return DiscoveryBatch(
+            candidates=tuple(found),
+            diagnostics=tuple(diagnostics),
+            # Finished only when every query answered, so a rerun repeats a partial source.
+            covered_slices=(self.provider_id,) if successful_query and not diagnostics else (),
+        )
+
+
+def query_filters(
+    *,
+    publication_types: Iterable[str] = (),
+    doi_prefixes: Iterable[str] = (),
+    issns: Iterable[str] = (),
+    title_terms: Iterable[str] = (),
+) -> QueryFilters:
+    """Validated, normalized ``QueryFilters`` from command-line or brief values.
+
+    ``venue_names`` is filled when every ISSN belongs to a built-in journal preset.
+    """
+    from acquire_research_papers.discovery.venue_presets import preset_for_issn
+    types = tuple(dict.fromkeys(value.strip().casefold() for value in publication_types))
+    unknown = set(types) - PUBLICATION_TYPE_FILTERS
+    if unknown:
+        raise ValueError(f"unsupported --type {sorted(unknown)[0]}; supported: review")
+    prefixes = tuple(dict.fromkeys(value.strip().rstrip("/") for value in doi_prefixes))
+    if any(not re.fullmatch(r"10\.\d{4,9}", prefix) for prefix in prefixes):
+        raise ValueError("--doi-prefix must look like 10.1109")
+    normalized_issns = tuple(dict.fromkeys(value.strip().upper() for value in issns))
+    if any(not re.fullmatch(r"\d{4}-\d{3}[\dX]", issn) for issn in normalized_issns):
+        raise ValueError("--issn must look like 1552-3098")
+    terms = tuple(dict.fromkeys(value.strip() for value in title_terms))
+    if any(not re.findall(r"\w+", term) for term in terms):
+        raise ValueError("--title-term needs at least one word")
+    presets = [preset_for_issn(issn) for issn in normalized_issns]
+    names = (tuple(dict.fromkeys(preset.name for preset in presets if preset is not None))
+             if presets and all(presets) else ())
+    return QueryFilters(publication_types=types, doi_prefixes=prefixes,
+                        issns=normalized_issns, title_terms=terms, venue_names=names)

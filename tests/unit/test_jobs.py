@@ -169,3 +169,41 @@ def test_force_stop_kills_the_process_and_records_the_request(tmp_path):
     assert result["status"] == "killed"
     assert killed == [999999]
     assert (job / jobs.STOP_FILE).exists()
+
+
+def test_the_result_is_on_disk_when_the_exit_record_appears(tmp_path, monkeypatch):
+    # stdout of a background job is a block-buffered file; before the fix the result line
+    # stayed in the buffer until the process exited, so job status reported result null.
+    job = tmp_path / "job"
+    job.mkdir()
+    (job / jobs.JOB_FILE).write_text(json.dumps(
+        {"schema_version": 1, "command": ["fetch"], "pid": os.getpid(), "started_at": "x"}))
+    with (job / jobs.OUTPUT_FILE).open("w", encoding="utf-8", buffering=1 << 16) as stdout:
+        monkeypatch.setattr("sys.stdout", stdout)
+
+        def runner(argv):
+            print(json.dumps({"status": "error", "error_code": "network_transient",
+                              "message": "IEEE PDF request timed out"}))
+            return 75
+
+        jobs.run(job, ["fetch"], runner=runner)
+        report = jobs.status(job, alive=lambda pid: False)
+
+    assert report["result"]["error_code"] == "network_transient"
+    assert (report["result_status"], report["error_code"], report["message"]) == (
+        "error", "network_transient", "IEEE PDF request timed out")
+
+
+def test_a_stopped_job_without_a_result_says_so(tmp_path):
+    job = tmp_path / "job"
+    job.mkdir()
+    (job / jobs.JOB_FILE).write_text(json.dumps(
+        {"schema_version": 1, "command": ["discover"], "pid": 1, "started_at": "x"}))
+    (job / jobs.EXIT_FILE).write_text(json.dumps(
+        {"exit_code": 130, "finished_at": "y", "stop_requested": True}))
+
+    report = jobs.status(job, alive=lambda pid: False)
+
+    assert (report["status"], report["result"], report["result_status"]) == (
+        "stopped", None, None)
+    assert "rerun it with the same output" in report["message"]

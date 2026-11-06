@@ -12,9 +12,11 @@ Deliver the official publisher PDF and the publisher's raw BibTeX export as a ve
 `arp` below means `python <skill-directory>/scripts/arp.py`, where `<skill-directory>` is this skill's actual installed directory. Run it through the current host's shell tool; commands are single lines, so adapt only the quoting.
 
 ```text
-arp doctor --host <actual-host> --skill-directory <skill-directory>
+arp doctor --agent-host <actual-host> --skill-directory <skill-directory>
 arp config status
 ```
+
+`--agent-host` is the same option as `--host`; use it where the host's shell refuses command lines containing `--host` (Kiro). Every command accepts `--result-file <path>`, which writes the printed JSON result to that file as well, for hosts whose shell tool loses stdout.
 
 Python 3.11+ and `uv` are required. The standard-library launcher installs the release wheel pinned in `runtime.json` after verifying its SHA-256, in a cache outside the skill; no source checkout is needed. A matching local release wheel may be supplied through `ARP_LOCAL_WHEEL` for isolated validation. See [host installation](references/hosts.md) for host paths and checked support limits.
 
@@ -24,14 +26,15 @@ IEEE, MinerU, Elsevier, Semantic Scholar, and OpenAlex are optional and independ
 
 | Request | Commands | Read |
 | --- | --- | --- |
-| Known DOI, publisher URL, or explicit paper list | `arp fetch` per paper; `arp manual-fetch` for a pair the user downloads | [acquisition workflows](references/workflows.md) |
+| Known DOI, publisher URL, or explicit paper list | `arp fetch --input <DOI>` for one paper, `arp fetch --input-file <list.txt>` for a list; `arp manual-fetch` for a pair the user downloads | [acquisition workflows](references/workflows.md) |
+| A few surveys or representative papers on a topic, across many journals | `arp discover candidates --query … --year … --type review --preset …` or `--doi-prefix …` → agent review of titles and abstracts → `arp fetch --input-file` | [topic surveys](examples/08-topic-surveys.md) |
 | Venue/topic/year/count corpus | `arp discover corpus --progress` → agent review → `arp review corpus` → `arp acquire corpus` | [corpus mode](references/corpus-mode.md) |
 | Nearest work, Related Work, claim citations, or gap evidence | `arp discover research` → `review research` → `acquire research` → `evidence research` | [research mode](references/research-mode.md) |
 | An author's publications | `arp discover author` | [author mode](references/author-mode.md) |
 | Local library audit, update, import, organize, or explicit chapters | `arp library …` | [library mode](references/library-mode.md) |
 | One step on its own: resolve, enrich, freeze, verify, parse, export, run status | capability commands | [capabilities](references/capabilities.md) |
 
-Start from the [copyable recipes](examples/README.md). Before planning venue coverage, run `arp sources --spec <corpus.yaml>` and read [sources and coverage](references/sources.md); it describes capability, not live coverage. Translate an attached document into a corpus spec or research brief. Read only the references the task needs. `arp schema <schema-name.json>` returns the authoritative schema of the running release; the bundled schema files are snapshots. Common IEEE journals and conferences (TMC, TWC, JSAC, IoT-J, ToN, TEVC, INFOCOM, ICC, GLOBECOM, …), SIGCOMM, MobiCom, MobiHoc, and AAAI are built-in venue presets: a venue named only by its short name receives checked identifiers, and `arp sources` lists them. For corpus review, `arp review template` writes an importable decisions file with every ready packet's hash, so only decisions and reasons need filling in. Relay the `next_actions` of `discover corpus`: a missing API key that left abstracts pending, or a slice OpenAlex may not have indexed fully yet (`possible_upstream_lag`). Rerunning the same command into the same output looks up pending abstracts and warned slices again without refetching finished slices.
+Start from the [copyable recipes](examples/README.md). Before planning venue coverage, run `arp sources --spec <corpus.yaml>` and read [sources and coverage](references/sources.md); it describes capability, not live coverage. Translate an attached document into a corpus spec or research brief. Read only the references the task needs. `arp schema <schema-name.json>` returns the authoritative schema of the running release; the bundled schema files are snapshots. Common IEEE journals and conferences (TMC, TWC, JSAC, IoT-J, ToN, TEVC, T-RO, RA-L, T-Mech, T-FR, INFOCOM, ICC, GLOBECOM, …), SIGCOMM, MobiCom, MobiHoc, and AAAI are built-in venue presets: a venue named only by its short name receives checked identifiers, and `arp sources` lists them. For corpus review, `arp review template` writes an importable decisions file with every ready packet's hash, so only decisions and reasons need filling in. Relay the `next_actions` of `discover corpus`: a missing API key that left abstracts pending, or a slice OpenAlex may not have indexed fully yet (`possible_upstream_lag`). Rerunning the same command into the same output looks up pending abstracts and warned slices again without refetching finished slices.
 
 ## Act on every result
 
@@ -41,7 +44,7 @@ Each command prints one JSON object on stdout. Batch ledgers record one state pe
 | --- | --- | --- |
 | `delivered` | Official PDF and raw BibTeX verified | Report the paths. |
 | `manual_required` (`access_required`, `unsupported_adapter`) | Needs the user's authorized download, an institution login, or a publisher without an adapter (IEEE outside Windows) | The user downloads both files from the official pages; `manual-download.html` beside the queue lists every item with its official link. Import the whole queue in one session with `arp manual-fetch --selection <selection-manifest.json> --queue --output <delivery-root>`, add `--open-all` to open up to 30 official pages at once, add `--from <folder>` when the files are already downloaded, use `--key <selection-id>` for one item, or `--input <DOI>` for a single paper. A rerun of `acquire` does not request a paper whose access was refused again (`not_retried`); add `--retry-manual` after access changes. |
-| `retryable` (`network_transient`, `rate_limited`, `automation_error`, `host_paused`) | Temporary failure, or the host was paused for the rest of the run | Rerun the same command with the same output later; verified papers are skipped. |
+| `retryable` (`network_transient`, `rate_limited`, `automation_error`, `host_paused`) | Temporary failure, or the host was paused for the rest of the run. An IEEE step timeout or browser failure was already retried once in the same browser (`acquisition_retries` in the provenance of a paper that succeeded on the retry) | Rerun the same command with the same output later; verified papers are skipped. |
 | `contract_error` (`contract_error`) | The official page or artifact broke its contract or identity check | Report the message. Do not retry blindly or substitute another source. |
 | `contract_error` (`configuration_required`) | A local prerequisite such as the IEEE browser runtime is missing | Check `arp doctor`, configure only that capability, or use `manual-fetch` for the paper. |
 | `in_progress` (`run status`: `interrupted`) | The run stopped mid-paper | Rerun the same command and output; leftovers move to `.arp-interrupted/`. |
@@ -50,7 +53,7 @@ Agent review, user download, missing configuration, rate limits, retryable error
 
 ## Long commands
 
-`manual-fetch --queue --watch`, an institution login, a large `discover corpus`, or a long `acquire` can outlast a host's command timeout. Start such a command with `arp --background <new-job-directory> <command> ...`; it returns at once. Then run `arp job status --job <job-directory> --wait 60` until `status` is `finished`, `stopped`, or `crashed`; `progress` shows the latest lines and `result` holds the JSON the command would have printed. Relay `progress` lines that ask the user to act. `arp job stop --job <job-directory>` ends the command as Ctrl+C would; `--force` kills it, and rerunning the command resumes. `arp job list` shows every job started on this machine with its status.
+`manual-fetch --queue --watch`, an institution login, a large `discover corpus`, or a long `acquire` can outlast a host's command timeout. Start such a command with `arp --background <new-job-directory> <command> ...`; it returns at once. Then run `arp job status --job <job-directory> --wait 60` until `status` is `finished`, `stopped`, or `crashed`; `progress` shows the latest lines and `result` holds the JSON the command would have printed, with its `result_status`, `error_code`, and `message` repeated at the top level. Relay `progress` lines that ask the user to act. `arp job stop --job <job-directory>` ends the command as Ctrl+C would; `--force` kills it, and rerunning the command resumes. A stopped `discover candidates` or `fetch --input-file` still writes what it finished. A `.arp-run.lock` left in a run directory by a stopped or killed command does not block a rerun; `arp run status` reports whether a live process holds it. `arp job list` shows every job started on this machine with its status.
 
 ## Completion rules
 

@@ -25,4 +25,10 @@ Crossref、OpenAlex、Semantic Scholar、普通仓库和镜像都不能满足最
 
 批量下载最多同时联系四个出版社主机（`--parallel-hosts N`；设为 `1` 恢复逐篇下载），每个主机仍一次只处理一篇论文。同一主机的请求会间隔进行；按 robots.txt 要求，www.usenix.org 的请求间隔 10 秒。遇到 HTTP 429、连续三次临时失败或机构登录失败后，该主机在本次运行剩余部分暂停。同一次运行中的 IEEE 论文共用一个专用浏览器，机构登录只需完成一次。
 
-运行时间超过 Agent 命令超时的命令，可以用 `--background <任务目录>` 在独立进程中运行；`arp job status` 报告进度和最终结果，`arp job list` 列出全部任务。
+IEEE 的 PDF 或引用请求超时、浏览器意外失败时，会在五秒后自动重试一次；靠这次重试交付的论文会在 provenance 中记下 `acquisition_retries`。登录和权限失败从不自动重复。
+
+运行时间超过 Agent 命令超时的命令，可以用 `--background <任务目录>` 在独立进程中运行；`arp job status` 报告进度和最终结果，并把结果中的状态、错误码和说明放到最外层，`arp job list` 列出全部任务。任何命令都可以加 `--result-file <路径>`，把 JSON 结果同时写入该文件。
+
+## DOI 清单
+
+`arp fetch --input-file <清单.txt> --output <目录>` 逐行读取 DOI 或正式页面地址（跳过空行和 `#` 注释），全部交付到同一目录，并在同一进程中完成：整份清单共用一个 IEEE 浏览器和一次机构登录，请求间隔与主机暂停规则同批量下载。`fetch-ledger.jsonl` 为每篇论文写一行，结果中为每篇需要用户下载的论文给出 `manual-fetch` 命令。用同一命令重跑时，只获取该目录中尚未核验的论文。`--layout flat` 把 `<短题名>--<id>.pdf`、`.bib`、`.provenance.json` 直接放进输出目录，不再为每篇论文建子目录，路径更短。

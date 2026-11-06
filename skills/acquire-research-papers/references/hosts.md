@@ -15,15 +15,22 @@ Fresh launcher caches use the platform cache base plus `acquire-research-papers/
 | Kiro IDE | `~/.kiro/skills/acquire-research-papers/` | `.kiro/skills/acquire-research-papers/` | Agent Steering & Skills → Import a skill → local folder or the repository's skill subdirectory. |
 | Kiro CLI | `~/.kiro/skills/acquire-research-papers/` | `.kiro/skills/acquire-research-papers/` | Default agent discovers skills; custom agents require explicit `skill://` resources. |
 
-The repository's safe copy installer accepts `--host codex`, `--host claude-code`, `--host kiro-ide`, or `--host kiro-cli` instead of an explicit `--target`. It copies only an exported, allowlisted skill; existing targets require `--replace` and retain a backup. `--project-root <directory>` chooses that workspace's host directory. The installer still refuses Git checkout targets and links, including a project directory inside a Git checkout. Preserve an existing developer checkout and use a different user skill directory or the host's reviewed import flow.
+The repository's safe copy installer accepts `--agent-host codex`, `--agent-host claude-code`, `--agent-host kiro-ide`, or `--agent-host kiro-cli` (`--host` is the same option) instead of an explicit `--target`. It copies only an exported, allowlisted skill; existing targets require `--replace` and retain a backup. `--project-root <directory>` chooses that workspace's host directory. The installer still refuses Git checkout targets and links, including a project directory inside a Git checkout. Preserve an existing developer checkout and use a different user skill directory or the host's reviewed import flow.
 
 ```text
-python scripts/install_skill.py --source <exported-skill-directory> --host claude-code
-python scripts/install_skill.py --source <exported-skill-directory> --host kiro-cli
-python <installed-skill-directory>/scripts/arp.py doctor --host kiro-cli --skill-directory <installed-skill-directory>
+python scripts/install_skill.py --source <exported-skill-directory> --agent-host claude-code
+python scripts/install_skill.py --source <exported-skill-directory> --agent-host kiro-cli
+python <installed-skill-directory>/scripts/arp.py doctor --agent-host kiro-cli --skill-directory <installed-skill-directory>
 ```
 
 These installation-script commands run from a source checkout; the exported thin skill contains only `scripts/arp.py`. End users can copy the folder from the release ZIP directly to the indicated host directory. Do not copy the whole source repository into a skill directory.
+
+## Running arp from Kiro
+
+Observed in Kiro IDE on Windows (November 2026):
+
+- The shell tool refuses any command line that contains `--host`, taking it for a server start (exit -1, nothing runs). Use `--agent-host`, the same option, for `doctor` and the installer.
+- The shell tool stops a command after about ten minutes and sometimes returns empty output with exit -1 for a command that ran. Start long commands with `arp --background <new-job-directory> …` and follow them with `arp job status`. Add `--result-file <path>` to any command to receive its JSON result in a file as well, then read that file.
 
 ## Kiro custom-agent template
 
@@ -43,7 +50,7 @@ Only include the location actually installed if the other location does not exis
 
 ## Inspect this installation
 
-`arp doctor --host <host>` is a local inventory. `--skill-directory` selects an explicit path; otherwise a user directory is assumed, or `--project-root` selects a workspace path. It reports Python/runtime versions, the skill manifest, runtime schemas, executable presence, non-secret configuration state, and optional dependency presence. It neither bootstraps another runtime nor opens a browser.
+`arp doctor --agent-host <host>` (or `--host <host>`) is a local inventory. `--skill-directory` selects an explicit path; otherwise a user directory is assumed, or `--project-root` selects a workspace path. It reports Python/runtime versions, the skill manifest, runtime schemas, executable presence, non-secret configuration state, and optional dependency presence. It neither bootstraps another runtime nor opens a browser.
 
 - `--check-host-version` opts into running only the selected CLI executable with `--version`; IDE version detection remains unknown.
 - `--remote-check` opts into a credential-free Crossref reachability probe. It does not test keyed providers, publisher permissions, or institution access.

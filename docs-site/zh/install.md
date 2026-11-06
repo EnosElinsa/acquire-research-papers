@@ -36,7 +36,7 @@ arp --version
 
 Codex、Claude Code、Kiro IDE、Kiro CLI 共用同一 skill 和固定 wheel。用户目录分别为 `~/.agents/skills/`、`~/.claude/skills/`、`~/.kiro/skills/`；只复制导出的 `acquire-research-papers/` 文件夹。Kiro 自定义 agent 需要显式 `skill://` resources，附带[资源模板](https://github.com/EnosElinsa/acquire-research-papers/blob/main/skills/acquire-research-papers/templates/kiro-agent.example.json)。参见[宿主安装及官方依据](https://github.com/EnosElinsa/acquire-research-papers/blob/main/skills/acquire-research-papers/references/hosts.md)，于 **2026-10-20** 核对。
 
-执行 `arp doctor --host <codex|claude-code|kiro-ide|kiro-cli> --skill-directory <实际路径>`。默认仅检查本地 Python、运行时、schema、配置及依赖，宿主是否加载和机构权限仍未验证。`--check-host-version` 显式运行所选宿主版本命令；`--remote-check` 显式进行无凭据 Crossref 连通测试。官方格式兼容与模拟 CI 不等于实机认证；Claude Code 和 Kiro 交互执行仍需单独记录实测。
+执行 `arp doctor --agent-host <codex|claude-code|kiro-ide|kiro-cli> --skill-directory <实际路径>`（与 `--host` 是同一选项；Kiro 的 shell 会拒绝含 `--host` 的命令行）。默认仅检查本地 Python、运行时、schema、配置及依赖，宿主是否加载和机构权限仍未验证。`--check-host-version` 显式运行所选宿主版本命令；`--remote-check` 显式进行无凭据 Crossref 连通测试。官方格式兼容与模拟 CI 不等于实机认证；Claude Code 和 Kiro 交互执行仍需单独记录实测。
 
 ## 发布文件与手动安装
 

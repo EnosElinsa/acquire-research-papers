@@ -91,13 +91,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--source", required=True, type=Path)
     destination = parser.add_mutually_exclusive_group(required=True)
     destination.add_argument("--target", type=Path)
-    destination.add_argument("--host", choices=tuple(HOST_DIRECTORIES))
+    # --agent-host is the same option for host shells (Kiro) that refuse "--host".
+    destination.add_argument("--agent-host", "--host", dest="host",
+                             choices=tuple(HOST_DIRECTORIES))
     parser.add_argument("--project-root", type=Path,
-                        help="select a project skill directory with --host")
+                        help="select a project skill directory with --agent-host")
     parser.add_argument("--replace", action="store_true")
     args = parser.parse_args(argv)
     if args.project_root and not args.host:
-        parser.error("--project-root requires --host")
+        parser.error("--project-root requires --agent-host")
     target = args.target or (args.project_root or Path.home()) / HOST_DIRECTORIES[args.host] / (
         "skills") / "acquire-research-papers"
     try:

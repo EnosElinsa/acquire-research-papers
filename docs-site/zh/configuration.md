@@ -30,6 +30,8 @@ python "$skill/scripts/arp.py" config status
 
 根 `.env` 含 `SEMANTIC_SCHOLAR_API_KEY`、`OPENALEX_API_KEY`、`ELSEVIER_API_KEY`、`MINERU_TOKEN`；院校文件含 `INSTITUTION_USERNAME`、`INSTITUTION_PASSWORD`。[空模板](https://github.com/EnosElinsa/acquire-research-papers/blob/main/skills/acquire-research-papers/templates/.env.example)不含值。文件是限制当前用户访问的明文：可本机编辑，保持私有，禁止提交。保存密码不等于启用自动登录。
 
+带联系邮箱的请求会进入 Crossref 更快的 polite pool。如需使用，在 `config.toml` 的 `[discovery]` 下写入自己的邮箱 `contact_email = "..."`，或设置 `ARP_CONTACT_EMAIL`；`arp config status --details` 显示是否已设置。程序不会代填任何地址，记录下来的查询 URL 也不含该地址。
+
 API 优先级为显式进程环境 → 一个选定文件；文件选择为 `--env-file` → `ARP_ENV_FILE` → 默认 `.env`。不向上搜索、不隐式合并、不执行 shell、不插值，每命令读取一次快照，空值表示未配置。院校仅读取当前 profile 文件。已有 DPAPI 安装保持旧后端；在原 Windows 账户执行 `arp config migrate --from dpapi` 才显式迁移，保留原存储，仅报告冲突键名且不覆盖。详见[配置说明](https://github.com/EnosElinsa/acquire-research-papers/blob/main/skills/acquire-research-papers/references/credentials-and-cache.md)。
 
 ## 命名院校档案

@@ -25,4 +25,10 @@ The ledger is saved after every paper, so an interrupted run (Ctrl+C, a host tim
 
 A batch contacts up to four publisher hosts at the same time (`--parallel-hosts N`; `1` restores one paper at a time), and each host still gets one paper at a time. Requests to one host are spaced; www.usenix.org gets 10 s between requests, as its robots.txt asks. A host is paused for the rest of the run after HTTP 429, three consecutive transient failures, or an institution login failure. IEEE papers of one run share a single dedicated browser, so an institutional login is reused.
 
-A command that runs longer than your agent's command timeout can run in its own process with `--background <job-dir>`; `arp job status` reports its progress and final result, and `arp job list` lists all jobs.
+A timed-out IEEE PDF or citation request and an unexpected browser failure are retried once after five seconds; a paper delivered on that retry records it as `acquisition_retries` in its provenance. Login and access failures are never repeated automatically.
+
+A command that runs longer than your agent's command timeout can run in its own process with `--background <job-dir>`; `arp job status` reports its progress and final result, with the result's status, error code, and message repeated at the top, and `arp job list` lists all jobs. Any command also writes its JSON result to a file with `--result-file <path>`.
+
+## A list of DOIs
+
+`arp fetch --input-file <list.txt> --output <directory>` fetches one DOI or official URL per line (blank lines and `#` comments are skipped) into one directory, in one process: one IEEE browser and one institution login serve the whole list, with the same pacing and host pauses as a batch. `fetch-ledger.jsonl` gets one row per paper, and the result lists a `manual-fetch` command for every paper that needs the user's download. Rerunning the same command fetches only the papers not yet verified in that directory. `--layout flat` writes `<short title>--<id>.pdf`, `.bib`, and `.provenance.json` directly into the output directory instead of one folder per paper, for shorter paths.

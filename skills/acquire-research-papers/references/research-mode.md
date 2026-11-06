@@ -2,20 +2,25 @@
 
 Use this reference for gap analysis, nearest-work search, claim citations, citation verification, and Related Work research.
 
-## Plan four complementary passes
+## Plan complementary passes
 
-Create a `ResearchBrief` conforming to `schemas/research-brief.schema.json`, then execute all four passes with `arp discover research --brief <brief.yaml> --output <research-run>` (`arp` means `python <skill-directory>/scripts/arp.py`):
+Create a `ResearchBrief` conforming to `schemas/research-brief.schema.json`, then execute the passes with `arp discover research --brief <brief.yaml> --output <research-run>` (`arp` means `python <skill-directory>/scripts/arp.py`). The planned keyword searches hold only terms from the brief, since search engines treat instruction words as search terms:
 
-1. direct terminology and close synonyms;
-2. scenario, mechanism, decisions, objectives, and constraints in decomposed combinations;
-3. backward references, forward citations, and related-work graph expansion from seeds;
-4. falsification queries seeking prior, equivalent, or counterexample work that would invalidate the proposed gap.
+1. `direct`: the research question with the scenario and mechanism;
+2. `mechanism-decomposition`: scenario, mechanism, decisions, objectives, and constraints together;
+3. `core-terms`: the mechanism and scenario alone;
+4. `falsification`: the same problem (scenario, decisions, objectives, constraints) without the proposed mechanism, to find prior or equivalent work that would invalidate the proposed gap;
+5. one `brief-query` search for each entry of the brief's `queries`, and one `synonym` search for each entry of `synonyms`.
+
+Empty searches and searches with the same words as an earlier one (in any order) are dropped. Backward references, forward citations, and related papers of the seeds (or of the top results when no seeds are given) are expanded through the citation graph, not by keyword search. `analysis.rows_per_query` (default 25, at most 100) sets the results per search and source, and `analysis.max_candidates` (default 100, at most 1000) the candidates kept. `scope.venues` entries may be venue names, ISSNs, or preset names such as `T-RO` (matching the preset's names and ISSNs); venue names with HTML entities, such as Crossref's `Surveys &amp; Tutorials`, match their plain spelling. `scope.publication_types: [review]`, `scope.doi_prefixes` (for example `["10.1109"]`), and `scope.title_terms` (each entry required, `a|b` accepts either) filter as in `discover candidates`.
+
+Each source applies the scope itself: years, DOI prefixes, and, when every `scope.venues` entry is an ISSN or a journal preset, the journals (Semantic Scholar by their names). The rows of every search are then in scope instead of being the source's top results of all years, and the scope check above runs again on every result, including citation-graph neighbors. The sources of one search are asked at the same time.
 
 Repeat until new searches stop producing materially different mechanisms, recent and classic work are covered, closest papers have been read in full, and unresolved boundary papers cannot change the main judgment.
 
 Configured Semantic Scholar and OpenAlex clients join Crossref as research searchers. Semantic Scholar performs references, citations, and related-paper expansion; configured OpenAlex adds its citation relationships. `citation-graph.json` records the applied seed and neighbor limits, expanded seeds, and seeds skipped by the bound. Provider failures are recorded by phase and exception class without copying response bodies, keys, or signed query strings.
 
-`search-saturation.json` (named in `research-run.json` as `search_saturation`) says whether the search was still finding new papers when it stopped. `query_passes` and `citation_frontier` list each step's in-scope results and how many were new; `coverage` gives the year spread (recent = the last three scope years), papers cited at least 100 times, and abstracts; `boundary_papers` lists candidates found by a single route or without an abstract. Act on `signals` before review: `search_still_growing` (the last query pass still added at least three papers and 30% of its results) means broaden the brief with synonyms, older terms, or venues; `citation_frontier_growing` means raise `analysis.graph_seed_limit` or `analysis.graph_neighbors_per_direction`; `seeds_not_expanded`, `candidate_limit_reached`, `provider_failures`, `no_recent_work`, and `no_earlier_work` are self-describing. Rerun discovery into a new directory with the changed brief. `stable_within_bounds` means only that this run's own queries and bounds stopped adding papers; never report it as recall or as proof that no other work exists. `discover research` prints the signals and their `next_actions`, and the evidence report has a "Search saturation" section.
+`search-saturation.json` (named in `research-run.json` as `search_saturation`) says whether the search was still finding new papers when it stopped. `query_passes` and `citation_frontier` list each step's in-scope results and how many were new; `coverage` gives the year spread (recent = the last three scope years), papers cited at least 100 times, and abstracts; `boundary_papers` lists candidates found by a single route or without an abstract. Act on `signals` before review: `search_still_growing` (the last query pass still added at least three papers and 30% of its results) means broaden the brief with `synonyms`, `queries` holding older terms, or venues; `citation_frontier_growing` means raise `analysis.graph_seed_limit` or `analysis.graph_neighbors_per_direction`; `seeds_not_expanded`, `candidate_limit_reached`, `provider_failures`, `no_recent_work`, and `no_earlier_work` are self-describing. Rerun discovery into a new directory with the changed brief. `stable_within_bounds` means only that this run's own queries and bounds stopped adding papers; never report it as recall or as proof that no other work exists. `discover research` prints the signals and their `next_actions`, and the evidence report has a "Search saturation" section.
 
 Discovery writes an immutable `research-candidates.jsonl` snapshot, `citation-graph.json`, and `research-run.json`. Do not edit them. Review every candidate and write one JSONL decision per packet using `schemas/research-review-decision.schema.json`, preserving `candidate_id` and `candidate_sha256`. Run:
 

@@ -29,6 +29,28 @@ class VenueScope:
 
 
 @dataclass(frozen=True)
+class QueryFilters:
+    """Restrictions applied to keyword-search candidates (``discover candidates``).
+
+    ``title_terms``: every entry must occur in the title; ``|`` separates alternatives within
+    one entry, and a term matches at a word start ("review" also matches "reviews").
+    ``publication_types``: only ``review`` (the source classifies the work as a review, or its
+    title names a survey, review, overview, tutorial, or state of the art).
+    """
+
+    publication_types: tuple[str, ...] = ()
+    doi_prefixes: tuple[str, ...] = ()
+    issns: tuple[str, ...] = ()
+    title_terms: tuple[str, ...] = ()
+    # Journal names of every ISSN above, when all are known (from the venue presets), so a
+    # source that filters by venue name instead of ISSN (Semantic Scholar) can still search.
+    venue_names: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, list[str]]:
+        return {name: list(value) for name, value in asdict(self).items() if value}
+
+
+@dataclass(frozen=True)
 class DiscoveryRequest:
     name: str
     venues: tuple[VenueScope, ...]
@@ -45,6 +67,7 @@ class DiscoveryRequest:
     completed_slices: frozenset[str] = frozenset()
     seed_candidates: tuple[CandidateMetadata, ...] = ()
     seed_coverage: tuple[CoverageSlice, ...] = ()
+    query_filters: QueryFilters = QueryFilters()
 
     @property
     def queries(self) -> tuple[str, ...]:
@@ -242,6 +265,8 @@ class DiscoveryBatch:
     diagnostics: tuple[DiscoveryDiagnostic, ...] = ()
     covered_slices: tuple[str, ...] = ()
     coverage: tuple[CoverageSlice, ...] = ()
+    # Discovery was stopped (Ctrl+C or job stop) and returned what it had so far.
+    interrupted: bool = False
 
     @property
     def complete_slice_labels(self) -> tuple[str, ...]:

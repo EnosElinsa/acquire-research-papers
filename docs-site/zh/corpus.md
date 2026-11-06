@@ -25,3 +25,13 @@
 venue 预设让规范可以只写简称，例如 `name: INFOCOM` 或 `name: IEEE TMC`；覆盖范围见[来源支持](sources.md#venue-预设)。发现前运行 `arp sources --spec <corpus.yaml>`，可离线查看逐 venue/年份缺口。
 
 评审完成后，[自动获取](acquisition.md)只交付冻结选集。完整的 Agent 契约见 [skill 的 corpus 参考](https://github.com/EnosElinsa/acquire-research-papers/blob/main/skills/acquire-research-papers/references/corpus-mode.md)。
+
+## 按主题找几篇综述
+
+论文集会先列出每个 venue、每一年的全部论文。若只需从多本期刊中找几篇综述，改为按主题检索：
+
+```text
+arp discover candidates --query "mobile robot path planning survey" --year 2024 --year 2025 --type review --doi-prefix 10.1109 --title-term "path planning|motion planning" --output candidates.json
+```
+
+检索在 Crossref 和 Semantic Scholar 上无需 key，OpenAlex 需要 key，几个来源同时进行，并限定在给定年份和过滤条件内；`--preset T-RO` 或 `--issn` 可限定到指定期刊。标题和摘要中不含任何主题词的记录会被去掉，其余按匹配程度排序。用同一命令、同一输出重跑时，只重新查询上次没有完成的来源。Agent 评审标题和摘要后，把接受的 DOI 写入文本文件，再运行 `arp fetch --input-file`。完整步骤见[主题综述示例](https://github.com/EnosElinsa/acquire-research-papers/blob/main/skills/acquire-research-papers/examples/08-topic-surveys.md)。关键词检索不能保证穷尽，结果中应说明检索所用的查询和过滤条件。

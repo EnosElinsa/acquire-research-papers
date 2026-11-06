@@ -221,3 +221,25 @@ def test_failed_remote_check_does_not_expose_exception_values(tmp_path, monkeypa
     assert report["remote"]["status"] == "unavailable"
     assert "secret-sentinel" not in json.dumps(report)
     assert "private.example" not in json.dumps(report)
+
+
+def test_agent_host_is_the_same_option_as_host():
+    # Kiro's shell refuses any command line containing "--host" as a suspected server start.
+    assert arguments("doctor", "--agent-host", "kiro-ide").host == "kiro-ide"
+    assert arguments("doctor", "--host", "kiro-cli").host == "kiro-cli"
+
+
+def test_the_crossref_contact_address_comes_only_from_the_user(tmp_path):
+    from acquire_research_papers.configuration_commands import contact_email
+    from acquire_research_papers.paths import AppPaths
+
+    paths = AppPaths.for_root(tmp_path / "data", config_root=tmp_path / "config")
+    assert contact_email(paths, environ={}) is None
+    paths.config_paths.root.mkdir(parents=True)
+    paths.config_paths.settings.write_text(
+        '[credentials]\nbackend = "file"\n\n[discovery]\ncontact_email = "me@example.org"\n',
+        encoding="utf-8")
+    assert contact_email(paths, environ={}) == "me@example.org"
+    assert contact_email(paths, environ={"ARP_CONTACT_EMAIL": "x@example.net"}) == "x@example.net"
+    with pytest.raises(ValueError, match="not an email address"):
+        contact_email(paths, environ={"ARP_CONTACT_EMAIL": "nobody"})

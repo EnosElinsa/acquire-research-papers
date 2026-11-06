@@ -51,13 +51,29 @@
       "uniqueItems": true,
       "items": {"type": "string", "minLength": 1}
     },
+    "queries": {
+      "description": "Extra keyword searches, run in addition to the planned ones.",
+      "type": "array",
+      "maxItems": 20,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "synonyms": {
+      "description": "Alternative names of the studied topic; each runs as its own search.",
+      "type": "array",
+      "maxItems": 20,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    },
     "analysis": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
         "max_full_text_papers": {"type": "integer", "minimum": 1, "maximum": 100},
         "graph_seed_limit": {"type": "integer", "minimum": 0, "maximum": 20},
-        "graph_neighbors_per_direction": {"type": "integer", "minimum": 1, "maximum": 100}
+        "graph_neighbors_per_direction": {"type": "integer", "minimum": 1, "maximum": 100},
+        "rows_per_query": {"type": "integer", "minimum": 1, "maximum": 100},
+        "max_candidates": {"type": "integer", "minimum": 1, "maximum": 1000}
       }
     },
     "scope": {
@@ -70,9 +86,25 @@
             {"type": "array", "items": {"type": "integer"}}
           ]
         },
-        "venues": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "venues": {
+          "description": "Venue names, ISSNs, or venue preset names such as T-RO.",
+          "type": "array", "items": {"type": "string", "minLength": 1}
+        },
         "include_terms": {"type": "array", "items": {"type": "string", "minLength": 1}},
-        "exclude_terms": {"type": "array", "items": {"type": "string", "minLength": 1}}
+        "exclude_terms": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "publication_types": {
+          "description": "review: the source classifies the work as a review, or its title names a survey, review, overview, tutorial, or state of the art.",
+          "type": "array", "uniqueItems": true, "items": {"enum": ["review"]}
+        },
+        "doi_prefixes": {
+          "description": "Keep only DOIs under these prefixes, e.g. 10.1109 for IEEE.",
+          "type": "array", "uniqueItems": true,
+          "items": {"type": "string", "pattern": "^10\\.[0-9]{4,9}$"}
+        },
+        "title_terms": {
+          "description": "Every entry must occur in the title; 'a|b' accepts either.",
+          "type": "array", "items": {"type": "string", "minLength": 1}
+        }
       }
     },
     "delivery": {

@@ -5,7 +5,11 @@ from dataclasses import replace
 from typing import Any
 from urllib.parse import urlencode
 
-from acquire_research_papers.discovery.contracts import CandidateMetadata, CandidatePage
+from acquire_research_papers.discovery.contracts import (
+    CandidateMetadata,
+    CandidatePage,
+    DiscoveryRequest,
+)
 from acquire_research_papers.http import (
     HttpStatusError,
     NetworkTransient,
@@ -172,6 +176,47 @@ class OpenAlexClient:
 
     def corpus_searcher(self, query: str, rows: int) -> tuple[CandidateMetadata, ...]:
         return self.search(query, per_page=rows).candidates
+
+    def filtered_search(
+        self, query: str, rows: int, request: DiscoveryRequest, *, max_pages: int = 5,
+    ) -> tuple[CandidateMetadata, ...]:
+        """Keyword search restricted to the request's years and ISSNs, up to ``rows`` works.
+
+        Every candidate carries its OpenAlex work type in ``provenance.publication_types`` so a
+        review filter can use it after records from several sources are merged.
+        """
+        if not self.api_key:
+            raise DiscoveryUnavailable("OpenAlex API key is not configured")
+        conditions = []
+        if request.years:
+            conditions.append("publication_year:" + "|".join(
+                str(year) for year in sorted(set(request.years))))
+        if request.query_filters.issns:
+            conditions.append("primary_location.source.issn:"
+                              + "|".join(request.query_filters.issns))
+        wanted = max(1, rows)
+        per_page = min(wanted, 100)
+        candidates: list[CandidateMetadata] = []
+        cursor = "*"
+        for _ in range(max(1, max_pages)):
+            parameters = [("search", query), ("per-page", str(per_page)), ("cursor", cursor),
+                          ("select", _WORK_SELECT), ("api_key", self.api_key)]
+            if conditions:
+                parameters.append(("filter", ",".join(conditions)))
+            payload = self._payload(f"{self.endpoint}?{urlencode(parameters)}")
+            public_url = f"{self.endpoint}?" + urlencode(
+                [(name, value) for name, value in parameters if name not in {"api_key", "cursor"}])
+            page = [item for item in payload.get("results") or () if isinstance(item, dict)]
+            for item in page:
+                candidate = self._candidate(item, public_url)
+                candidates.append(replace(candidate, provenance={
+                    **candidate.provenance,
+                    "publication_types": [str(item.get("type") or "")]}))
+            next_cursor = (payload.get("meta") or {}).get("next_cursor")
+            if len(candidates) >= wanted or not page or not next_cursor:
+                break
+            cursor = str(next_cursor)
+        return tuple(candidates[:wanted])
 
     def _payload(self, url: str) -> dict[str, Any]:
         try:

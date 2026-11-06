@@ -19,6 +19,56 @@ class RunLocked(ValueError):
     """Another process owns this run directory."""
 
 
+LOCK_FILE = ".arp-run.lock"
+
+
+def _record_lock_owner(path: Path, pid: int | None) -> None:
+    """Write the owning process ID after the locked first byte; clear it on release.
+
+    Only byte 0 is locked, so this second handle can rewrite the rest of the file.
+    """
+    try:
+        with path.open("r+b") as owner:
+            owner.seek(1)
+            if pid is not None:
+                owner.write(str(pid).encode("ascii"))
+            owner.truncate()
+    except OSError:
+        pass  # the PID is diagnostic only; the lock itself is already held
+
+
+def _lock_owner(path: Path) -> int | None:
+    try:
+        with path.open("rb") as handle:
+            handle.seek(1)  # Windows refuses reads of the locked byte 0 itself
+            text = handle.read(32).decode("ascii").strip()
+    except (OSError, UnicodeError):
+        return None
+    return int(text) if text.isdigit() else None
+
+
+def lock_state(root: Path, *, alive: Callable[[int], bool] | None = None) -> dict[str, Any]:
+    """Whether a live process holds the run lock, read without touching the lock itself.
+
+    The operating system releases the lock when its process ends, so a lock file left behind
+    by an ended or killed command never blocks a rerun.
+    """
+    path = root.resolve() / LOCK_FILE
+    if not path.exists():
+        return {"state": "free"}
+    from acquire_research_papers.jobs import pid_alive
+    is_alive = alive or pid_alive
+    pid = _lock_owner(path)
+    if pid is not None and pid != os.getpid() and is_alive(pid):
+        return {"state": "held", "pid": pid}
+    state: dict[str, Any] = {"state": "free"}
+    if pid is not None:
+        state["ended_pid"] = pid
+        state["note"] = ("the process that last held this run ended without releasing it; "
+                         "the operating system released its lock, so a rerun can start")
+    return state
+
+
 def content_hash(value: Any) -> str:
     return sha256_bytes(json.dumps(value, ensure_ascii=False, sort_keys=True,
                                    separators=(",", ":")).encode("utf-8"))
@@ -46,9 +96,10 @@ class RunContext:
     @contextmanager
     def lock(self) -> Iterator[None]:
         self.root.mkdir(parents=True, exist_ok=True)
+        path = self.root / LOCK_FILE
         # The OS releases this lock on process death. The lock file is deliberately
         # persistent: unlinking it would let another process lock a different inode.
-        with (self.root / ".arp-run.lock").open("a+b") as handle:
+        with path.open("a+b") as handle:
             handle.seek(0)
             if os.fstat(handle.fileno()).st_size == 0:
                 handle.write(b"0")
@@ -62,10 +113,15 @@ class RunContext:
                     import fcntl
                     fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             except OSError as exc:
-                raise RunLocked("run is in use; retry after the active command finishes") from exc
+                owner = _lock_owner(path)
+                by = f" by process {owner}" if owner is not None else ""
+                raise RunLocked(
+                    f"run is in use{by}; retry after the active command finishes") from exc
+            _record_lock_owner(path, os.getpid())
             try:
                 yield
             finally:
+                _record_lock_owner(path, None)
                 handle.seek(0)
                 if sys.platform == "win32":
                     msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
@@ -91,6 +147,7 @@ class RunContext:
 
     def status(self) -> dict:
         state = self._load()
+        lock = lock_state(self.root)
         actions = []
         for name, step in state["steps"].items():
             if step["status"] == "complete":
@@ -103,10 +160,13 @@ class RunContext:
                         ("input_changed", input_changed), ("output_changed", output_changed)
                     ) if changed]
             if step["status"] == "running":
-                step["next_actions"] = [{"action": "resume", "step": name,
-                                         "reason": "running_or_interrupted"}]
+                # A live lock holder is still working; otherwise the step was interrupted.
+                step["next_actions"] = (
+                    [{"action": "wait", "step": name, "reason": "running"}]
+                    if lock["state"] == "held" else
+                    [{"action": "resume", "step": name, "reason": "interrupted"}])
             actions.extend(step.get("next_actions", []))
-        return {**state, "run": str(self.root), "next_actions": actions}
+        return {**state, "run": str(self.root), "lock": lock, "next_actions": actions}
 
     def execute(self, name: str, *, inputs: Sequence[Path], parameters: Mapping,
                 operation: Callable[[], dict]) -> dict:

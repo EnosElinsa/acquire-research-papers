@@ -42,10 +42,14 @@ class VenuePreset:
 _PRESET_IDENTIFIERS = ("issn", "openalex_source", "collection_doi")
 
 
-def _journal(preset_id: str, name: str, short: str, issn: str, count: int,
+def _journal(preset_id: str, name: str, short: str, issn: str | tuple[str, ...], count: int,
              *aliases: str) -> VenuePreset:
-    return VenuePreset(preset_id, name, short, "journal", "IEEE", aliases, issn=(issn,),
-                       checked=f"Crossref ISSN {issn} = '{name}'; 2024: {count} records")
+    # A print and an electronic ISSN can both be listed; Crossref ORs them in one request.
+    issns = (issn,) if isinstance(issn, str) else issn
+    label = "ISSN" if len(issns) == 1 else "ISSNs"
+    return VenuePreset(preset_id, name, short, "journal", "IEEE", aliases, issn=issns,
+                       checked=f"Crossref {label} {', '.join(issns)} = '{name}'; "
+                               f"2024: {count} records")
 
 
 def _proceedings(preset_id: str, name: str, short: str, editions: dict[int, tuple[str, int]],
@@ -141,6 +145,43 @@ PRESETS: tuple[VenuePreset, ...] = (
              "1545-5955", 627, "IEEE T-ASE", "IEEE TASE"),
     _journal("ieee-tit", "IEEE Transactions on Information Theory", "TIT", "0018-9448", 547,
              "IEEE TIT", "IEEE T-IT"),
+    # Robotics, automation, and control journals; print and electronic ISSNs checked against
+    # Crossref on 2026-11-05 (2025 records: T-RO 372, RA-L 1727, T-Mech 758, TIE 1435,
+    # TIM 4177, JAS 306, RAM 147, TCST 196, TCDS 145).
+    _journal("ieee-tro", "IEEE Transactions on Robotics", "T-RO", ("1552-3098", "1941-0468"),
+             275, "IEEE T-RO", "IEEE TRO", "TRO"),
+    _journal("ieee-ral", "IEEE Robotics and Automation Letters", "RA-L", ("2377-3766",), 1564,
+             "IEEE RA-L", "IEEE RAL", "RAL"),
+    _journal("ieee-tmech", "IEEE/ASME Transactions on Mechatronics", "T-Mech",
+             ("1083-4435", "1941-014X"), 468, "IEEE/ASME T-Mech", "IEEE T-Mech", "TMECH",
+             "IEEE Transactions on Mechatronics"),
+    _journal("ieee-tie", "IEEE Transactions on Industrial Electronics", "TIE",
+             ("0278-0046", "1557-9948"), 1689, "IEEE TIE"),
+    _journal("ieee-tim", "IEEE Transactions on Instrumentation and Measurement", "TIM",
+             ("0018-9456", "1557-9662"), 2555, "IEEE TIM"),
+    _journal("ieee-jas", "IEEE/CAA Journal of Automatica Sinica", "JAS",
+             ("2329-9266", "2329-9274"), 327, "IEEE/CAA JAS", "IEEE JAS"),
+    _journal("ieee-ram", "IEEE Robotics & Automation Magazine", "RAM",
+             ("1070-9932", "1558-223X"), 145, "IEEE RAM",
+             "IEEE Robotics and Automation Magazine"),
+    _journal("ieee-tcst", "IEEE Transactions on Control Systems Technology", "TCST",
+             ("1063-6536", "1558-0865"), 210, "IEEE TCST"),
+    _journal("ieee-tcds", "IEEE Transactions on Cognitive and Developmental Systems", "TCDS",
+             ("2379-8920", "2379-8939"), 201, "IEEE TCDS"),
+    # Field Robotics (Field Robotics Publication Society, DOI prefix 10.55417) continued at IEEE
+    # as IEEE Transactions on Field Robotics; both ISSNs, as for ToN.
+    VenuePreset("ieee-tfr", "IEEE Transactions on Field Robotics", "T-FR", "journal", "IEEE",
+                ("IEEE T-FR", "IEEE TFR", "TFR", "Field Robotics"),
+                issn=("2771-3989", "2997-1101"),
+                checked="Crossref ISSN 2771-3989 = 'Field Robotics' (2022: 65, 2023: 16, 2024: 7, "
+                        "2025: 0); ISSN 2997-1101 = 'IEEE Transactions on Field Robotics' "
+                        "(2024: 29, 2025: 50, 2026: 55), checked 2026-11-05"),
+    # Wiley answers every non-browser request with a Cloudflare challenge (checked 2026-11-05),
+    # so its papers are discovered here and downloaded by the user.
+    VenuePreset("wiley-jfr", "Journal of Field Robotics", "JFR", "journal", "Wiley",
+                ("J. Field Robotics", "J Field Robot"), issn=("1556-4959", "1556-4967"),
+                checked="Crossref ISSNs 1556-4959, 1556-4967 = 'Journal of Field Robotics'; "
+                        "2024: 226, 2025: 277 records"),
     VenuePreset("aaai", "Proceedings of the AAAI Conference on Artificial Intelligence", "AAAI",
                 "conference", "AAAI", ("AAAI Conference on Artificial Intelligence",),
                 issn=("2374-3468",),
@@ -204,6 +245,14 @@ _BY_ID = {preset.id: preset for preset in PRESETS}
 
 def find_preset(name: str) -> VenuePreset | None:
     return _BY_KEY.get(_key(name))
+
+
+_BY_ISSN = {issn.upper(): preset for preset in PRESETS for issn in preset.issn}
+
+
+def preset_for_issn(issn: str) -> VenuePreset | None:
+    """The journal preset listing ``issn``, if any."""
+    return _BY_ISSN.get(issn.strip().upper())
 
 
 def _matching(venue: dict[str, Any]) -> VenuePreset | None:

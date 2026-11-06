@@ -6,11 +6,13 @@ import base64
 import getpass
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
 import tempfile
-from collections.abc import Callable, Iterator
+import tomllib
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -286,6 +288,34 @@ def migrate_legacy(store: InstitutionStore, paths: AppPaths) -> None:
         except ValueError:
             return
         store.migrate_legacy(legacy)
+
+
+CONTACT_EMAIL_VARIABLE = "ARP_CONTACT_EMAIL"
+_EMAIL = re.compile(r"[^@\s\"'<>]+@[^@\s\"'<>]+\.[^@\s\"'<>]+")
+
+
+def contact_email(paths: AppPaths, environ: Mapping[str, str] | None = None) -> str | None:
+    """The user's own contact address for Crossref's polite pool, if they configured one.
+
+    ``ARP_CONTACT_EMAIL`` wins over ``[discovery] contact_email`` in config.toml. Nothing is
+    ever filled in on the user's behalf; without either, requests go without an address.
+    """
+    value = (os.environ if environ is None else environ).get(CONTACT_EMAIL_VARIABLE, "").strip()
+    source = CONTACT_EMAIL_VARIABLE
+    if not value:
+        try:
+            settings = tomllib.loads(paths.config_paths.settings.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, tomllib.TOMLDecodeError):
+            return None  # an unreadable config.toml is reported by the credential backend
+        discovery = settings.get("discovery")
+        value = str((discovery or {}).get("contact_email") or "").strip() if isinstance(
+            discovery, dict) else ""
+        source = f"[discovery] contact_email in {paths.config_paths.settings}"
+    if not value:
+        return None
+    if not _EMAIL.fullmatch(value):
+        raise ValueError(f"{source} is not an email address")
+    return value
 
 
 def register(config_modes: argparse._SubParsersAction) -> None:

@@ -11,6 +11,8 @@ The intended skill workflow uses four complementary passes:
 3. **Citation expansion:** inspect backward references, forward citations, Related Work, and graph-nearest papers from strong seeds.
 4. **Falsification:** actively search for earlier, equivalent, or counterexample work that could invalidate the proposed gap.
 
+`discover research` turns the brief into keyword searches that contain only the brief's own terms: the question with its scenario and mechanism, all dimensions together, the mechanism and scenario alone, and the problem without the proposed mechanism (falsification). Each entry of the brief's `queries` and `synonyms` adds a search. Citation expansion runs through the citation graph rather than as a keyword search. `analysis.rows_per_query` and `analysis.max_candidates` set the results per search and the candidates kept, and `scope.venues` accepts venue names, ISSNs, and preset names such as `T-RO`. `scope.publication_types: [review]`, `scope.doi_prefixes`, and `scope.title_terms` filter as `discover candidates` does. Each source applies the years, DOI prefixes, and journals itself, so its results are in scope.
+
 Title and abstract are enough to nominate and triage candidates. A claim that a paper directly supports, contradicts, or already solves a research question requires a full-text read with a section or page and a short excerpt. Gap conclusions must be bounded to the searched scope and name the closest counterexamples.
 
 ## The staged pipeline

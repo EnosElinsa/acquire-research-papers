@@ -6,7 +6,7 @@ Run `arp sources` or `arp sources --spec <corpus.yaml>` for offline capabilities
 
 ## Venue presets
 
-Built-in venue presets let a spec name a venue by its short name, such as `name: INFOCOM` or `name: IEEE TMC`: the venue receives an identifier checked live in November 2026 (an ISSN for 37 IEEE journals and AAAI, an OpenAlex series for INFOCOM, ICC, GLOBECOM, WCNC, VTC, ICDCS, ICNP, IWQoS, SECON, and SIGCOMM, and per-edition proceedings DOIs for MobiCom and MobiHoc). A weekly GitHub workflow rechecks every preset and official index. Identifiers written in the spec win, `preset: none` turns matching off, and `arp sources` lists every preset.
+Built-in venue presets let a spec name a venue by its short name, such as `name: INFOCOM` or `name: IEEE TMC`: the venue receives an identifier checked live in November 2026 (an ISSN for 47 IEEE journals, including the robotics journals T-RO, RA-L, T-Mech, RAM, and T-FR, for Wiley's Journal of Field Robotics, whose papers are manual downloads, and for AAAI, an OpenAlex series for INFOCOM, ICC, GLOBECOM, WCNC, VTC, ICDCS, ICNP, IWQoS, SECON, and SIGCOMM, and per-edition proceedings DOIs for MobiCom and MobiHoc). A weekly GitHub workflow rechecks every preset and official index. Identifiers written in the spec win, `preset: none` turns matching off, and `arp sources` lists every preset.
 
 When OpenAlex lists far fewer works for an edition than for the year before, discovery keeps the slice complete but adds a `possible_upstream_lag` warning; when abstracts stay pending because a Semantic Scholar or OpenAlex key is missing, it prints the `arp config setup` command. Rerunning the same command into the same output reads warned slices again and looks up missing abstracts again; finished slices are not fetched again.
 
