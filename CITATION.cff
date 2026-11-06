@@ -12,8 +12,8 @@ authors:
   - family-names: Cai
     given-names: Zhiyuan
     alias: EnosElinsa
-version: 0.16.1
-date-released: "2026-11-05"
+version: 0.17.0
+date-released: "2026-11-06"
 license: MIT
 repository-code: "https://github.com/EnosElinsa/acquire-research-papers"
 url: "https://github.com/EnosElinsa/acquire-research-papers"

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "acquire-research-papers"
-version = "0.16.1"
+version = "0.17.0"
 description = "Agent skill and CLI for verified research-paper acquisition, auditable corpus discovery, literature research, and local PDF/BibTeX library management"
 readme = "README.md"
 requires-python = ">=3.11"

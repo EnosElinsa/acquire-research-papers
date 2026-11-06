@@ -2,7 +2,7 @@
 
 All notable changes to this project are recorded here, newest first. Versions follow [Semantic Versioning](https://semver.org/); before 1.0.0 a minor release can change behavior, so read its entry before updating. Every release is published with its wheel, skill ZIP, and `SHA256SUMS` on the [releases page](https://github.com/EnosElinsa/acquire-research-papers/releases).
 
-## Unreleased
+## 0.17.0 — 2026-11-06
 
 Changes from a user report of a topic search for IEEE path-planning surveys on Windows in Kiro (0.16.1).
 
